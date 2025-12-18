@@ -1,0 +1,22 @@
+# 全局默认负责人
+* @XiaoZhenYa001
+
+# Web 应用代码
+/src/**                    @XiaoZhenYa001
+
+# Tauri 桌面应用
+/src-tauri/**              @XiaoZhenYa001
+
+# 项目配置
+/package.json              @XiaoZhenYa001
+/Cargo.toml                @XiaoZhenYa001
+/tauri.conf.json           @XiaoZhenYa001
+
+# 文档
+/*.md                       @XiaoZhenYa001
+/docs/**                    @XiaoZhenYa001
+
+# GitHub 配置
+/.github/**                 @XiaoZhenYa001
+/.gitignore                 @XiaoZhenYa001
+/.vscode/**                 @XiaoZhenYa001
