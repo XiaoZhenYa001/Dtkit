@@ -38,6 +38,7 @@ const DOM = {
     contentArea: document.getElementById('contentArea'),
     toolLibraryView: document.getElementById('toolLibraryView'),
     favoritesView: document.getElementById('favoritesView'),
+    settingsView: document.getElementById('settingsView'),
     timestampView: document.getElementById('timestampView'),
     jsonFormatterView: document.getElementById('jsonFormatterView'),
     base64CodecView: document.getElementById('base64CodecView'),
@@ -157,13 +158,19 @@ function updateContentView() {
     // 隐藏所有视图
     DOM.toolLibraryView.classList.remove('view--active');
     DOM.favoritesView.classList.remove('view--active');
+    DOM.settingsView.classList.remove('view--active');
     DOM.timestampView.classList.remove('view--active');
     DOM.jsonFormatterView.classList.remove('view--active');
     DOM.base64CodecView.classList.remove('view--active');
     DOM.searchContainer.style.display = 'none';
     
+    // 如果当前视图是设置页面，显示设置视图
+    if (appState.currentView === 'settings') {
+        DOM.settingsView.classList.add('view--active');
+        appState.currentToolId = null;
+    }
     // 优先判断：如果标签页有工具ID，显示对应工具（即使在收藏页面也要打开工具）
-    if (activeTab.toolId === 'timestamp-converter') {
+    else if (activeTab.toolId === 'timestamp-converter') {
         DOM.timestampView.classList.add('view--active');
         appState.currentToolId = activeTab.toolId;
         setTimeout(() => initTool(activeTab.toolId), 100);
@@ -231,16 +238,24 @@ function renderTabs() {
         label.addEventListener('click', () => switchTab(tab.id));
         tabEl.appendChild(label);
         
-        if (appState.tabs.length > 1) {
-            const closeBtn = document.createElement('button');
-            closeBtn.className = 'tab__close';
-            closeBtn.innerHTML = '<i class="ri-close-line"></i>';
-            closeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
+        // 总是显示关闭按钮
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tab__close';
+        closeBtn.innerHTML = '<i class="ri-close-line"></i>';
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(tab.id);
+        });
+        closeBtn.style.display = appState.tabs.length > 1 ? 'flex' : 'none';
+        tabEl.appendChild(closeBtn);
+        
+        // 中键点击关闭标签（类似浏览器）
+        tabEl.addEventListener('mouseup', (e) => {
+            if (e.button === 1 && appState.tabs.length > 1) {
+                e.preventDefault();
                 closeTab(tab.id);
-            });
-            tabEl.appendChild(closeBtn);
-        }
+            }
+        });
         
         DOM.tabBar.appendChild(tabEl);
     });
@@ -424,8 +439,7 @@ function initializeEventListeners() {
                 alert('历史功能即将推出');
                 return;
             } else if (view === 'settings') {
-                alert('设置功能即将推出');
-                return;
+                appState.currentView = 'settings';
             }
             
             renderTabs();
@@ -441,6 +455,14 @@ function initializeEventListeners() {
     DOM.searchInput.addEventListener('input', (e) => {
         handleSearch(e.target.value);
     });
+    
+    // 新增标签页
+    const addTabBtn = document.getElementById('addTabBtn');
+    if (addTabBtn) {
+        addTabBtn.addEventListener('click', () => {
+            addTab();
+        });
+    }
     
     // 清空收藏
     document.getElementById('clearFavoritesBtn')?.addEventListener('click', () => {

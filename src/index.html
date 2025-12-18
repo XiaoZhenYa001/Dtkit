@@ -12,6 +12,8 @@
     <link rel="stylesheet" href="css/layout.css">
     <!-- 工具库样式 -->
     <link rel="stylesheet" href="css/tools-library.css">
+    <!-- 设置页面样式 -->
+    <link rel="stylesheet" href="css/settings.css">
     <!-- 工具样式 -->
     <link rel="stylesheet" href="css/tools/timestamp-converter.css">
     <link rel="stylesheet" href="css/tools/json-formatter.css">
@@ -234,6 +236,150 @@
                     </div>
                     <div class="tool-grid" id="favoritesGrid">
                         <!-- 收藏工具卡片动态生成 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 设置视图 -->
+            <div id="settingsView" class="view">
+                <div class="view-container">
+                    <div class="settings-content">
+                        
+                        <!-- 存储与网络 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-hard-drive-2-line"></i>
+                                <h2 class="settings-section-title">存储与网络</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                
+                                <div class="settings-item">
+                                    <label class="settings-label">文件下载位置</label>
+                                    <div class="settings-input-group">
+                                        <input type="text" value="D:\DevToolbox\Downloads" readonly class="settings-input">
+                                        <button class="settings-btn settings-btn--secondary">更改目录</button>
+                                        <button class="settings-btn-icon" title="打开文件夹">
+                                            <i class="ri-folder-open-line"></i>
+                                        </button>
+                                    </div>
+                                    <div class="settings-checkbox">
+                                        <input type="checkbox" id="clean-files" class="checkbox">
+                                        <label for="clean-files" class="checkbox-label">退出时自动清理临时文件</label>
+                                    </div>
+                                </div>
+
+                                <hr class="settings-divider">
+
+                                <div class="settings-item">
+                                    <div class="settings-item-header">
+                                        <label class="settings-label">工具资源镜像源 (Mirror Source)</label>
+                                        <span class="settings-status-badge"><i class="ri-wifi-line"></i> 24ms</span>
+                                    </div>
+                                    <div class="settings-input-group">
+                                        <select class="settings-select">
+                                            <option value="official">官方源 (Default)</option>
+                                            <option value="aliyun" selected>阿里云 (Aliyun Mirror)</option>
+                                            <option value="tencent">腾讯云 (Tencent Mirror)</option>
+                                            <option value="custom">自定义...</option>
+                                        </select>
+                                        <button class="settings-btn settings-btn--secondary">
+                                            <i class="ri-speed-line"></i> 测速
+                                        </button>
+                                    </div>
+                                    <p class="settings-help-text">用于加速 NPM 包、图片资源及插件的下载。</p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 快捷键绑定 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-keyboard-box-line"></i>
+                                <h2 class="settings-section-title">快捷键绑定</h2>
+                                <span class="settings-section-hint">双击键位可修改</span>
+                            </div>
+                            <div class="settings-section-content">
+                                <div class="settings-shortcut-item">
+                                    <span class="settings-shortcut-label">呼出/隐藏工具箱</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Alt</span> <span class="settings-key-plus">+</span> <span class="settings-key">Space</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item">
+                                    <span class="settings-shortcut-label">截图并提取颜色</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">Shift</span> <span class="settings-key-plus">+</span> <span class="settings-key">C</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item">
+                                    <span class="settings-shortcut-label">打开最近使用的工具</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">E</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 配置规则管理 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-database-2-line"></i>
+                                <h2 class="settings-section-title">配置规则管理</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-item-title">备份配置</div>
+                                        <div class="settings-item-desc">导出所有工具设置、快捷键及收藏列表</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn--primary">
+                                        <i class="ri-upload-2-line"></i> 导出 Config.json
+                                    </button>
+                                </div>
+                                
+                                <hr class="settings-divider">
+                                
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-item-title">导入配置</div>
+                                        <div class="settings-item-desc">从 JSON 文件恢复设置，这将覆盖当前配置</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn--secondary">
+                                        <i class="ri-download-2-line"></i> 导入...
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 常规选项 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-toggle-line"></i>
+                                <h2 class="settings-section-title">常规选项</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                <div class="settings-toggle-item">
+                                    <span class="settings-toggle-label">开机自动启动</span>
+                                    <label class="settings-toggle">
+                                        <input type="checkbox" class="settings-toggle-input">
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="settings-toggle-item">
+                                    <span class="settings-toggle-label">关闭主面板时最小化到托盘</span>
+                                    <label class="settings-toggle">
+                                        <input type="checkbox" class="settings-toggle-input" checked>
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="settings-footer">
+                            <p>DtKit v0.1.0 • Build 20241218</p>
+                        </div>
+
                     </div>
                 </div>
             </div>
