@@ -1,0 +1,156 @@
+/* ============================================
+   Base64 编解码工具样式
+   ============================================ */
+
+.base64-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+    gap: 0;
+}
+
+.base64-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 3.5rem;
+    padding: 0 var(--spacing-lg);
+    background-color: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    gap: var(--spacing-lg);
+}
+
+.base64-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0;
+}
+
+.base64-buttons {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.base64-editor-container {
+    display: flex;
+    flex: 1;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    background-color: var(--color-bg-primary);
+    overflow: hidden;
+}
+
+.base64-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.base64-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 2rem;
+    padding: 0 var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.base64-panel-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-secondary);
+}
+
+.base64-panel-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.base64-copy-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+    font-size: var(--font-size-base);
+}
+
+.base64-copy-btn:hover {
+    color: var(--color-primary);
+}
+
+.base64-textarea {
+    flex: 1;
+    padding: var(--spacing-md);
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    border: none;
+    outline: none;
+    resize: none;
+    line-height: 1.5;
+}
+
+.base64-textarea::placeholder {
+    color: var(--color-text-tertiary);
+}
+
+.base64-stats {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--spacing-lg);
+    height: 2rem;
+    padding: 0 var(--spacing-lg);
+    background-color: var(--color-bg-secondary);
+    border-top: 1px solid var(--color-border);
+    font-size: var(--font-size-xs);
+}
+
+.stat-item {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+}
+
+.stat-label {
+    color: var(--color-text-tertiary);
+    font-weight: 500;
+}
+
+.stat-value {
+    color: var(--color-primary);
+    font-weight: 600;
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+@media (max-width: 1024px) {
+    .base64-editor-container {
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 768px) {
+    .base64-toolbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: var(--spacing-md);
+    }
+    
+    .base64-buttons {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+}

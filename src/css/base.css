@@ -1,0 +1,434 @@
+/* ============================================
+   CSS 变量定义 - 主题色彩系统
+   ============================================ */
+:root {
+    /* 颜色系统 */
+    --color-primary: #2563eb;
+    --color-primary-light: #eff6ff;
+    --color-primary-dark: #1e40af;
+    
+    --color-bg-primary: #f8fafc;
+    --color-bg-secondary: #ffffff;
+    --color-bg-tertiary: #f1f5f9;
+    
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #64748b;
+    --color-text-tertiary: #94a3b8;
+    --color-text-light: #cbd5e1;
+    
+    --color-border: #e2e8f0;
+    --color-border-light: #f1f5f9;
+    
+    --color-success: #16a34a;
+    --color-success-bg: #f0fdf4;
+    --color-success-border: #86efac;
+    
+    --color-error: #dc2626;
+    --color-error-bg: #fef2f2;
+    --color-error-border: #fecaca;
+    
+    --color-info-bg: #f0f9ff;
+    --color-info-border: #bae6fd;
+    
+    /* 间距系统 */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+    --spacing-2xl: 3rem;
+    
+    /* 圆角系统 */
+    --radius-sm: 0.5rem;
+    --radius-md: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.25rem;
+    --radius-full: 9999px;
+    
+    /* 阴影系统 */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    
+    /* 过渡时间 */
+    --transition-fast: 150ms ease;
+    --transition-normal: 200ms ease;
+    --transition-slow: 300ms ease;
+    
+    /* 字体系统 */
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    
+    /* 宽度约束 */
+    --container-max-width: 80rem;
+}
+
+/* ============================================
+   基础样式重置
+   ============================================ */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+}
+
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-base);
+    line-height: 1.5;
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-primary);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    display: flex;
+}
+
+/* ============================================
+   按钮组件
+   ============================================ */
+.btn {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: 500;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 按钮变体 - 主要按钮 */
+.btn--primary {
+    background-color: var(--color-primary);
+    color: white;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--font-size-sm);
+}
+
+.btn--primary:hover:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+.btn--primary:active:not(:disabled) {
+    transform: scale(0.95);
+}
+
+/* 按钮变体 - 次要按钮 */
+.btn--secondary {
+    background-color: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--color-border);
+}
+
+.btn--secondary:hover:not(:disabled) {
+    background-color: var(--color-border);
+}
+
+.btn--secondary:active:not(:disabled) {
+    transform: scale(0.95);
+}
+
+/* 按钮变体 - 图标按钮 */
+.btn--icon {
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    padding: var(--spacing-sm);
+    font-size: var(--font-size-lg);
+}
+
+.btn--icon:hover:not(:disabled) {
+    color: var(--color-primary);
+    border-color: var(--color-primary-light);
+    background-color: var(--color-primary-light);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn--icon-sm {
+    width: 2rem;
+    height: 2rem;
+    padding: var(--spacing-sm);
+}
+
+.btn--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    color: var(--color-text-tertiary);
+    border-color: var(--color-border);
+}
+
+/* 按钮变体 - 全宽 */
+.btn--full {
+    width: 100%;
+}
+
+/* ============================================
+   输入和表单元素
+   ============================================ */
+.input-group {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.input-field {
+    flex: 1;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    transition: all var(--transition-fast);
+    font-family: inherit;
+}
+
+.input-field::placeholder {
+    color: var(--color-text-tertiary);
+}
+
+.input-field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.button-group {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+/* ============================================
+   信息框和卡片
+   ============================================ */
+.info-box {
+    padding: var(--spacing-md);
+    background-color: var(--color-info-bg);
+    border: 1px solid var(--color-info-border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.info-box__label {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.info-box__value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: var(--color-primary);
+    font-family: 'Courier New', monospace;
+}
+
+.info-box--highlight {
+    background: linear-gradient(135deg, var(--color-info-bg) 0%, #dbeafe 100%);
+    border-color: var(--color-primary-light);
+}
+
+/* ============================================
+   结果显示框
+   ============================================ */
+.result-box {
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    min-height: 3rem;
+    display: flex;
+    align-items: center;
+    margin-bottom: var(--spacing-lg);
+}
+
+.result-box--success {
+    background-color: var(--color-success-bg);
+    border-color: var(--color-success-border);
+    color: var(--color-success);
+}
+
+.result-box--error {
+    background-color: var(--color-error-bg);
+    border-color: var(--color-error-border);
+    color: var(--color-error);
+}
+
+.result-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    width: 100%;
+}
+
+.result-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.result-label {
+    color: var(--color-text-secondary);
+}
+
+.result-value {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    color: var(--color-text-primary);
+}
+
+/* ============================================
+   快速参考网格
+   ============================================ */
+.quick-reference-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: var(--spacing-md);
+}
+
+.quick-ref-item {
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.quick-ref-item:hover {
+    background-color: var(--color-primary-light);
+    border-color: var(--color-primary);
+}
+
+.quick-ref-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.quick-ref-value {
+    font-family: 'Courier New', monospace;
+    font-size: var(--font-size-sm);
+    font-weight: bold;
+    color: var(--color-text-primary);
+    word-break: break-all;
+}
+
+/* ============================================
+   视图容器
+   ============================================ */
+.view {
+    display: none;
+    animation: fadeIn var(--transition-normal);
+}
+
+.view--active {
+    display: block;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.view-container {
+    max-width: var(--container-max-width);
+    margin: 0 auto;
+    padding: var(--spacing-xl);
+}
+
+.tool-panel {
+    background-color: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-2xl);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-sm);
+    max-width: 48rem;
+}
+
+.tool-header {
+    margin-bottom: var(--spacing-2xl);
+}
+
+.tool-title {
+    font-size: var(--font-size-xl);
+    font-weight: bold;
+    color: var(--color-text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.tool-description {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.tool-section {
+    margin-bottom: var(--spacing-2xl);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.section-heading {
+    font-weight: bold;
+    color: var(--color-text-primary);
+    font-size: var(--font-size-base);
+}
+
+.badge {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    background-color: var(--color-bg-tertiary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    display: inline-block;
+    font-weight: 500;
+}
+
+.badge--empty {
+    background-color: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
+}
+
+.badge--valid {
+    background-color: var(--color-success-bg);
+    color: var(--color-success);
+}
+
+.badge--invalid {
+    background-color: var(--color-error-bg);
+    color: var(--color-error);
+}

@@ -1,0 +1,40 @@
+/* ============================================
+   响应式设计
+   ============================================ */
+@media (max-width: 1024px) {
+    .tool-grid {
+        grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    }
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: 4.5rem;
+        padding: var(--spacing-md) 0;
+    }
+    
+    .nav-btn__label {
+        font-size: 0.625rem;
+    }
+    
+    .tool-panel {
+        max-width: 100%;
+        padding: var(--spacing-lg);
+    }
+    
+    .view-container {
+        padding: var(--spacing-lg);
+    }
+}
+
+@media (max-width: 640px) {
+    .tab {
+        padding: 0 0.75rem;
+    }
+    
+    .toolbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: var(--spacing-md);
+    }
+}

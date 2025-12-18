@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DToolBox - 桌面工具箱</title>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    
+    <!-- 基础样式 -->
+    <link rel="stylesheet" href="css/base.css">
+    <!-- 布局样式 -->
+    <link rel="stylesheet" href="css/layout.css">
+    <!-- 工具库样式 -->
+    <link rel="stylesheet" href="css/tools-library.css">
+    <!-- 工具样式 -->
+    <link rel="stylesheet" href="css/tools/timestamp-converter.css">
+    <link rel="stylesheet" href="css/tools/json-formatter.css">
+    <link rel="stylesheet" href="css/tools/base64-codec.css">
+    <!-- 响应式设计 -->
+    <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+    <!-- 侧边栏导航 -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">DT</div>
+
+        <nav class="sidebar-nav">
+            <button class="nav-btn nav-btn--active" data-view="toolLibrary" title="工具库">
+                <div class="nav-btn__icon">
+                    <i class="ri-apps-2-line"></i>
+                </div>
+                <span class="nav-btn__label">工具库</span>
+            </button>
+
+            <button class="nav-btn" data-view="favorites" title="收藏">
+                <div class="nav-btn__icon">
+                    <i class="ri-star-line"></i>
+                </div>
+                <span class="nav-btn__label">收藏</span>
+            </button>
+
+            <button class="nav-btn" data-view="history" title="历史">
+                <div class="nav-btn__icon">
+                    <i class="ri-history-line"></i>
+                </div>
+                <span class="nav-btn__label">历史</span>
+            </button>
+        </nav>
+
+        <button class="nav-btn nav-settings" data-view="settings" title="设置">
+            <div class="nav-btn__icon">
+                <i class="ri-settings-3-line"></i>
+            </div>
+        </button>
+    </aside>
+
+    <!-- 主容器 -->
+    <div class="main-container">
+        <!-- 标签栏 -->
+        <div class="tab-container">
+            <div id="tabBar" class="tab-bar">
+                <!-- 标签页动态生成 -->
+            </div>
+            <button id="addTabBtn" class="tab-add-btn" title="新增标签页">
+                <i class="ri-add-line"></i>
+            </button>
+        </div>
+
+        <!-- 主内容区域 -->
+        <main id="contentArea" class="content-area">
+            
+            <!-- 导航栏（搜索 + 后退前进） -->
+            <div class="navbar">
+                <div class="navbar__nav-buttons">
+                    <button id="backBtn" class="nav-btn-icon" title="返回上一步">
+                        <i class="ri-arrow-left-s-line"></i>
+                    </button>
+                    <button id="forwardBtn" class="nav-btn-icon" title="前进到下一步">
+                        <i class="ri-arrow-right-s-line"></i>
+                    </button>
+                </div>
+                
+                <div id="searchContainer" class="search-container">
+                    <i class="ri-search-2-line"></i>
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        class="search-input" 
+                        placeholder="筛选工具..."
+                    >
+                </div>
+            </div>
+
+            <!-- 工具库视图 -->
+            <div id="toolLibraryView" class="view view--active">
+                <div class="view-container">
+                    <!-- 开发工具分类 -->
+                    <div class="tools-category">
+                        <h2 class="section-title">开发工具</h2>
+                        <div class="tool-grid" id="devToolsGrid">
+                            <!-- 工具卡片动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 设计工具分类 -->
+                    <div class="tools-category">
+                        <h2 class="section-title">设计工具</h2>
+                        <div class="tool-grid" id="designToolsGrid">
+                            <!-- 工具卡片动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 其他工具分类 -->
+                    <div class="tools-category">
+                        <h2 class="section-title">其他工具</h2>
+                        <div class="tool-grid" id="otherToolsGrid">
+                            <!-- 工具卡片动态生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 时间戳转换视图 -->
+            <div id="timestampView" class="view">
+                <div class="view-container">
+                    <div class="section">
+                        <div class="section-header">
+                            <h2 class="section-title">时间戳转换</h2>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">时间戳（秒）</label>
+                                <input type="number" id="timestampInput" class="input" placeholder="输入 Unix 时间戳">
+                            </div>
+                            <div class="input-group">
+                                <label class="label">日期时间</label>
+                                <input type="text" id="datetimeOutput" class="input" readonly title="日期时间输出">
+                            </div>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">日期时间</label>
+                                <input type="datetime-local" id="datetimeInput" class="input" title="日期时间选择">
+                            </div>
+                            <div class="input-group">
+                                <label class="label">时间戳（秒）</label>
+                                <input type="text" id="timestampOutput" class="input" readonly title="时间戳输出">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON 格式化视图 -->
+            <div id="jsonFormatterView" class="view">
+                <div class="view-container">
+                    <div class="json-formatter">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2 class="section-title">JSON 格式化</h2>
+                            </div>
+                            <div class="tool-inputs">
+                                <textarea id="jsonInput" class="input json-input" placeholder="输入 JSON 数据..."></textarea>
+                                <div class="button-group">
+                                    <button id="formatBtn" class="btn btn--primary">格式化</button>
+                                    <button id="minifyBtn" class="btn btn--secondary">压缩</button>
+                                    <button id="copyJsonBtn" class="btn btn--secondary">复制</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="section">
+                            <div class="section-header">
+                                <h2 class="section-title">结果</h2>
+                            </div>
+                            <div class="tool-inputs">
+                                <textarea id="jsonOutput" class="input json-input" readonly title="JSON 输出"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Base64 编解码视图 -->
+            <div id="base64CodecView" class="view">
+                <div class="view-container">
+                    <div class="section">
+                        <div class="section-header">
+                            <h2 class="section-title">Base64 编解码</h2>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">原始文本</label>
+                                <textarea id="base64Input" class="input" placeholder="输入要编码的文本..."></textarea>
+                                <div class="button-group">
+                                    <button id="encodeBtn" class="btn btn--primary">编码</button>
+                                    <button id="copyEncodeBtn" class="btn btn--secondary">复制</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">编码结果</label>
+                                <textarea id="base64Output" class="input" readonly title="Base64 编码输出"></textarea>
+                            </div>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">Base64 文本</label>
+                                <textarea id="base64DecodeInput" class="input" placeholder="输入要解码的 Base64..."></textarea>
+                                <div class="button-group">
+                                    <button id="decodeBtn" class="btn btn--primary">解码</button>
+                                    <button id="copyDecodeBtn" class="btn btn--secondary">复制</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tool-inputs">
+                            <div class="input-group">
+                                <label class="label">解码结果</label>
+                                <textarea id="base64DecodeOutput" class="input" readonly title="Base64 解码输出"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 收藏夹视图 -->
+            <div id="favoritesView" class="view">
+                <div class="view-container">
+                    <div class="favorites-header">
+                        <h2 class="section-title">我的收藏</h2>
+                        <button id="clearFavoritesBtn" class="btn btn--secondary favorites__clear-btn">
+                            <i class="ri-delete-bin-line"></i> 清空全部
+                        </button>
+                    </div>
+                    <div class="tool-grid" id="favoritesGrid">
+                        <!-- 收藏工具卡片动态生成 -->
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
