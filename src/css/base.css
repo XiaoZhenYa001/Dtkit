@@ -45,10 +45,12 @@
     --radius-xl: 1.25rem;
     --radius-full: 9999px;
     
-    /* 阴影系统 */
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    /* 阴影系统 - 优化版 */
+    --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
     
     /* 过渡时间 */
     --transition-fast: 150ms ease;
@@ -92,6 +94,35 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* ============================================
+   滚动条美化
+   ============================================ */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* ============================================
+   文本选择美化
+   ============================================ */
+::selection {
+    background-color: var(--color-primary-light);
+    color: var(--color-primary-dark);
+}
+
 body {
     display: flex;
 }
@@ -124,10 +155,12 @@ body {
     color: white;
     padding: var(--spacing-sm) var(--spacing-lg);
     font-size: var(--font-size-sm);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn--primary:hover:not(:disabled) {
     background-color: var(--color-primary-dark);
+    box-shadow: var(--shadow-md);
 }
 
 .btn--primary:active:not(:disabled) {

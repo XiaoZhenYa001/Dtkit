@@ -6,7 +6,18 @@
 // ============================================
 // 导入工具注册中心和工具模块
 // ============================================
-import { getAllTools, initTool, getTool, destroyTool } from './tools/index.js';
+import { 
+    getAllTools, 
+    initTool, 
+    getTool, 
+    destroyTool,
+    hasToolTemplate,
+    renderToolView,
+    clearDynamicContainer,
+    showDynamicContainer,
+    hideDynamicContainer,
+    getDynamicContainerId
+} from './tools/index.js';
 
 // ============================================
 // 应用状态管理
@@ -39,9 +50,6 @@ const DOM = {
     toolLibraryView: document.getElementById('toolLibraryView'),
     favoritesView: document.getElementById('favoritesView'),
     settingsView: document.getElementById('settingsView'),
-    timestampView: document.getElementById('timestampView'),
-    jsonFormatterView: document.getElementById('jsonFormatterView'),
-    base64CodecView: document.getElementById('base64CodecView'),
     devToolsGrid: document.getElementById('devToolsGrid'),
     designToolsGrid: document.getElementById('designToolsGrid'),
     otherToolsGrid: document.getElementById('otherToolsGrid'),
@@ -155,45 +163,45 @@ function updateContentView() {
         destroyTool(appState.currentToolId);
     }
     
-    // 隐藏所有视图
-    DOM.toolLibraryView.classList.remove('view--active');
-    DOM.favoritesView.classList.remove('view--active');
-    DOM.settingsView.classList.remove('view--active');
-    DOM.timestampView.classList.remove('view--active');
-    DOM.jsonFormatterView.classList.remove('view--active');
-    DOM.base64CodecView.classList.remove('view--active');
-    DOM.searchContainer.style.display = 'none';
+    // 隐藏所有视图（带空值检查）
+    DOM.toolLibraryView?.classList.remove('view--active');
+    DOM.favoritesView?.classList.remove('view--active');
+    DOM.settingsView?.classList.remove('view--active');
+    if (DOM.searchContainer) DOM.searchContainer.style.display = 'none';
+    
+    // 隐藏动态工具容器
+    hideDynamicContainer();
     
     // 如果当前视图是设置页面，显示设置视图
     if (appState.currentView === 'settings') {
-        DOM.settingsView.classList.add('view--active');
+        DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
     }
-    // 优先判断：如果标签页有工具ID，显示对应工具（即使在收藏页面也要打开工具）
-    else if (activeTab.toolId === 'timestamp-converter') {
-        DOM.timestampView.classList.add('view--active');
-        appState.currentToolId = activeTab.toolId;
-        setTimeout(() => initTool(activeTab.toolId), 100);
-    } else if (activeTab.toolId === 'json-formatter') {
-        DOM.jsonFormatterView.classList.add('view--active');
-        appState.currentToolId = activeTab.toolId;
-        setTimeout(() => initTool(activeTab.toolId), 100);
-    } else if (activeTab.toolId === 'base64-codec') {
-        DOM.base64CodecView.classList.add('view--active');
-        appState.currentToolId = activeTab.toolId;
-        setTimeout(() => initTool(activeTab.toolId), 100);
+    // 优先判断：如果标签页有工具ID，显示对应工具
+    else if (activeTab.toolId) {
+        const tool = getTool(activeTab.toolId);
+        if (tool) {
+            // 检查工具是否有自己的模板
+            if (hasToolTemplate(activeTab.toolId)) {
+                // 使用动态渲染
+                renderToolView(activeTab.toolId);
+                showDynamicContainer();
+            }
+            appState.currentToolId = activeTab.toolId;
+            setTimeout(() => initTool(activeTab.toolId), 100);
+        }
     }
     // 次优先：根据当前视图显示对应内容
     else if (appState.currentView === 'favorites') {
-        DOM.favoritesView.classList.add('view--active');
-        DOM.searchContainer.style.display = 'flex';
+        DOM.favoritesView?.classList.add('view--active');
+        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
         renderFavoritesPage();
         appState.currentToolId = null;
         updateClearFavoritesButton();
     } else {
         // 默认显示工具库
-        DOM.toolLibraryView.classList.add('view--active');
-        DOM.searchContainer.style.display = 'flex';
+        DOM.toolLibraryView?.classList.add('view--active');
+        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
         appState.currentToolId = null;
     }
 }
@@ -222,6 +230,8 @@ function openTool(toolId, toolName, toolIcon) {
 // 标签渲染
 // ============================================
 function renderTabs() {
+    if (!DOM.tabBar) return;
+    
     DOM.tabBar.innerHTML = '';
     
     appState.tabs.forEach(tab => {
@@ -277,6 +287,8 @@ function switchTab(tabId) {
 // ============================================
 function renderFavoritesPage() {
     const grid = DOM.favoritesGrid;
+    if (!grid) return;
+    
     grid.innerHTML = '';
     
     if (appState.favorites.length === 0) {
@@ -307,8 +319,8 @@ function updateBackForwardButtons() {
     const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
     if (!activeTab) return;
     
-    DOM.backBtn.disabled = activeTab.historyIndex <= 0;
-    DOM.forwardBtn.disabled = activeTab.historyIndex >= activeTab.history.length - 1;
+    if (DOM.backBtn) DOM.backBtn.disabled = activeTab.historyIndex <= 0;
+    if (DOM.forwardBtn) DOM.forwardBtn.disabled = activeTab.historyIndex >= activeTab.history.length - 1;
 }
 
 function goBack() {
@@ -372,22 +384,28 @@ function renderToolLibrary() {
     console.log(`[renderToolLibrary] 分类: dev=${devTools.length}, design=${designTools.length}, other=${otherTools.length}`);
     
     // 渲染开发工具
-    DOM.devToolsGrid.innerHTML = '';
-    devTools.forEach(tool => {
-        DOM.devToolsGrid.appendChild(createToolCard(tool));
-    });
+    if (DOM.devToolsGrid) {
+        DOM.devToolsGrid.innerHTML = '';
+        devTools.forEach(tool => {
+            DOM.devToolsGrid.appendChild(createToolCard(tool));
+        });
+    }
     
     // 渲染设计工具
-    DOM.designToolsGrid.innerHTML = '';
-    designTools.forEach(tool => {
-        DOM.designToolsGrid.appendChild(createToolCard(tool));
-    });
+    if (DOM.designToolsGrid) {
+        DOM.designToolsGrid.innerHTML = '';
+        designTools.forEach(tool => {
+            DOM.designToolsGrid.appendChild(createToolCard(tool));
+        });
+    }
     
     // 渲染其他工具
-    DOM.otherToolsGrid.innerHTML = '';
-    otherTools.forEach(tool => {
-        DOM.otherToolsGrid.appendChild(createToolCard(tool));
-    });
+    if (DOM.otherToolsGrid) {
+        DOM.otherToolsGrid.innerHTML = '';
+        otherTools.forEach(tool => {
+            DOM.otherToolsGrid.appendChild(createToolCard(tool));
+        });
+    }
 }
 
 // ============================================
@@ -409,13 +427,13 @@ function handleSearch(query) {
     );
     
     // 清空所有分类
-    DOM.devToolsGrid.innerHTML = '';
-    DOM.designToolsGrid.innerHTML = '';
-    DOM.otherToolsGrid.innerHTML = '';
-    DOM.favoritesGrid.innerHTML = '';
+    if (DOM.devToolsGrid) DOM.devToolsGrid.innerHTML = '';
+    if (DOM.designToolsGrid) DOM.designToolsGrid.innerHTML = '';
+    if (DOM.otherToolsGrid) DOM.otherToolsGrid.innerHTML = '';
+    if (DOM.favoritesGrid) DOM.favoritesGrid.innerHTML = '';
     
     // 在第一个分类中显示搜索结果
-    if (DOM.devToolsGrid.parentElement?.style.display !== 'none') {
+    if (DOM.devToolsGrid && DOM.devToolsGrid.parentElement?.style.display !== 'none') {
         filtered.forEach(tool => {
             DOM.devToolsGrid.appendChild(createToolCard(tool));
         });
@@ -431,15 +449,32 @@ function initializeEventListeners() {
         btn.addEventListener('click', (e) => {
             const view = e.currentTarget.dataset.view;
             
+            // 获取当前活动标签
+            const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
+            
             if (view === 'toolLibrary') {
                 appState.currentView = 'toolLibrary';
+                // 清除当前标签的工具ID，返回工具库
+                if (activeTab) {
+                    activeTab.toolId = null;
+                    activeTab.title = '工具库';
+                    activeTab.icon = 'ri-apps-2-line';
+                }
             } else if (view === 'favorites') {
                 appState.currentView = 'favorites';
+                // 清除当前标签的工具ID，显示收藏页
+                if (activeTab) {
+                    activeTab.toolId = null;
+                }
             } else if (view === 'history') {
                 alert('历史功能即将推出');
                 return;
             } else if (view === 'settings') {
                 appState.currentView = 'settings';
+                // 清除当前标签的工具ID，显示设置页
+                if (activeTab) {
+                    activeTab.toolId = null;
+                }
             }
             
             renderTabs();
@@ -448,13 +483,15 @@ function initializeEventListeners() {
     });
     
     // 后退前进
-    DOM.backBtn.addEventListener('click', goBack);
-    DOM.forwardBtn.addEventListener('click', goForward);
+    if (DOM.backBtn) DOM.backBtn.addEventListener('click', goBack);
+    if (DOM.forwardBtn) DOM.forwardBtn.addEventListener('click', goForward);
     
     // 搜索
-    DOM.searchInput.addEventListener('input', (e) => {
-        handleSearch(e.target.value);
-    });
+    if (DOM.searchInput) {
+        DOM.searchInput.addEventListener('input', (e) => {
+            handleSearch(e.target.value);
+        });
+    }
     
     // 新增标签页
     const addTabBtn = document.getElementById('addTabBtn');
