@@ -172,13 +172,15 @@ function updateContentView() {
     // 隐藏动态工具容器
     hideDynamicContainer();
     
-    // 如果当前视图是设置页面，显示设置视图
-    if (appState.currentView === 'settings') {
+    // 优先判断：如果标签页有工具ID，显示对应工具或设置页
+    if (activeTab.toolId === 'settings') {
+        // 设置页面特殊处理
         DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
+        appState.currentView = 'settings';
     }
-    // 优先判断：如果标签页有工具ID，显示对应工具
     else if (activeTab.toolId) {
+        // 普通工具
         const tool = getTool(activeTab.toolId);
         if (tool) {
             // 检查工具是否有自己的模板
@@ -190,6 +192,11 @@ function updateContentView() {
             appState.currentToolId = activeTab.toolId;
             setTimeout(() => initTool(activeTab.toolId), 100);
         }
+    }
+    // 如果当前视图是设置页面，显示设置视图（向后兼容）
+    else if (appState.currentView === 'settings') {
+        DOM.settingsView?.classList.add('view--active');
+        appState.currentToolId = null;
     }
     // 次优先：根据当前视图显示对应内容
     else if (appState.currentView === 'favorites') {
@@ -207,6 +214,16 @@ function updateContentView() {
 }
 
 function openTool(toolId, toolName, toolIcon) {
+    // 先检查是否已有标签打开了该工具
+    const existingTab = appState.tabs.find(t => t.toolId === toolId);
+    
+    if (existingTab) {
+        // 如果已有标签打开该工具，直接切换到那个标签
+        switchTab(existingTab.id);
+        return;
+    }
+    
+    // 没有已打开的标签，则在当前标签打开
     const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
     if (!activeTab) return;
     
@@ -237,6 +254,7 @@ function renderTabs() {
     appState.tabs.forEach(tab => {
         const tabEl = document.createElement('div');
         tabEl.className = `tab ${tab.id === appState.activeTabId ? 'tab--active' : ''}`;
+        tabEl.dataset.tabId = tab.id;
         
         const label = document.createElement('div');
         label.className = 'tab__label';
@@ -244,11 +262,9 @@ function renderTabs() {
             <i class="${tab.icon}"></i>
             <span>${tab.title}</span>
         `;
-        
-        label.addEventListener('click', () => switchTab(tab.id));
         tabEl.appendChild(label);
         
-        // 总是显示关闭按钮
+        // 关闭按钮
         const closeBtn = document.createElement('button');
         closeBtn.className = 'tab__close';
         closeBtn.innerHTML = '<i class="ri-close-line"></i>';
@@ -258,6 +274,13 @@ function renderTabs() {
         });
         closeBtn.style.display = appState.tabs.length > 1 ? 'flex' : 'none';
         tabEl.appendChild(closeBtn);
+        
+        // 整个标签元素点击切换（而不仅仅是 label）
+        tabEl.addEventListener('click', (e) => {
+            // 如果点击的是关闭按钮，不处理
+            if (e.target.closest('.tab__close')) return;
+            switchTab(tab.id);
+        });
         
         // 中键点击关闭标签（类似浏览器）
         tabEl.addEventListener('mouseup', (e) => {
@@ -333,10 +356,14 @@ function goBack() {
     if (toolId === null) {
         appState.currentView = 'toolLibrary';
         activeTab.toolId = null;
+        activeTab.title = '工具库';
+        activeTab.icon = 'ri-apps-2-line';
     } else {
         const tool = getTool(toolId);
         if (tool) {
             activeTab.toolId = toolId;
+            activeTab.title = tool.name;
+            activeTab.icon = tool.icon;
             appState.currentView = toolId;
         }
     }
@@ -356,10 +383,14 @@ function goForward() {
     if (toolId === null) {
         appState.currentView = 'toolLibrary';
         activeTab.toolId = null;
+        activeTab.title = '工具库';
+        activeTab.icon = 'ri-apps-2-line';
     } else {
         const tool = getTool(toolId);
         if (tool) {
             activeTab.toolId = toolId;
+            activeTab.title = tool.name;
+            activeTab.icon = tool.icon;
             appState.currentView = toolId;
         }
     }
@@ -449,6 +480,10 @@ function initializeEventListeners() {
         btn.addEventListener('click', (e) => {
             const view = e.currentTarget.dataset.view;
             
+            // 更新导航按钮的激活状态
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('nav-btn--active'));
+            e.currentTarget.classList.add('nav-btn--active');
+            
             // 获取当前活动标签
             const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
             
@@ -465,16 +500,35 @@ function initializeEventListeners() {
                 // 清除当前标签的工具ID，显示收藏页
                 if (activeTab) {
                     activeTab.toolId = null;
+                    activeTab.title = '收藏';
+                    activeTab.icon = 'ri-star-line';
                 }
             } else if (view === 'history') {
                 alert('历史功能即将推出');
                 return;
             } else if (view === 'settings') {
-                appState.currentView = 'settings';
-                // 清除当前标签的工具ID，显示设置页
-                if (activeTab) {
-                    activeTab.toolId = null;
+                // 检查是否已有设置标签
+                const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
+                
+                if (settingsTab) {
+                    // 如果已有设置标签，切换到该标签
+                    switchTab(settingsTab.id);
+                } else {
+                    // 否则在新标签中打开设置
+                    const newTabId = 'tab_' + Date.now();
+                    appState.tabs.push({
+                        id: newTabId,
+                        title: '设置',
+                        icon: 'ri-settings-3-line',
+                        toolId: 'settings',
+                        active: false,
+                        history: ['settings'],
+                        historyIndex: 0
+                    });
+                    appState.currentView = 'settings';
+                    switchTab(newTabId);
                 }
+                return;
             }
             
             renderTabs();
