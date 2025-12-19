@@ -5,3 +5,5 @@
 ### 请先做好计划再开始行动
 ### 开始行动前先看md文档(这些只是一个大致说明)
 ### Please reply me in Chinese, thank you
+
+### Gemini 你的工作只是修改样式(类似于一个html文件的css样式)
