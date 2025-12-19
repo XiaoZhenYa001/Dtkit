@@ -12,6 +12,8 @@
     <link rel="stylesheet" href="css/layout.css">
     <!-- 工具库样式 -->
     <link rel="stylesheet" href="css/tools-library.css">
+    <!-- 设置页面样式 -->
+    <link rel="stylesheet" href="css/settings.css">
     <!-- 工具样式 -->
     <link rel="stylesheet" href="css/tools/timestamp-converter.css">
     <link rel="stylesheet" href="css/tools/json-formatter.css">
@@ -39,11 +41,11 @@
                 <span class="nav-btn__label">收藏</span>
             </button>
 
-            <button class="nav-btn" data-view="history" title="历史">
+            <button class="nav-btn" data-view="history" title="暂时不知道是什么">
                 <div class="nav-btn__icon">
                     <i class="ri-history-line"></i>
                 </div>
-                <span class="nav-btn__label">历史</span>
+                <span class="nav-btn__label">暂定</span>
             </button>
         </nav>
 
@@ -120,107 +122,9 @@
                 </div>
             </div>
 
-            <!-- 时间戳转换视图 -->
-            <div id="timestampView" class="view">
-                <div class="view-container">
-                    <div class="section">
-                        <div class="section-header">
-                            <h2 class="section-title">时间戳转换</h2>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">时间戳（秒）</label>
-                                <input type="number" id="timestampInput" class="input" placeholder="输入 Unix 时间戳">
-                            </div>
-                            <div class="input-group">
-                                <label class="label">日期时间</label>
-                                <input type="text" id="datetimeOutput" class="input" readonly title="日期时间输出">
-                            </div>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">日期时间</label>
-                                <input type="datetime-local" id="datetimeInput" class="input" title="日期时间选择">
-                            </div>
-                            <div class="input-group">
-                                <label class="label">时间戳（秒）</label>
-                                <input type="text" id="timestampOutput" class="input" readonly title="时间戳输出">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- JSON 格式化视图 -->
-            <div id="jsonFormatterView" class="view">
-                <div class="view-container">
-                    <div class="json-formatter">
-                        <div class="section">
-                            <div class="section-header">
-                                <h2 class="section-title">JSON 格式化</h2>
-                            </div>
-                            <div class="tool-inputs">
-                                <textarea id="jsonInput" class="input json-input" placeholder="输入 JSON 数据..."></textarea>
-                                <div class="button-group">
-                                    <button id="formatBtn" class="btn btn--primary">格式化</button>
-                                    <button id="minifyBtn" class="btn btn--secondary">压缩</button>
-                                    <button id="copyJsonBtn" class="btn btn--secondary">复制</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="section">
-                            <div class="section-header">
-                                <h2 class="section-title">结果</h2>
-                            </div>
-                            <div class="tool-inputs">
-                                <textarea id="jsonOutput" class="input json-input" readonly title="JSON 输出"></textarea>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Base64 编解码视图 -->
-            <div id="base64CodecView" class="view">
-                <div class="view-container">
-                    <div class="section">
-                        <div class="section-header">
-                            <h2 class="section-title">Base64 编解码</h2>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">原始文本</label>
-                                <textarea id="base64Input" class="input" placeholder="输入要编码的文本..."></textarea>
-                                <div class="button-group">
-                                    <button id="encodeBtn" class="btn btn--primary">编码</button>
-                                    <button id="copyEncodeBtn" class="btn btn--secondary">复制</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">编码结果</label>
-                                <textarea id="base64Output" class="input" readonly title="Base64 编码输出"></textarea>
-                            </div>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">Base64 文本</label>
-                                <textarea id="base64DecodeInput" class="input" placeholder="输入要解码的 Base64..."></textarea>
-                                <div class="button-group">
-                                    <button id="decodeBtn" class="btn btn--primary">解码</button>
-                                    <button id="copyDecodeBtn" class="btn btn--secondary">复制</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="tool-inputs">
-                            <div class="input-group">
-                                <label class="label">解码结果</label>
-                                <textarea id="base64DecodeOutput" class="input" readonly title="Base64 解码输出"></textarea>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <!-- 动态工具容器 - 工具视图会动态渲染到这里 -->
+            <div id="dynamicToolContainer" class="view">
+                <!-- 工具内容由 JavaScript 动态注入 -->
             </div>
 
             <!-- 收藏夹视图 -->
@@ -234,6 +138,158 @@
                     </div>
                     <div class="tool-grid" id="favoritesGrid">
                         <!-- 收藏工具卡片动态生成 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 设置视图 -->
+            <div id="settingsView" class="view">
+                <div class="view-container">
+                    <div class="settings-content">
+                        
+                        <!-- 存储与网络 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-hard-drive-2-line"></i>
+                                <h2 class="settings-section-title">存储与网络</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                
+                                <div class="settings-item">
+                                    <label class="settings-label">文件下载位置</label>
+                                    <div class="settings-input-group">
+                                        <input type="text" id="downloadPathInput" class="settings-input" placeholder="输入下载路径...">
+                                        <div class="settings-btn-group">
+                                            <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">更改目录</button>
+                                            <button id="browseDownloadPathBtn" class="settings-btn-icon" title="选择文件夹">
+                                                <i class="ri-folder-open-line"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-checkbox">
+                                        <input type="checkbox" id="clean-files" class="checkbox">
+                                        <label for="clean-files" class="checkbox-label">退出时自动清理临时文件</label>
+                                    </div>
+                                </div>
+
+                                <hr class="settings-divider">
+
+                                <div class="settings-item">
+                                    <div class="settings-item-header">
+                                        <label class="settings-label">工具资源镜像源 (Mirror Source)</label>
+                                        <span class="settings-status-badge"><i class="ri-wifi-line"></i> 24ms</span>
+                                    </div>
+                                    <div class="settings-input-group">
+                                        <select class="settings-select">
+                                            <option value="official">官方源 (Default)</option>
+                                            <option value="aliyun" selected>阿里云 (Aliyun Mirror)</option>
+                                            <option value="tencent">腾讯云 (Tencent Mirror)</option>
+                                            <option value="custom">自定义...</option>
+                                        </select>
+                                        <button class="settings-btn settings-btn--secondary">
+                                            <i class="ri-speed-line"></i> 测速
+                                        </button>
+                                    </div>
+                                    <p class="settings-help-text">用于加速 NPM 包、图片资源及插件的下载。</p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 快捷键绑定 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-keyboard-box-line"></i>
+                                <h2 class="settings-section-title">快捷键绑定</h2>
+                                <span class="settings-section-hint">双击键位可修改</span>
+                            </div>
+                            <div class="settings-section-content" id="shortcutBindings">
+                                <div class="settings-shortcut-item" data-shortcut-id="toggleApp" data-default="Alt+Space">
+                                    <span class="settings-shortcut-label">呼出/隐藏工具箱</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Alt</span> <span class="settings-key-plus">+</span> <span class="settings-key">Space</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item" data-shortcut-id="screenshot" data-default="Ctrl+F1">
+                                    <span class="settings-shortcut-label">截图</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">F1</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item" data-shortcut-id="colorPicker" data-default="Ctrl+Shift+C">
+                                    <span class="settings-shortcut-label">截图并提取颜色</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">Shift</span> <span class="settings-key-plus">+</span> <span class="settings-key">C</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item" data-shortcut-id="recentTool" data-default="Ctrl+E">
+                                    <span class="settings-shortcut-label">打开最近使用的工具</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">E</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 配置规则管理 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-database-2-line"></i>
+                                <h2 class="settings-section-title">配置规则管理</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-item-title">备份配置</div>
+                                        <div class="settings-item-desc">导出所有工具设置、快捷键及收藏列表</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn--primary">
+                                        <i class="ri-upload-2-line"></i> 导出 Config.json
+                                    </button>
+                                </div>
+                                
+                                <hr class="settings-divider">
+                                
+                                <div class="settings-item">
+                                    <div>
+                                        <div class="settings-item-title">导入配置</div>
+                                        <div class="settings-item-desc">从 JSON 文件恢复设置，这将覆盖当前配置</div>
+                                    </div>
+                                    <button class="settings-btn settings-btn--secondary">
+                                        <i class="ri-download-2-line"></i> 导入...
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 常规选项 -->
+                        <section class="settings-section">
+                            <div class="settings-section-header">
+                                <i class="ri-toggle-line"></i>
+                                <h2 class="settings-section-title">常规选项</h2>
+                            </div>
+                            <div class="settings-section-content">
+                                <div class="settings-toggle-item">
+                                    <span class="settings-toggle-label">开机自动启动</span>
+                                    <label class="settings-toggle">
+                                        <input type="checkbox" class="settings-toggle-input">
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="settings-toggle-item">
+                                    <span class="settings-toggle-label">关闭主面板时最小化到托盘</span>
+                                    <label class="settings-toggle">
+                                        <input type="checkbox" class="settings-toggle-input" checked>
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="settings-footer">
+                            <p>DtKit v0.1.0 • Build 20241218</p>
+                        </div>
+
                     </div>
                 </div>
             </div>

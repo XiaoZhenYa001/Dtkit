@@ -53,6 +53,7 @@
 .tool-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-md);
+    border-color: var(--color-primary-light);
 }
 
 .tool-card__header {
