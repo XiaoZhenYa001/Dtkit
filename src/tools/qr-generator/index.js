@@ -10,6 +10,7 @@ import { showToast } from '../../core/utils.js';
 // 工具状态
 let qrState = {
     qrCode: null,
+    isFirstInit: true,  // 标记是否首次初始化
     currentOptions: {
         data: 'https://github.com',
         width: 300,
@@ -214,47 +215,51 @@ function getStyles() {
         .qr-generator-container {
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-lg);
-            padding: var(--spacing-lg);
-            max-width: 1200px;
-            margin: 0 auto;
+            gap: 1rem;
+            padding: 0.5rem 1.5rem 1.5rem 1.5rem;
+            max-width: 1100px;
+            margin: 1vh auto;
+            height: calc(100vh - 60px);
         }
 
         .qr-generator-header {
             text-align: center;
+            flex-shrink: 0;
         }
 
         .qr-generator-title {
-            font-size: var(--font-size-xl);
-            font-weight: 600;
+            font-size: 1.5rem;
+            font-weight: 700;
             color: var(--color-text-primary);
-            margin: 0 0 var(--spacing-xs) 0;
+            margin: 0 0 0.5rem 0;
+            letter-spacing: -0.02em;
         }
 
         .qr-generator-desc {
-            font-size: var(--font-size-sm);
+            font-size: 0.875rem;
             color: var(--color-text-secondary);
             margin: 0;
         }
 
         .qr-generator-content {
             display: grid;
-            grid-template-columns: 1fr 380px;
-            gap: var(--spacing-xl);
+            grid-template-columns: 1fr 360px;
+            gap: 2rem;
+            flex: 1;
+            min-height: 0;
         }
 
         /* 设置面板 */
         .qr-settings-panel {
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-md);
-            max-height: calc(100vh - 200px);
+            gap: 1rem;
             overflow-y: auto;
-            padding-right: var(--spacing-sm);
+            padding: 0.25rem 0.5rem 1rem 0.25rem;
         }
 
         .qr-settings-panel::-webkit-scrollbar {
-            width: 6px;
+            width: 4px;
         }
 
         .qr-settings-panel::-webkit-scrollbar-track {
@@ -263,14 +268,26 @@ function getStyles() {
 
         .qr-settings-panel::-webkit-scrollbar-thumb {
             background: var(--color-border);
-            border-radius: 3px;
+            border-radius: 4px;
+        }
+
+        .qr-settings-panel::-webkit-scrollbar-thumb:hover {
+            background: var(--color-text-tertiary);
         }
 
         .qr-section {
-            background: var(--color-bg-secondary);
+            background: #ffffff;
             border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg);
-            padding: var(--spacing-md);
+            border-radius: 1rem;
+            padding: 1.25rem;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        }
+
+        .qr-section:hover {
+            border-color: var(--color-primary);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            transform: translateY(-1px);
         }
 
         .qr-section-title {
@@ -281,14 +298,17 @@ function getStyles() {
             display: flex;
             align-items: center;
             gap: var(--spacing-sm);
+            padding-bottom: var(--spacing-sm);
+            border-bottom: 1px solid var(--color-border);
         }
 
         .qr-section-title i {
             color: var(--color-primary);
+            font-size: 1.1em;
         }
 
         .qr-option-group {
-            margin-bottom: var(--spacing-sm);
+            margin-bottom: var(--spacing-md);
         }
 
         .qr-option-group:last-child {
@@ -297,19 +317,64 @@ function getStyles() {
 
         .qr-label {
             display: block;
-            font-size: var(--font-size-xs);
+            font-size: 0.75rem;
+            font-weight: 600;
             color: var(--color-text-secondary);
-            margin-bottom: var(--spacing-xs);
+            margin-bottom: 0.375rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* 美化输入框和选择框 */
+        .qr-data-input,
+        .qr-select,
+        .qr-color-text,
+        .qr-size-input {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            color: var(--color-text-primary);
+            background: #f8fafc;
+            border: 1px solid var(--color-border);
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        .qr-data-input:hover,
+        .qr-select:hover,
+        .qr-color-text:hover,
+        .qr-size-input:hover {
+            border-color: var(--color-text-tertiary);
+        }
+
+        .qr-data-input:focus,
+        .qr-select:focus,
+        .qr-color-text:focus,
+        .qr-size-input:focus {
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+            background: var(--color-bg-primary);
         }
 
         .qr-data-input {
-            width: 100%;
             resize: vertical;
             font-family: var(--font-mono);
+            min-height: 80px;
+            line-height: 1.5;
         }
 
         .qr-select {
-            width: 100%;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+
+        .qr-select:focus {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%233b82f6' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
         }
 
         /* 颜色选择器 */
@@ -320,13 +385,24 @@ function getStyles() {
         }
 
         .qr-color-input {
-            width: 48px;
-            height: 36px;
-            padding: 2px;
-            border: 1px solid var(--color-border);
+            width: 52px;
+            height: 42px;
+            padding: 3px;
+            border: 2px solid var(--color-border);
             border-radius: var(--radius-md);
             cursor: pointer;
             background: var(--color-bg-primary);
+            transition: all 0.2s ease;
+        }
+
+        .qr-color-input:hover {
+            border-color: var(--color-text-tertiary);
+            transform: scale(1.05);
+        }
+
+        .qr-color-input:focus {
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         }
 
         .qr-color-input::-webkit-color-swatch-wrapper {
@@ -336,12 +412,14 @@ function getStyles() {
         .qr-color-input::-webkit-color-swatch {
             border-radius: var(--radius-sm);
             border: none;
+            box-shadow: inset 0 0 1px rgba(0,0,0,0.1);
         }
 
         .qr-color-text {
             flex: 1;
             font-family: var(--font-mono);
             text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         /* Logo 上传 */
@@ -357,16 +435,25 @@ function getStyles() {
 
         .qr-upload-btn {
             flex: 1;
+            padding: 10px 16px;
+            border-radius: var(--radius-md);
+            transition: all 0.2s ease;
+        }
+
+        .qr-upload-btn:hover {
+            transform: translateY(-1px);
         }
 
         .qr-clear-logo-btn {
-            padding: var(--spacing-sm);
+            padding: 10px 12px;
+            border-radius: var(--radius-md);
         }
 
         .qr-logo-preview {
             margin-top: var(--spacing-sm);
-            padding: var(--spacing-sm);
+            padding: var(--spacing-md);
             background: var(--color-bg-tertiary);
+            border: 1px dashed var(--color-border);
             border-radius: var(--radius-md);
             display: flex;
             align-items: center;
@@ -377,6 +464,7 @@ function getStyles() {
             max-width: 80px;
             max-height: 80px;
             border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-sm);
         }
 
         /* 范围滑块 */
@@ -384,36 +472,45 @@ function getStyles() {
             display: flex;
             align-items: center;
             gap: var(--spacing-md);
+            padding: var(--spacing-sm) 0;
         }
 
         .qr-range {
             flex: 1;
             height: 6px;
             -webkit-appearance: none;
-            background: var(--color-border);
+            background: linear-gradient(to right, var(--color-primary) 0%, var(--color-border) 0%);
             border-radius: 3px;
             outline: none;
+            transition: background 0.15s ease;
         }
 
         .qr-range::-webkit-slider-thumb {
             -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             background: var(--color-primary);
+            border: 3px solid var(--color-bg-primary);
             border-radius: 50%;
             cursor: pointer;
-            transition: transform 0.2s ease;
+            box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
         .qr-range::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
+            transform: scale(1.15);
+            box-shadow: 0 3px 10px rgba(59, 130, 246, 0.4);
         }
 
         .qr-range-value {
             font-size: var(--font-size-sm);
-            color: var(--color-text-secondary);
-            min-width: 40px;
-            text-align: right;
+            font-weight: 600;
+            color: var(--color-primary);
+            min-width: 45px;
+            text-align: center;
+            background: var(--color-bg-tertiary);
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
         }
 
         /* 尺寸输入 */
@@ -424,17 +521,22 @@ function getStyles() {
         }
 
         .qr-size-input {
-            width: 80px;
+            width: 90px;
             text-align: center;
+            font-weight: 500;
         }
 
         .qr-size-separator {
-            color: var(--color-text-secondary);
+            color: var(--color-text-tertiary);
+            font-weight: 600;
+            font-size: 1.1em;
         }
 
         .qr-size-unit {
             font-size: var(--font-size-sm);
-            color: var(--color-text-secondary);
+            color: var(--color-text-tertiary);
+            font-weight: 500;
+            margin-left: var(--spacing-xs);
         }
 
         /* 预览面板 */
@@ -547,8 +649,9 @@ async function loadQRCodeStyling() {
 
 /**
  * 创建或更新二维码
+ * @param {boolean} showSuccessToast - 是否显示成功提示
  */
-async function generateQRCode() {
+async function generateQRCode(showSuccessToast = true) {
     const container = document.getElementById('qrCodePreview');
     if (!container) return;
 
@@ -594,7 +697,10 @@ async function generateQRCode() {
         qrState.qrCode = new QRCodeStyling(options);
         qrState.qrCode.append(container);
 
-        showToast('二维码已生成', 'success');
+        // 只在需要时显示Toast
+        if (showSuccessToast) {
+            showToast('二维码已生成', 'success');
+        }
     } catch (error) {
         console.error('[QRGenerator] 生成二维码失败:', error);
         container.innerHTML = `<div style="color: var(--color-text-secondary); text-align: center;">
@@ -618,48 +724,61 @@ async function downloadQRCode(format) {
         const downloadPath = getDownloadPath();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `qrcode-${timestamp}`;
+        const fullFilename = `${filename}.${format}`;
 
-        // 检查是否在 Tauri 环境
-        if (window.__TAURI__) {
-            // 使用 Tauri 的文件写入功能
-            const { writeBinaryFile, BaseDirectory } = window.__TAURI__.fs;
-            const { join } = window.__TAURI__.path;
-            
-            let extension = format;
-            let mimeType = `image/${format}`;
-            
-            if (format === 'svg') {
-                // SVG 格式处理
-                const svgData = await qrState.qrCode.getRawData('svg');
-                if (svgData) {
-                    const filePath = await join(downloadPath, `${filename}.svg`);
-                    const blob = svgData;
-                    const arrayBuffer = await blob.arrayBuffer();
-                    await writeBinaryFile(filePath, new Uint8Array(arrayBuffer));
-                    showToast(`已保存到: ${filePath}`, 'success');
-                }
-            } else {
-                // PNG/JPEG 格式处理
-                const blob = await qrState.qrCode.getRawData(format);
-                if (blob) {
-                    const filePath = await join(downloadPath, `${filename}.${extension}`);
-                    const arrayBuffer = await blob.arrayBuffer();
-                    await writeBinaryFile(filePath, new Uint8Array(arrayBuffer));
-                    showToast(`已保存到: ${filePath}`, 'success');
-                }
+        // 获取二维码数据
+        const blob = await qrState.qrCode.getRawData(format);
+        if (!blob) {
+            showToast('获取二维码数据失败', 'error');
+            return;
+        }
+
+        // 检查是否在 Tauri 环境，并尝试使用 Tauri API
+        if (window.__TAURI__ && window.__TAURI__.core) {
+            try {
+                const arrayBuffer = await blob.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                // 构建完整路径
+                const filePath = downloadPath.endsWith('\\') || downloadPath.endsWith('/') 
+                    ? downloadPath + fullFilename 
+                    : downloadPath + '\\' + fullFilename;
+                
+                // 将 Uint8Array 转换为普通数组以便 JSON 序列化
+                const dataArray = Array.from(uint8Array);
+                
+                // 直接使用 Tauri invoke 调用 Rust 命令写入文件
+                await window.__TAURI__.core.invoke('write_binary_file', { 
+                    path: filePath, 
+                    data: dataArray 
+                });
+                showToast(`已保存到: ${filePath}`, 'success');
+            } catch (tauriError) {
+                console.warn('[QRGenerator] Tauri API 调用失败，使用浏览器下载:', tauriError);
+                browserDownload(blob, filename, format);
             }
         } else {
-            // 浏览器环境下载
-            qrState.qrCode.download({
-                name: filename,
-                extension: format
-            });
-            showToast(`下载文件: ${filename}.${format}`, 'success');
+            browserDownload(blob, filename, format);
         }
     } catch (error) {
         console.error('[QRGenerator] 下载失败:', error);
         showToast('下载失败: ' + error.message, 'error');
     }
+}
+
+/**
+ * 浏览器环境下载
+ */
+function browserDownload(blob, filename, format) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`下载文件: ${filename}.${format}`, 'success');
 }
 
 /**
@@ -866,8 +985,9 @@ async function initQRGeneratorTool() {
     downloadSvgBtn?.addEventListener('click', () => downloadQRCode('svg'));
     downloadJpegBtn?.addEventListener('click', () => downloadQRCode('jpeg'));
 
-    // 初始生成一个二维码
-    await generateQRCode();
+    // 初始生成一个二维码（只有首次初始化才显示Toast）
+    await generateQRCode(qrState.isFirstInit);
+    qrState.isFirstInit = false;  // 标记已不是首次初始化
 
     console.log('[QRGenerator] 初始化完成 ✓');
 }
