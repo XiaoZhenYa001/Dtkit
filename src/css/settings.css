@@ -200,6 +200,27 @@
     background-size: 1rem;
 }
 
+/* 按钮组 - 用于合并多个按钮 */
+.settings-btn-group {
+    display: flex;
+    align-items: stretch;
+    border-left: 1px solid var(--color-border);
+    background: white;
+}
+
+.settings-btn-group .settings-btn {
+    border-left: none !important;
+}
+
+.settings-btn-group .settings-btn-icon {
+    border-left: 1px solid var(--color-border-light) !important; /* 内部轻微分割 */
+    width: 2.5rem; /* 稍微窄一点 */
+}
+
+.settings-btn-group:hover .settings-btn-icon {
+    border-color: var(--color-border); /* hover时加深分割线 */
+}
+
 /* 按钮 - 粘在输入框右侧 */
 .settings-btn {
     display: inline-flex;
@@ -329,6 +350,7 @@
     border-bottom: 1px solid var(--color-border-light);
     transition: background-color 0.2s;
     border-radius: 0.5rem;
+    cursor: pointer;
 }
 
 .settings-shortcut-item:hover {
@@ -337,6 +359,27 @@
 
 .settings-shortcut-item:last-child {
     border-bottom: none;
+}
+
+/* 快捷键录入状态 */
+.settings-shortcut-item.recording {
+    background-color: var(--color-primary-light);
+    border: 2px solid var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+.settings-shortcut-item.recording .settings-shortcut-keys {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.settings-shortcut-keys--recording {
+    color: var(--color-primary);
+    font-style: italic;
 }
 
 .settings-shortcut-label {

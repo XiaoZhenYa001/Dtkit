@@ -1,10 +1,17 @@
 /**
  * DToolBox - 桌面工具箱主应用程序
- * 提供模块化、易于维护的前端结构
+ * 模块化架构入口文件
  */
 
 // ============================================
-// 导入工具注册中心和工具模块
+// 导入核心模块
+// ============================================
+import appState, { getActiveTab } from './core/state.js';
+import DOM, { initDOM } from './core/dom.js';
+import { showToast } from './core/utils.js';
+
+// ============================================
+// 导入工具注册中心
 // ============================================
 import { 
     getAllTools, 
@@ -13,149 +20,55 @@ import {
     destroyTool,
     hasToolTemplate,
     renderToolView,
-    clearDynamicContainer,
     showDynamicContainer,
-    hideDynamicContainer,
-    getDynamicContainerId
+    hideDynamicContainer
 } from './tools/index.js';
 
 // ============================================
-// 应用状态管理
+// 导入组件
 // ============================================
-const appState = {
-    tabs: [
-        { 
-            id: 'toolLibrary', 
-            title: '工具库', 
-            icon: 'ri-apps-2-line', 
-            toolId: null, 
-            active: true, 
-            history: [null],
-            historyIndex: 0
-        }
-    ],
-    activeTabId: 'toolLibrary',
-    currentView: 'toolLibrary',
-    currentToolId: null,
-    searchQuery: '',
-    favorites: JSON.parse(localStorage.getItem('dtkit_favorites') || '[]')
-};
+import { addTab, closeTab, switchTab, renderTabs, setTabCallbacks } from './components/tabs.js';
+import { updateBackForwardButtons, goBack, goForward, initNavigationListeners, setNavigationCallbacks } from './components/navigation.js';
 
 // ============================================
-// DOM 元素缓存
+// 导入视图
 // ============================================
-const DOM = {
-    tabBar: document.getElementById('tabBar'),
-    contentArea: document.getElementById('contentArea'),
-    toolLibraryView: document.getElementById('toolLibraryView'),
-    favoritesView: document.getElementById('favoritesView'),
-    settingsView: document.getElementById('settingsView'),
-    devToolsGrid: document.getElementById('devToolsGrid'),
-    designToolsGrid: document.getElementById('designToolsGrid'),
-    otherToolsGrid: document.getElementById('otherToolsGrid'),
-    favoritesGrid: document.getElementById('favoritesGrid'),
-    backBtn: document.getElementById('backBtn'),
-    forwardBtn: document.getElementById('forwardBtn'),
-    searchContainer: document.getElementById('searchContainer'),
-    searchInput: document.getElementById('searchInput')
-};
-
-// ============================================
-// 工具卡片管理
-// ============================================
-function createToolCard(tool, description = '') {
-    const desc = description || tool.description || '点击查看详情';
-    const isFavorited = appState.favorites.includes(tool.id);
-    const card = document.createElement('div');
-    card.className = 'tool-card';
-    card.dataset.toolId = tool.id;
-    const colorClass = tool.colorClass || 'tool-card__icon--blue';
-    
-    card.innerHTML = `
-        <button class="tool-card__favorite ${isFavorited ? 'tool-card__favorite--active' : ''}" title="${isFavorited ? '取消收藏' : '收藏'}">
-            <i class="ri-star-fill"></i>
-        </button>
-        <div class="tool-card__header">
-            <div class="tool-card__icon ${colorClass}">
-                <i class="${tool.icon}"></i>
-            </div>
-            <i class="ri-arrow-right-up-line tool-card__arrow"></i>
-        </div>
-        <h3 class="tool-card__title">${tool.name}</h3>
-        <p class="tool-card__description">${desc}</p>
-    `;
-    
-    // 收藏按钮事件
-    const favoriteBtn = card.querySelector('.tool-card__favorite');
-    favoriteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleFavorite(tool.id);
-        updateFavoriteButton(favoriteBtn, tool.id);
-    });
-    
-    // 卡片整体点击打开工具
-    card.addEventListener('click', (e) => {
-        if (e.target !== favoriteBtn && !e.target.closest('.tool-card__favorite')) {
-            openTool(tool.id, tool.name, tool.icon);
-        }
-    });
-    
-    return card;
-}
-
-function updateFavoriteButton(btn, toolId) {
-    const isFavorited = appState.favorites.includes(toolId);
-    btn.classList.toggle('tool-card__favorite--active', isFavorited);
-    btn.title = isFavorited ? '取消收藏' : '收藏';
-    btn.innerHTML = `<i class="ri-star-${isFavorited ? 'fill' : 'line'}"></i>`;
-}
-
-function toggleFavorite(toolId) {
-    const index = appState.favorites.indexOf(toolId);
-    if (index > -1) {
-        appState.favorites.splice(index, 1);
-    } else {
-        appState.favorites.push(toolId);
-    }
-    localStorage.setItem('dtkit_favorites', JSON.stringify(appState.favorites));
-}
-
-// ============================================
-// 标签页管理
-// ============================================
-function addTab() {
-    const newTabId = 'tab_' + Date.now();
-    appState.tabs.push({
-        id: newTabId,
-        title: '工具库',
-        icon: 'ri-apps-2-line',
-        toolId: null,
-        active: false,
-        history: [null],
-        historyIndex: 0
-    });
-    switchTab(newTabId);
-}
-
-function closeTab(tabId) {
-    const index = appState.tabs.findIndex(t => t.id === tabId);
-    if (index < 0 || appState.tabs.length === 1) return;
-    
-    appState.tabs.splice(index, 1);
-    
-    if (appState.activeTabId === tabId && appState.tabs.length > 0) {
-        const newIndex = Math.max(0, index - 1);
-        switchTab(appState.tabs[newIndex].id);
-    } else {
-        renderTabs();
-    }
-}
+import { renderToolLibrary, handleSearch, initSearchListener, setToolLibraryCallbacks } from './views/toolLibrary.js';
+import { renderFavoritesPage, updateClearFavoritesButton, initClearFavoritesListener, setFavoritesCallbacks } from './views/favorites.js';
+import { initSettings } from './views/settings.js';
 
 // ============================================
 // 内容视图管理
 // ============================================
+
+/**
+ * 同步左侧导航按钮的激活状态
+ */
+function syncNavButtonState() {
+    const activeTab = getActiveTab();
+    let activeView = 'toolLibrary';
+    
+    if (activeTab) {
+        if (activeTab.toolId === 'settings') {
+            activeView = 'settings';
+        } else if (activeTab.toolId) {
+            // 工具视图，不高亮任何导航按钮（或保持工具库高亮）
+            activeView = 'toolLibrary';
+        } else {
+            activeView = activeTab.viewType || 'toolLibrary';
+        }
+    }
+    
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.remove('nav-btn--active');
+        if (btn.dataset.view === activeView) {
+            btn.classList.add('nav-btn--active');
+        }
+    });
+}
+
 function updateContentView() {
-    const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
+    const activeTab = getActiveTab();
     if (!activeTab) return;
     
     // 销毁当前工具（清理资源）
@@ -163,7 +76,7 @@ function updateContentView() {
         destroyTool(appState.currentToolId);
     }
     
-    // 隐藏所有视图（带空值检查）
+    // 隐藏所有视图
     DOM.toolLibraryView?.classList.remove('view--active');
     DOM.favoritesView?.classList.remove('view--active');
     DOM.settingsView?.classList.remove('view--active');
@@ -172,20 +85,16 @@ function updateContentView() {
     // 隐藏动态工具容器
     hideDynamicContainer();
     
-    // 优先判断：如果标签页有工具ID，显示对应工具或设置页
+    // 判断显示哪个视图
     if (activeTab.toolId === 'settings') {
-        // 设置页面特殊处理
         DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
         appState.currentView = 'settings';
     }
     else if (activeTab.toolId) {
-        // 普通工具
         const tool = getTool(activeTab.toolId);
         if (tool) {
-            // 检查工具是否有自己的模板
             if (hasToolTemplate(activeTab.toolId)) {
-                // 使用动态渲染
                 renderToolView(activeTab.toolId);
                 showDynamicContainer();
             }
@@ -193,12 +102,10 @@ function updateContentView() {
             setTimeout(() => initTool(activeTab.toolId), 100);
         }
     }
-    // 如果当前视图是设置页面，显示设置视图（向后兼容）
     else if (appState.currentView === 'settings') {
         DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
     }
-    // 次优先：根据当前视图显示对应内容
     else if (appState.currentView === 'favorites') {
         DOM.favoritesView?.classList.add('view--active');
         if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
@@ -206,32 +113,36 @@ function updateContentView() {
         appState.currentToolId = null;
         updateClearFavoritesButton();
     } else {
-        // 默认显示工具库
         DOM.toolLibraryView?.classList.add('view--active');
         if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
         appState.currentToolId = null;
     }
+    
+    // 同步左侧导航按钮状态
+    syncNavButtonState();
 }
 
+// ============================================
+// 打开工具
+// ============================================
 function openTool(toolId, toolName, toolIcon) {
-    // 先检查是否已有标签打开了该工具
+    // 检查是否已有标签打开了该工具
     const existingTab = appState.tabs.find(t => t.toolId === toolId);
     
     if (existingTab) {
-        // 如果已有标签打开该工具，直接切换到那个标签
         switchTab(existingTab.id);
         return;
     }
     
-    // 没有已打开的标签，则在当前标签打开
-    const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
+    // 在当前标签打开
+    const activeTab = getActiveTab();
     if (!activeTab) return;
     
     activeTab.toolId = toolId;
     activeTab.title = toolName;
     activeTab.icon = toolIcon;
     
-    // 添加到当前标签的历史栈
+    // 添加到历史栈
     const historyIndex = activeTab.historyIndex + 1;
     activeTab.history = activeTab.history.slice(0, historyIndex);
     activeTab.history.push(toolId);
@@ -244,262 +155,32 @@ function openTool(toolId, toolName, toolIcon) {
 }
 
 // ============================================
-// 标签渲染
+// 导航按钮事件
 // ============================================
-function renderTabs() {
-    if (!DOM.tabBar) return;
-    
-    DOM.tabBar.innerHTML = '';
-    
-    appState.tabs.forEach(tab => {
-        const tabEl = document.createElement('div');
-        tabEl.className = `tab ${tab.id === appState.activeTabId ? 'tab--active' : ''}`;
-        tabEl.dataset.tabId = tab.id;
-        
-        const label = document.createElement('div');
-        label.className = 'tab__label';
-        label.innerHTML = `
-            <i class="${tab.icon}"></i>
-            <span>${tab.title}</span>
-        `;
-        tabEl.appendChild(label);
-        
-        // 关闭按钮
-        const closeBtn = document.createElement('button');
-        closeBtn.className = 'tab__close';
-        closeBtn.innerHTML = '<i class="ri-close-line"></i>';
-        closeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            closeTab(tab.id);
-        });
-        closeBtn.style.display = appState.tabs.length > 1 ? 'flex' : 'none';
-        tabEl.appendChild(closeBtn);
-        
-        // 整个标签元素点击切换（而不仅仅是 label）
-        tabEl.addEventListener('click', (e) => {
-            // 如果点击的是关闭按钮，不处理
-            if (e.target.closest('.tab__close')) return;
-            switchTab(tab.id);
-        });
-        
-        // 中键点击关闭标签（类似浏览器）
-        tabEl.addEventListener('mouseup', (e) => {
-            if (e.button === 1 && appState.tabs.length > 1) {
-                e.preventDefault();
-                closeTab(tab.id);
-            }
-        });
-        
-        DOM.tabBar.appendChild(tabEl);
-    });
-}
-
-function switchTab(tabId) {
-    appState.activeTabId = tabId;
-    const tab = appState.tabs.find(t => t.id === tabId);
-    if (tab) {
-        appState.currentView = tab.toolId ? tab.toolId : 'toolLibrary';
-    }
-    renderTabs();
-    updateContentView();
-    updateBackForwardButtons();
-}
-
-// ============================================
-// 收藏页面
-// ============================================
-function renderFavoritesPage() {
-    const grid = DOM.favoritesGrid;
-    if (!grid) return;
-    
-    grid.innerHTML = '';
-    
-    if (appState.favorites.length === 0) {
-        grid.innerHTML = '<div class="empty-state"><p>还未收藏任何工具</p></div>';
-        return;
-    }
-    
-    const allTools = getAllTools();
-    appState.favorites.forEach(favId => {
-        const tool = allTools.find(t => t.id === favId);
-        if (tool) {
-            grid.appendChild(createToolCard(tool));
-        }
-    });
-}
-
-function updateClearFavoritesButton() {
-    const btn = document.getElementById('clearFavoritesBtn');
-    if (btn) {
-        btn.style.display = appState.favorites.length === 0 ? 'none' : 'flex';
-    }
-}
-
-// ============================================
-// 后退/前进
-// ============================================
-function updateBackForwardButtons() {
-    const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
-    if (!activeTab) return;
-    
-    if (DOM.backBtn) DOM.backBtn.disabled = activeTab.historyIndex <= 0;
-    if (DOM.forwardBtn) DOM.forwardBtn.disabled = activeTab.historyIndex >= activeTab.history.length - 1;
-}
-
-function goBack() {
-    const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
-    if (!activeTab || activeTab.historyIndex <= 0) return;
-    
-    activeTab.historyIndex--;
-    const toolId = activeTab.history[activeTab.historyIndex];
-    
-    if (toolId === null) {
-        appState.currentView = 'toolLibrary';
-        activeTab.toolId = null;
-        activeTab.title = '工具库';
-        activeTab.icon = 'ri-apps-2-line';
-    } else {
-        const tool = getTool(toolId);
-        if (tool) {
-            activeTab.toolId = toolId;
-            activeTab.title = tool.name;
-            activeTab.icon = tool.icon;
-            appState.currentView = toolId;
-        }
-    }
-    
-    renderTabs();
-    updateContentView();
-    updateBackForwardButtons();
-}
-
-function goForward() {
-    const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
-    if (!activeTab || activeTab.historyIndex >= activeTab.history.length - 1) return;
-    
-    activeTab.historyIndex++;
-    const toolId = activeTab.history[activeTab.historyIndex];
-    
-    if (toolId === null) {
-        appState.currentView = 'toolLibrary';
-        activeTab.toolId = null;
-        activeTab.title = '工具库';
-        activeTab.icon = 'ri-apps-2-line';
-    } else {
-        const tool = getTool(toolId);
-        if (tool) {
-            activeTab.toolId = toolId;
-            activeTab.title = tool.name;
-            activeTab.icon = tool.icon;
-            appState.currentView = toolId;
-        }
-    }
-    
-    renderTabs();
-    updateContentView();
-    updateBackForwardButtons();
-}
-
-// ============================================
-// 工具库渲染
-// ============================================
-function renderToolLibrary() {
-    const allTools = getAllTools();
-    console.log('[renderToolLibrary] 找到工具数量:', allTools.length, '工具列表:', allTools);
-    
-    // 按分类分组
-    const devTools = allTools.filter(t => t.category === 'dev');
-    const designTools = allTools.filter(t => t.category === 'design');
-    const otherTools = allTools.filter(t => t.category === 'other');
-    
-    console.log(`[renderToolLibrary] 分类: dev=${devTools.length}, design=${designTools.length}, other=${otherTools.length}`);
-    
-    // 渲染开发工具
-    if (DOM.devToolsGrid) {
-        DOM.devToolsGrid.innerHTML = '';
-        devTools.forEach(tool => {
-            DOM.devToolsGrid.appendChild(createToolCard(tool));
-        });
-    }
-    
-    // 渲染设计工具
-    if (DOM.designToolsGrid) {
-        DOM.designToolsGrid.innerHTML = '';
-        designTools.forEach(tool => {
-            DOM.designToolsGrid.appendChild(createToolCard(tool));
-        });
-    }
-    
-    // 渲染其他工具
-    if (DOM.otherToolsGrid) {
-        DOM.otherToolsGrid.innerHTML = '';
-        otherTools.forEach(tool => {
-            DOM.otherToolsGrid.appendChild(createToolCard(tool));
-        });
-    }
-}
-
-// ============================================
-// 搜索功能
-// ============================================
-function handleSearch(query) {
-    appState.searchQuery = query.toLowerCase();
-    
-    const allTools = getAllTools();
-    
-    if (!appState.searchQuery) {
-        renderToolLibrary();
-        return;
-    }
-    
-    const filtered = allTools.filter(tool =>
-        tool.name.toLowerCase().includes(appState.searchQuery) ||
-        tool.description?.toLowerCase().includes(appState.searchQuery)
-    );
-    
-    // 清空所有分类
-    if (DOM.devToolsGrid) DOM.devToolsGrid.innerHTML = '';
-    if (DOM.designToolsGrid) DOM.designToolsGrid.innerHTML = '';
-    if (DOM.otherToolsGrid) DOM.otherToolsGrid.innerHTML = '';
-    if (DOM.favoritesGrid) DOM.favoritesGrid.innerHTML = '';
-    
-    // 在第一个分类中显示搜索结果
-    if (DOM.devToolsGrid && DOM.devToolsGrid.parentElement?.style.display !== 'none') {
-        filtered.forEach(tool => {
-            DOM.devToolsGrid.appendChild(createToolCard(tool));
-        });
-    }
-}
-
-// ============================================
-// 事件监听初始化
-// ============================================
-function initializeEventListeners() {
-    // 导航按钮
+function initNavButtonListeners() {
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const view = e.currentTarget.dataset.view;
             
-            // 更新导航按钮的激活状态
+            // 更新导航按钮激活状态
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('nav-btn--active'));
             e.currentTarget.classList.add('nav-btn--active');
             
-            // 获取当前活动标签
-            const activeTab = appState.tabs.find(t => t.id === appState.activeTabId);
+            const activeTab = getActiveTab();
             
             if (view === 'toolLibrary') {
                 appState.currentView = 'toolLibrary';
-                // 清除当前标签的工具ID，返回工具库
                 if (activeTab) {
                     activeTab.toolId = null;
+                    activeTab.viewType = 'toolLibrary';
                     activeTab.title = '工具库';
                     activeTab.icon = 'ri-apps-2-line';
                 }
             } else if (view === 'favorites') {
                 appState.currentView = 'favorites';
-                // 清除当前标签的工具ID，显示收藏页
                 if (activeTab) {
                     activeTab.toolId = null;
+                    activeTab.viewType = 'favorites';
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
                 }
@@ -507,20 +188,18 @@ function initializeEventListeners() {
                 alert('历史功能即将推出');
                 return;
             } else if (view === 'settings') {
-                // 检查是否已有设置标签
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
                 
                 if (settingsTab) {
-                    // 如果已有设置标签，切换到该标签
                     switchTab(settingsTab.id);
                 } else {
-                    // 否则在新标签中打开设置
                     const newTabId = 'tab_' + Date.now();
                     appState.tabs.push({
                         id: newTabId,
                         title: '设置',
                         icon: 'ri-settings-3-line',
                         toolId: 'settings',
+                        viewType: 'settings',
                         active: false,
                         history: ['settings'],
                         historyIndex: 0
@@ -535,35 +214,45 @@ function initializeEventListeners() {
             updateContentView();
         });
     });
-    
-    // 后退前进
-    if (DOM.backBtn) DOM.backBtn.addEventListener('click', goBack);
-    if (DOM.forwardBtn) DOM.forwardBtn.addEventListener('click', goForward);
-    
-    // 搜索
-    if (DOM.searchInput) {
-        DOM.searchInput.addEventListener('input', (e) => {
-            handleSearch(e.target.value);
-        });
-    }
-    
-    // 新增标签页
+}
+
+// ============================================
+// 新增标签页按钮
+// ============================================
+function initAddTabListener() {
     const addTabBtn = document.getElementById('addTabBtn');
     if (addTabBtn) {
-        addTabBtn.addEventListener('click', () => {
-            addTab();
-        });
+        addTabBtn.addEventListener('click', () => addTab());
     }
+}
+
+// ============================================
+// 初始化回调连接
+// ============================================
+function initCallbacks() {
+    // 标签组件回调
+    setTabCallbacks({
+        onSwitchTab: switchTab,
+        onUpdateContentView: updateContentView,
+        onUpdateBackForwardButtons: updateBackForwardButtons
+    });
     
-    // 清空收藏
-    document.getElementById('clearFavoritesBtn')?.addEventListener('click', () => {
-        if (confirm('确定要清空所有收藏吗？')) {
-            appState.favorites = [];
-            localStorage.setItem('dtkit_favorites', JSON.stringify(appState.favorites));
-            renderFavoritesPage();
-            updateClearFavoritesButton();
-            renderToolLibrary();
-        }
+    // 导航组件回调
+    setNavigationCallbacks({
+        onRenderTabs: renderTabs,
+        onUpdateContentView: updateContentView,
+        onGetTool: getTool
+    });
+    
+    // 工具库视图回调
+    setToolLibraryCallbacks({
+        onOpenTool: openTool
+    });
+    
+    // 收藏视图回调
+    setFavoritesCallbacks({
+        onOpenTool: openTool,
+        onRenderToolLibrary: renderToolLibrary
     });
 }
 
@@ -571,11 +260,27 @@ function initializeEventListeners() {
 // 初始化应用
 // ============================================
 function initializeApp() {
+    // 初始化 DOM 缓存
+    initDOM();
+    
+    // 初始化模块间回调
+    initCallbacks();
+    
+    // 渲染初始界面
     renderToolLibrary();
     renderTabs();
     updateBackForwardButtons();
-    initializeEventListeners();
     updateClearFavoritesButton();
+    
+    // 初始化事件监听
+    initNavButtonListeners();
+    initNavigationListeners();
+    initSearchListener();
+    initAddTabListener();
+    initClearFavoritesListener();
+    
+    // 初始化设置（下载路径、快捷键）
+    initSettings();
 }
 
 // DOM 加载完成后初始化

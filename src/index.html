@@ -41,11 +41,11 @@
                 <span class="nav-btn__label">收藏</span>
             </button>
 
-            <button class="nav-btn" data-view="history" title="历史">
+            <button class="nav-btn" data-view="history" title="暂时不知道是什么">
                 <div class="nav-btn__icon">
                     <i class="ri-history-line"></i>
                 </div>
-                <span class="nav-btn__label">历史</span>
+                <span class="nav-btn__label">暂定</span>
             </button>
         </nav>
 
@@ -158,11 +158,13 @@
                                 <div class="settings-item">
                                     <label class="settings-label">文件下载位置</label>
                                     <div class="settings-input-group">
-                                        <input type="text" value="D:\DevToolbox\Downloads" readonly class="settings-input">
-                                        <button class="settings-btn settings-btn--secondary">更改目录</button>
-                                        <button class="settings-btn-icon" title="打开文件夹">
-                                            <i class="ri-folder-open-line"></i>
-                                        </button>
+                                        <input type="text" id="downloadPathInput" class="settings-input" placeholder="输入下载路径...">
+                                        <div class="settings-btn-group">
+                                            <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">更改目录</button>
+                                            <button id="browseDownloadPathBtn" class="settings-btn-icon" title="选择文件夹">
+                                                <i class="ri-folder-open-line"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                     <div class="settings-checkbox">
                                         <input type="checkbox" id="clean-files" class="checkbox">
@@ -200,20 +202,26 @@
                                 <h2 class="settings-section-title">快捷键绑定</h2>
                                 <span class="settings-section-hint">双击键位可修改</span>
                             </div>
-                            <div class="settings-section-content">
-                                <div class="settings-shortcut-item">
+                            <div class="settings-section-content" id="shortcutBindings">
+                                <div class="settings-shortcut-item" data-shortcut-id="toggleApp" data-default="Alt+Space">
                                     <span class="settings-shortcut-label">呼出/隐藏工具箱</span>
                                     <div class="settings-shortcut-keys">
                                         <span class="settings-key">Alt</span> <span class="settings-key-plus">+</span> <span class="settings-key">Space</span>
                                     </div>
                                 </div>
-                                <div class="settings-shortcut-item">
+                                <div class="settings-shortcut-item" data-shortcut-id="screenshot" data-default="Ctrl+F1">
+                                    <span class="settings-shortcut-label">截图</span>
+                                    <div class="settings-shortcut-keys">
+                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">F1</span>
+                                    </div>
+                                </div>
+                                <div class="settings-shortcut-item" data-shortcut-id="colorPicker" data-default="Ctrl+Shift+C">
                                     <span class="settings-shortcut-label">截图并提取颜色</span>
                                     <div class="settings-shortcut-keys">
                                         <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">Shift</span> <span class="settings-key-plus">+</span> <span class="settings-key">C</span>
                                     </div>
                                 </div>
-                                <div class="settings-shortcut-item">
+                                <div class="settings-shortcut-item" data-shortcut-id="recentTool" data-default="Ctrl+E">
                                     <span class="settings-shortcut-label">打开最近使用的工具</span>
                                     <div class="settings-shortcut-keys">
                                         <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">E</span>

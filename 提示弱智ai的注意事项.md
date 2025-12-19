@@ -6,4 +6,8 @@
 ### 开始行动前先看md文档(这些只是一个大致说明)
 ### Please reply me in Chinese, thank you
 
+## DEVELOPER_GUIDE.md  目前的项目结构,新的ai必须看这个
+
+### 思考思路: 先想一下你觉得应该有的->与我提示的对比->综合思考取舍
+
 ### Gemini 你的工作只是修改样式(类似于一个html文件的css样式)
