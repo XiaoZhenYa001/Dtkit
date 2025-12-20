@@ -52,8 +52,8 @@ function syncNavButtonState() {
         if (activeTab.toolId === 'settings') {
             activeView = 'settings';
         } else if (activeTab.toolId) {
-            // 工具视图，不高亮任何导航按钮（或保持工具库高亮）
-            activeView = 'toolLibrary';
+            // 工具视图，根据 viewType 保持对应导航按钮高亮
+            activeView = activeTab.viewType || 'toolLibrary';
         } else {
             activeView = activeTab.viewType || 'toolLibrary';
         }
@@ -142,10 +142,10 @@ function openTool(toolId, toolName, toolIcon) {
     activeTab.title = toolName;
     activeTab.icon = toolIcon;
     
-    // 添加到历史栈
+    // 添加到历史栈（保存 toolId 和 viewType）
     const historyIndex = activeTab.historyIndex + 1;
     activeTab.history = activeTab.history.slice(0, historyIndex);
-    activeTab.history.push(toolId);
+    activeTab.history.push({ toolId: toolId, viewType: activeTab.viewType });
     activeTab.historyIndex = activeTab.history.length - 1;
     
     appState.currentView = toolId;
