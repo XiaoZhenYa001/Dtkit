@@ -17,6 +17,9 @@ let alarmState = {
     countdownInterval: null // 全局倒计时更新定时器
 };
 
+// 标记工具是否已经初始化过（用于区分首次加载和标签页切换）
+let isToolInitialized = false;
+
 // 默认提示音列表
 const DEFAULT_SOUNDS = [
     { id: 'bell', name: '铃声', icon: 'ri-notification-line' },
@@ -252,7 +255,7 @@ function getStyles() {
             grid-template-columns: 380px 1fr;
             gap: var(--spacing-lg);
             flex: 1;
-            min-height: 0;
+            min-height: 0;  /* 关键：让 flex 子元素可以缩小 */
             overflow: hidden;
         }
 
@@ -266,7 +269,8 @@ function getStyles() {
             display: flex;
             flex-direction: column;
             gap: var(--spacing-md);
-            overflow-y: auto;
+            overflow-y: auto;  /* 左侧独立滚动 */
+            min-height: 0;     /* 允许缩小 */
         }
 
         .alarm-panel-title {
@@ -629,7 +633,8 @@ function getStyles() {
             padding: var(--spacing-lg);
             box-shadow: var(--shadow-md);
             border: 1px solid var(--color-border);
-            overflow-y: auto;
+            overflow-y: auto;  /* 右侧独立滚动 */
+            min-height: 0;     /* 允许缩小 */
             display: flex;
             flex-direction: column;
             gap: var(--spacing-md);
@@ -711,6 +716,40 @@ function getStyles() {
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
             transform: translateX(6px);
             border-color: var(--color-primary-light);
+        }
+
+        /* 拖拽手柄 */
+        .alarm-task-drag-handle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            color: var(--color-text-tertiary);
+            cursor: grab;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            font-size: 1.2rem;
+        }
+
+        .alarm-task-card:hover .alarm-task-drag-handle {
+            opacity: 1;
+        }
+
+        .alarm-task-drag-handle:active {
+            cursor: grabbing;
+        }
+
+        /* 拖拽中的卡片 */
+        .alarm-task-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.98);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        /* 拖拽目标位置 */
+        .alarm-task-card.drag-over {
+            border-top: 3px solid var(--color-primary);
+            margin-top: -3px;
         }
 
         .alarm-task-card.disabled {
@@ -868,22 +907,26 @@ function getStyles() {
 function init() {
     console.log('[AlarmClock] 初始化定时闹钟工具');
     
-    // 加载保存的任务
-    loadTasks();
+    // 只有首次加载时才从 localStorage 加载任务并启动定时器
+    // 切换标签页回来时，任务和定时器已经在后台运行，只需刷新 UI
+    if (!isToolInitialized) {
+        // 首次加载：加载任务并启动定时器
+        loadTasks();
+        isToolInitialized = true;
+        showToast('定时闹钟工具已加载', 'success');
+    }
     
-    // 绑定事件
+    // 每次都需要重新绑定事件（因为 DOM 被重建了）
     bindEvents();
     
-    // 渲染任务列表
+    // 渲染任务列表（显示当前内存中的任务状态）
     renderTaskList();
     
-    // 启动全局倒计时更新
+    // 启动全局倒计时更新（刷新 UI 显示）
     startGlobalCountdown();
     
     // 更新统计信息
     updateStats();
-    
-    showToast('定时闹钟工具已加载', 'success');
 }
 
 // ============================================
@@ -1203,8 +1246,8 @@ function addTask() {
             break;
     }
     
-    // 添加到任务列表
-    alarmState.tasks.push(task);
+    // 添加到任务列表顶部（新任务在最前面）
+    alarmState.tasks.unshift(task);
     
     // 保存任务
     saveTasks();
@@ -1466,11 +1509,29 @@ function playAlarmSound(soundId) {
 // ============================================
 async function runProgram(filePath) {
     try {
-        await window.__TAURI__.shell.open(filePath);
+        // 获取文件扩展名
+        const ext = filePath.toLowerCase().split('.').pop();
+        
+        // 对于 .bat, .cmd, .ps1 脚本，使用 cmd 或 powershell 执行
+        if (ext === 'bat' || ext === 'cmd') {
+            // 使用 start 命令在后台启动，避免阻塞应用
+            await window.__TAURI__.core.invoke('run_command', {
+                cmd: 'cmd',
+                args: ['/c', 'start', '', filePath]
+            });
+        } else if (ext === 'ps1') {
+            await window.__TAURI__.core.invoke('run_command', {
+                cmd: 'cmd',
+                args: ['/c', 'start', 'powershell', '-ExecutionPolicy', 'Bypass', '-File', filePath]
+            });
+        } else {
+            // 其他可执行文件使用 shell.open
+            await window.__TAURI__.shell.open(filePath);
+        }
         showToast('程序已启动', 'success');
     } catch (err) {
         console.error('[AlarmClock] 运行程序失败:', err);
-        showToast('运行程序失败', 'error');
+        showToast('运行程序失败: ' + err, 'error');
     }
 }
 
@@ -1582,10 +1643,14 @@ function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = `alarm-task-card ${task.enabled ? '' : 'disabled'}`;
     card.dataset.taskId = task.id;
+    card.draggable = true;  // 启用拖拽
     
     const countdown = getTaskCountdown(task);
     
     card.innerHTML = `
+        <div class="alarm-task-drag-handle" title="拖拽排序">
+            <i class="ri-drag-move-2-line"></i>
+        </div>
         <div class="alarm-task-countdown" data-countdown-id="${task.id}">
             ${countdown}
         </div>
@@ -1618,6 +1683,14 @@ function createTaskCard(task) {
     
     toggleBtn.addEventListener('click', () => toggleTask(task.id));
     deleteBtn.addEventListener('click', () => deleteTask(task.id));
+    
+    // 绑定拖拽事件
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragend', handleDragEnd);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('dragenter', handleDragEnter);
+    card.addEventListener('dragleave', handleDragLeave);
+    card.addEventListener('drop', handleDrop);
     
     return card;
 }
@@ -1757,6 +1830,73 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ============================================
+// 拖拽排序相关
+// ============================================
+let draggedTaskId = null;
+
+function handleDragStart(e) {
+    draggedTaskId = e.currentTarget.dataset.taskId;
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    // 移除所有 drag-over 样式
+    document.querySelectorAll('.alarm-task-card.drag-over').forEach(card => {
+        card.classList.remove('drag-over');
+    });
+    draggedTaskId = null;
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function handleDragEnter(e) {
+    e.preventDefault();
+    const card = e.currentTarget;
+    if (card.dataset.taskId !== draggedTaskId) {
+        card.classList.add('drag-over');
+    }
+}
+
+function handleDragLeave(e) {
+    const card = e.currentTarget;
+    // 确保离开的是卡片本身，而不是子元素
+    if (!card.contains(e.relatedTarget)) {
+        card.classList.remove('drag-over');
+    }
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    const targetCard = e.currentTarget;
+    const targetTaskId = targetCard.dataset.taskId;
+    
+    if (draggedTaskId && targetTaskId && draggedTaskId !== targetTaskId) {
+        // 找到拖拽的任务和目标任务的索引
+        const draggedIndex = alarmState.tasks.findIndex(t => t.id === draggedTaskId);
+        const targetIndex = alarmState.tasks.findIndex(t => t.id === targetTaskId);
+        
+        if (draggedIndex !== -1 && targetIndex !== -1) {
+            // 从数组中移除拖拽的任务
+            const [draggedTask] = alarmState.tasks.splice(draggedIndex, 1);
+            // 插入到目标位置
+            alarmState.tasks.splice(targetIndex, 0, draggedTask);
+            
+            // 保存并重新渲染
+            saveTasks();
+            renderTaskList();
+        }
+    }
+    
+    targetCard.classList.remove('drag-over');
 }
 
 // ============================================
