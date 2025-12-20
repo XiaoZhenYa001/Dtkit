@@ -46,3 +46,6 @@ import './hash-calculator.js';              // Hash 计算（待迁移）
 import './url-encoder.js';                  // URL 编解码（待迁移）
 import './crontab-explainer.js';            // Crontab 解释器（待迁移）
 import './unit-converter.js';               // 单位转换器（待迁移）
+
+// === 日常工具 ===
+import './alarm-clock/index.js';            // 定时闹钟

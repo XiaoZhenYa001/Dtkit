@@ -18,6 +18,7 @@ const injectedStyles = new Set();
 const toolCategories = {
     dev: [],
     design: [],
+    utility: [],
     other: []
 };
 

@@ -19,6 +19,7 @@ const DOM = {
     // 工具网格
     devToolsGrid: null,
     designToolsGrid: null,
+    utilityToolsGrid: null,
     otherToolsGrid: null,
     favoritesGrid: null,
     
@@ -43,6 +44,7 @@ export function initDOM() {
     DOM.settingsView = document.getElementById('settingsView');
     DOM.devToolsGrid = document.getElementById('devToolsGrid');
     DOM.designToolsGrid = document.getElementById('designToolsGrid');
+    DOM.utilityToolsGrid = document.getElementById('utilityToolsGrid');
     DOM.otherToolsGrid = document.getElementById('otherToolsGrid');
     DOM.favoritesGrid = document.getElementById('favoritesGrid');
     DOM.backBtn = document.getElementById('backBtn');

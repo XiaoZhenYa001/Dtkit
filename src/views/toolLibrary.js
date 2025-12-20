@@ -26,6 +26,7 @@ export function renderToolLibrary() {
     // 按分类分组
     const devTools = allTools.filter(t => t.category === 'dev');
     const designTools = allTools.filter(t => t.category === 'design');
+    const utilityTools = allTools.filter(t => t.category === 'utility');
     const otherTools = allTools.filter(t => t.category === 'other');
     
     // 渲染开发工具
@@ -41,6 +42,14 @@ export function renderToolLibrary() {
         DOM.designToolsGrid.innerHTML = '';
         designTools.forEach(tool => {
             DOM.designToolsGrid.appendChild(createToolCard(tool, onOpenTool));
+        });
+    }
+    
+    // 渲染日常工具
+    if (DOM.utilityToolsGrid) {
+        DOM.utilityToolsGrid.innerHTML = '';
+        utilityTools.forEach(tool => {
+            DOM.utilityToolsGrid.appendChild(createToolCard(tool, onOpenTool));
         });
     }
     
@@ -74,6 +83,7 @@ export function handleSearch(query) {
     // 清空所有分类
     if (DOM.devToolsGrid) DOM.devToolsGrid.innerHTML = '';
     if (DOM.designToolsGrid) DOM.designToolsGrid.innerHTML = '';
+    if (DOM.utilityToolsGrid) DOM.utilityToolsGrid.innerHTML = '';
     if (DOM.otherToolsGrid) DOM.otherToolsGrid.innerHTML = '';
     
     // 在第一个分类中显示搜索结果
