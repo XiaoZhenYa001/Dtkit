@@ -331,12 +331,40 @@ function getStyles() {
             padding: 10px 12px;
         }
 
+        /* 动画定义 */
+        @keyframes alarmSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+                max-height: 0;
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+                max-height: 200px;
+            }
+        }
+
+        @keyframes alarmPopIn {
+            0% { opacity: 0; transform: scale(0.95); }
+            70% { transform: scale(1.02); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
         .alarm-countdown-inputs,
         .alarm-interval-inputs {
             display: flex;
             align-items: center;
             gap: var(--spacing-sm);
             margin-top: var(--spacing-xs);
+            overflow: hidden;
+        }
+
+        /* 当通过 JS 显示时触发动画 */
+        .alarm-countdown-inputs:not([style*="display: none"]),
+        .alarm-interval-inputs:not([style*="display: none"]),
+        .alarm-input:not([style*="display: none"]):not(#alarmTaskName) {
+            animation: alarmSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
         }
 
         .alarm-time-sep {
@@ -356,6 +384,10 @@ function getStyles() {
             transition: all 0.3s ease;
         }
 
+        .alarm-action-config > div {
+            animation: alarmPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
         .alarm-action-config:empty {
             display: none;
         }
@@ -364,6 +396,7 @@ function getStyles() {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
             gap: var(--spacing-sm);
+            padding: 4px;
         }
 
         .alarm-sound-option {
@@ -375,23 +408,55 @@ function getStyles() {
             border: 2px solid var(--color-border);
             border-radius: var(--radius-md);
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             background: var(--color-bg-tertiary);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .alarm-sound-option::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100%;
+            height: 100%;
+            background: var(--color-primary);
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(0.5);
+            transition: all 0.3s ease;
+            border-radius: 50%;
+            z-index: 0;
         }
 
         .alarm-sound-option:hover {
             border-color: var(--color-primary);
             background: var(--color-bg-primary);
+            transform: translateY(-2px);
         }
 
         .alarm-sound-option.selected {
             border-color: var(--color-primary);
-            background: rgba(59, 130, 246, 0.1);
+            background: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+            transform: scale(1.05);
+        }
+
+        .alarm-sound-option.selected i {
+            transform: scale(1.2);
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .alarm-sound-option i, 
+        .alarm-sound-option span {
+            position: relative;
+            z-index: 1;
         }
 
         .alarm-sound-option i {
             font-size: 1.5rem;
             color: var(--color-primary);
+            transition: all 0.3s ease;
         }
 
         .alarm-sound-option span {
@@ -403,6 +468,7 @@ function getStyles() {
         .alarm-file-picker {
             display: flex;
             gap: var(--spacing-sm);
+            animation: alarmPopIn 0.3s ease forwards;
         }
 
         .alarm-file-path {
@@ -416,6 +482,7 @@ function getStyles() {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            transition: all 0.2s ease;
         }
 
         .alarm-file-btn {
@@ -434,6 +501,7 @@ function getStyles() {
 
         .alarm-file-btn:hover {
             background: var(--color-primary-hover);
+            transform: scale(1.05);
         }
 
         /* 重复设置 */
@@ -441,6 +509,7 @@ function getStyles() {
             display: flex;
             flex-direction: column;
             gap: var(--spacing-sm);
+            transition: all 0.3s ease;
         }
 
         .alarm-checkbox-label {
@@ -450,6 +519,7 @@ function getStyles() {
             cursor: pointer;
             font-size: var(--font-size-sm);
             color: var(--color-text-primary);
+            padding: 4px 0;
         }
 
         .alarm-checkbox-label input[type="checkbox"] {
@@ -457,12 +527,24 @@ function getStyles() {
             height: 18px;
             accent-color: var(--color-primary);
             cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .alarm-checkbox-label:hover input[type="checkbox"] {
+            transform: scale(1.1);
         }
 
         .alarm-repeat-days {
             display: flex;
-            gap: var(--spacing-xs);
+            gap: 0.75rem;
             flex-wrap: wrap;
+            overflow: hidden;
+            padding: 0.5rem 0.25rem;
+            transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .alarm-repeat-days:not([style*="display: none"]) {
+            animation: alarmSlideIn 0.3s ease forwards;
         }
 
         .alarm-day-checkbox {
@@ -476,28 +558,40 @@ function getStyles() {
         }
 
         .alarm-day-checkbox span {
-            width: 36px;
-            height: 36px;
+            width: 34px;
+            height: 34px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: var(--radius-md);
-            border: 2px solid var(--color-border);
-            font-size: var(--font-size-sm);
+            border-radius: 50%;
+            border: 1.5px solid var(--color-border);
+            background: white;
+            font-size: 0.8125rem;
             font-weight: 600;
             color: var(--color-text-secondary);
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
         }
 
         .alarm-day-checkbox input:checked + span {
             background: var(--color-primary);
             border-color: var(--color-primary);
             color: white;
+            transform: scale(1.15);
+            box-shadow: 0 4px 10px rgba(59, 130, 246, 0.35);
         }
 
-        .alarm-day-checkbox:hover span {
+        .alarm-day-checkbox:not(:has(input:checked)):hover span {
             border-color: var(--color-primary);
+            color: var(--color-primary);
+            background: var(--color-bg-primary);
+            transform: translateY(-2px);
+        }
+
+        /* 针对周末的特殊样式（可选，增加视觉区分） */
+        .alarm-day-checkbox:nth-last-child(-n+2) span {
+            /* 周六周日如果未选中，颜色稍微淡一点或不同 */
         }
 
         /* 添加按钮 */
@@ -570,41 +664,110 @@ function getStyles() {
 
         /* 任务卡片 */
         .alarm-task-card {
-            background: var(--color-bg-tertiary);
-            border-radius: var(--radius-lg);
-            padding: var(--spacing-md) var(--spacing-lg);
+            background: white;
+            border-radius: 1rem;
+            padding: 1rem 1.25rem;
             border: 1px solid var(--color-border);
             display: flex;
             align-items: center;
-            gap: var(--spacing-lg);
-            transition: all 0.2s ease;
+            gap: 1.25rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
         }
 
+        .alarm-task-card::before {
+            content: '';
+            position: absolute;
+            left: 6px;
+            top: 20%;
+            bottom: 20%;
+            width: 5px;
+            background: var(--color-primary);
+            border-radius: 10px;
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .alarm-task-card:not(.disabled)::before {
+            opacity: 1;
+        }
+
+        /* 12种暖色调随机呈现 (通过 nth-child 模拟) */
+        .alarm-task-card:not(.disabled):nth-child(12n+1)::before { background: #ff5f6d; }
+        .alarm-task-card:not(.disabled):nth-child(12n+2)::before { background: #ff7e5f; }
+        .alarm-task-card:not(.disabled):nth-child(12n+3)::before { background: #feb47b; }
+        .alarm-task-card:not(.disabled):nth-child(12n+4)::before { background: #ff9a9e; }
+        .alarm-task-card:not(.disabled):nth-child(12n+5)::before { background: #fecfef; }
+        .alarm-task-card:not(.disabled):nth-child(12n+6)::before { background: #fda085; }
+        .alarm-task-card:not(.disabled):nth-child(12n+7)::before { background: #f6d365; }
+        .alarm-task-card:not(.disabled):nth-child(12n+8)::before { background: #f093fb; }
+        .alarm-task-card:not(.disabled):nth-child(12n+9)::before { background: #f5576c; }
+        .alarm-task-card:not(.disabled):nth-child(12n+10)::before { background: #fa709a; }
+        .alarm-task-card:not(.disabled):nth-child(12n+11)::before { background: #ee9ca7; }
+        .alarm-task-card:not(.disabled):nth-child(12n+12)::before { background: #ffecd2; }
+
         .alarm-task-card:hover {
-            box-shadow: var(--shadow-md);
-            transform: translateX(4px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            transform: translateX(6px);
+            border-color: var(--color-primary-light);
         }
 
         .alarm-task-card.disabled {
-            opacity: 0.5;
+            background: #f1f5f9;
+            border-color: transparent;
+            filter: grayscale(0.8);
+            opacity: 0.7;
+        }
+
+        .alarm-task-card.disabled::before {
+            background: var(--color-text-tertiary);
         }
 
         .alarm-task-countdown {
-            min-width: 100px;
-            padding: 12px 16px;
-            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
-            border-radius: var(--radius-md);
+            min-width: 110px;
+            padding: 0.75rem 1rem;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            border-radius: 0.75rem;
             color: white;
             text-align: center;
-            font-family: 'Courier New', monospace;
-            font-size: 1.1rem;
-            font-weight: bold;
-            box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 1.125rem;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        /* 为正在执行的任务添加多样性颜色 */
+        .alarm-task-card:not(.disabled):nth-child(3n+1) .alarm-task-countdown {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+        }
+        .alarm-task-card:not(.disabled):nth-child(3n+2) .alarm-task-countdown {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+        }
+        .alarm-task-card:not(.disabled):nth-child(3n+3) .alarm-task-countdown {
+            background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+            box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25);
+        }
+
+        /* 正在执行的任务呼吸灯效果 */
+        @keyframes countdownPulse {
+            0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+        }
+
+        .alarm-task-card:not(.disabled) .alarm-task-countdown {
+            animation: countdownPulse 2s infinite;
         }
 
         .alarm-task-card.disabled .alarm-task-countdown {
-            background: var(--color-text-tertiary);
+            background: #94a3b8;
             box-shadow: none;
+            animation: none;
         }
 
         .alarm-task-info {
@@ -613,10 +776,10 @@ function getStyles() {
         }
 
         .alarm-task-name {
-            font-size: var(--font-size-md);
+            font-size: 1rem;
             font-weight: 600;
             color: var(--color-text-primary);
-            margin-bottom: var(--spacing-xs);
+            margin-bottom: 0.25rem;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -624,8 +787,8 @@ function getStyles() {
 
         .alarm-task-meta {
             display: flex;
-            gap: var(--spacing-md);
-            font-size: var(--font-size-xs);
+            gap: 1rem;
+            font-size: 0.75rem;
             color: var(--color-text-tertiary);
         }
 
@@ -636,50 +799,50 @@ function getStyles() {
         }
 
         .alarm-task-meta-item i {
-            font-size: 0.9rem;
+            font-size: 0.875rem;
+            color: var(--color-primary);
+            opacity: 0.7;
         }
 
         .alarm-task-actions {
             display: flex;
-            gap: var(--spacing-sm);
+            gap: 0.5rem;
         }
 
         .alarm-task-btn {
-            width: 36px;
-            height: 36px;
+            width: 34px;
+            height: 34px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border: none;
-            border-radius: var(--radius-md);
+            border: 1px solid var(--color-border);
+            background: white;
+            border-radius: 0.5rem;
             cursor: pointer;
             transition: all 0.2s ease;
-            font-size: 1.1rem;
-        }
-
-        .alarm-task-btn--toggle {
-            background: var(--color-bg-primary);
+            font-size: 1rem;
             color: var(--color-text-secondary);
         }
 
+        .alarm-task-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
         .alarm-task-btn--toggle:hover {
-            background: var(--color-primary);
-            color: white;
+            border-color: #22c55e;
+            color: #22c55e;
         }
 
         .alarm-task-btn--toggle.active {
             background: #22c55e;
+            border-color: #22c55e;
             color: white;
-        }
-
-        .alarm-task-btn--delete {
-            background: var(--color-bg-primary);
-            color: var(--color-text-secondary);
         }
 
         .alarm-task-btn--delete:hover {
-            background: #ef4444;
-            color: white;
+            border-color: #ef4444;
+            color: #ef4444;
         }
 
         /* 响应式适配 */
@@ -755,7 +918,22 @@ function bindEvents() {
         repeatEnabled.addEventListener('change', () => {
             const repeatDaysGroup = document.getElementById('repeatDaysGroup');
             if (repeatDaysGroup) {
-                repeatDaysGroup.style.display = repeatEnabled.checked ? 'flex' : 'none';
+                if (repeatEnabled.checked) {
+                    repeatDaysGroup.style.display = 'flex';
+                    // 触发重绘以确保动画执行
+                    void repeatDaysGroup.offsetWidth;
+                    repeatDaysGroup.style.opacity = '1';
+                    repeatDaysGroup.style.transform = 'translateY(0)';
+                } else {
+                    repeatDaysGroup.style.opacity = '0';
+                    repeatDaysGroup.style.transform = 'translateY(-10px)';
+                    // 等待动画结束再隐藏
+                    setTimeout(() => {
+                        if (!repeatEnabled.checked) {
+                            repeatDaysGroup.style.display = 'none';
+                        }
+                    }, 300);
+                }
             }
         });
     }
