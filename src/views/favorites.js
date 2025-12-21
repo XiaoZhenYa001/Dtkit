@@ -19,6 +19,13 @@ let cards = []; // 存储 { el, toolId, currentIndex }
 let gridConfig = { cols: 0, cardWidth: 0, cardHeight: 0, gap: 20 };
 
 /**
+ * 检查当前是否处于拖拽状态（供外部使用）
+ */
+export function isDragging() {
+    return dragTarget !== null;
+}
+
+/**
  * 设置回调函数
  */
 export function setFavoritesCallbacks(callbacks) {
@@ -145,7 +152,7 @@ function onMouseMove(e) {
     // 手里的卡片实时跟随
     dragTarget.style.transform = `translate(${curX}px, ${curY}px)`;
     
-    // 计算当前悬停在哪个格子
+    // 计算当前悬停在哪个格子上
     const centerX = curX + gridConfig.cardWidth / 2;
     const centerY = curY + gridConfig.cardHeight / 2;
     const col = Math.round(centerX / (gridConfig.cardWidth + gridConfig.gap));

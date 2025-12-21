@@ -333,36 +333,51 @@
     background-color: rgba(250, 193, 7, 0.15);
 }
 
-/* 拖动手柄 */
+/* 拖动手柄 - 右上角，hover显示 */
 .tool-card__drag-handle {
     position: absolute;
     top: var(--spacing-sm);
-    left: var(--spacing-sm);
+    right: var(--spacing-sm);
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     width: 2rem;
     height: 2rem;
-    display: flex;
+    display: none; /* 默认隐藏，收藏页会显示 */
     align-items: center;
     justify-content: center;
     cursor: grab;
-    transition: all var(--transition-fast);
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     color: #94a3b8;
     font-size: 1rem;
     z-index: 10;
     padding: 0;
+    opacity: 0;
+    transform: scale(0.5) rotate(90deg);
+}
+
+/* 收藏页中卡片 hover 时显示拖动手柄 */
+.tool-card:hover .tool-card__drag-handle {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
 }
 
 .tool-card__drag-handle:hover {
     background: white;
     color: var(--color-primary);
     border-color: var(--color-primary);
-    transform: scale(1.1);
+    transform: scale(1.15) rotate(0deg);
 }
 
 .tool-card__drag-handle:active {
     cursor: grabbing;
+    transform: scale(1) rotate(0deg);
+}
+
+/* 拖拽时手柄始终保持可见 */
+.tool-card.dragging .tool-card__drag-handle {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
 }
 
 /* ============================================

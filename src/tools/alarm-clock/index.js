@@ -51,6 +51,7 @@ const ACTION_TYPES = {
 // ============================================
 function getTemplate() {
     return `
+        <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
         <div class="view-container alarm-clock-view">
             <!-- 顶部统计栏 -->
             <div class="alarm-header-stats">
@@ -256,7 +257,8 @@ function getStyles() {
             gap: var(--spacing-lg);
             flex: 1;
             min-height: 0;  /* 关键：让 flex 子元素可以缩小 */
-            overflow: hidden;
+            height: 100%;   /* 强制铺满剩余空间 */
+            overflow: hidden; /* 防止外层容器出现滚动条 */
         }
 
         /* 左侧配置面板 */
@@ -269,8 +271,11 @@ function getStyles() {
             display: flex;
             flex-direction: column;
             gap: var(--spacing-md);
-            overflow-y: auto;  /* 左侧独立滚动 */
-            min-height: 0;     /* 允许缩小 */
+            
+            /* 核心修改： */
+            align-self: start;   /* 确保左侧面板高度由内容决定，不会被拉长 */
+            max-height: 100%;    /* 如果内容过多，左侧内部滚动 */
+            overflow-y: auto;
         }
 
         .alarm-panel-title {
@@ -633,11 +638,23 @@ function getStyles() {
             padding: var(--spacing-lg);
             box-shadow: var(--shadow-md);
             border: 1px solid var(--color-border);
-            overflow-y: auto;  /* 右侧独立滚动 */
-            min-height: 0;     /* 允许缩小 */
+            
+            /* 核心修改： */
             display: flex;
             flex-direction: column;
             gap: var(--spacing-md);
+            height: 100%;        /* 强制等于父容器高度 */
+            overflow-y: auto;    /* 内容增多时出现滚动条 */
+            position: relative;
+        }
+
+        /* 优化滚动条样式（可选，增加美观度） */
+        .alarm-list-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        .alarm-list-panel::-webkit-scrollbar-thumb {
+            background: var(--color-border);
+            border-radius: 10px;
         }
 
         .alarm-list-empty {
@@ -739,17 +756,40 @@ function getStyles() {
             cursor: grabbing;
         }
 
-        /* 拖拽中的卡片 */
-        .alarm-task-card.dragging {
-            opacity: 0.5;
-            transform: scale(0.98);
-            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+        /* Sortable.js 拖拽样式 */
+        .sortable-drag {
+            opacity: 1 !important;
+            transform: scale(1.03) rotate(1.5deg) !important;
+            background: white !important;
+            border: 2px solid var(--color-primary) !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+            z-index: 9999 !important;
+            cursor: grabbing !important;
         }
 
-        /* 拖拽目标位置 */
-        .alarm-task-card.drag-over {
-            border-top: 3px solid var(--color-primary);
-            margin-top: -3px;
+        /* 拖拽时的占位符 */
+        .sortable-ghost {
+            background: #eef2f7 !important;
+            border: 2px dashed #cbd5e1 !important;
+            border-radius: 1rem !important;
+            opacity: 0.5 !important;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.06) !important;
+        }
+
+        .sortable-ghost * {
+            visibility: hidden;
+        }
+
+        /* 选中瞬间 */
+        .sortable-chosen {
+            transition: 0.2s;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+        }
+
+        /* 其他卡片的过渡动画 */
+        .alarm-task-card {
+            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), 
+                        box-shadow 0.3s ease;
         }
 
         .alarm-task-card.disabled {
@@ -1615,24 +1655,58 @@ function loadTasks() {
 // ============================================
 function renderTaskList() {
     const panel = document.getElementById('taskListPanel');
-    const emptyHint = document.getElementById('emptyListHint');
-    
     if (!panel) return;
-    
-    // 清除旧的任务卡片（保留 emptyHint）
-    const oldCards = panel.querySelectorAll('.alarm-task-card');
-    oldCards.forEach(card => card.remove());
-    
+
+    // 清空现有内容
+    panel.innerHTML = '';
+
     if (alarmState.tasks.length === 0) {
-        if (emptyHint) emptyHint.style.display = 'flex';
+        panel.innerHTML = `
+            <div class="alarm-list-empty" id="emptyListHint">
+                <i class="ri-alarm-line"></i>
+                <p>暂无定时任务</p>
+                <p class="alarm-list-empty-sub">在左侧创建你的第一个任务吧</p>
+            </div>`;
         return;
     }
-    
-    if (emptyHint) emptyHint.style.display = 'none';
-    
+
+    // 渲染任务卡片
     alarmState.tasks.forEach(task => {
         const card = createTaskCard(task);
         panel.appendChild(card);
+    });
+
+    // 初始化拖拽排序
+    initSortable();
+}
+
+// ============================================
+// 初始化 Sortable.js 拖拽排序
+// ============================================
+function initSortable() {
+    const panel = document.getElementById('taskListPanel');
+    if (!panel || !window.Sortable || alarmState.tasks.length === 0) return;
+
+    new Sortable(panel, {
+        animation: 150,  // 动画速度稍微加快，体验更好
+        handle: '.alarm-task-drag-handle',  // 只有点击手柄才能拖拽
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+        chosenClass: 'sortable-chosen',
+        
+        onStart: function() {
+            if (navigator.vibrate) navigator.vibrate(15);
+        },
+        
+        onEnd: function(evt) {
+            // 修正：根据 DOM 索引同步内存数组
+            const tasks = [...alarmState.tasks];
+            const [movedItem] = tasks.splice(evt.oldIndex, 1);
+            tasks.splice(evt.newIndex, 0, movedItem);
+            alarmState.tasks = tasks;
+            saveTasks();
+            // 注意：不要在这里调用 renderTaskList()，否则会触发 DOM 重建导致拖拽卡顿
+        }
     });
 }
 
@@ -1643,7 +1717,6 @@ function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = `alarm-task-card ${task.enabled ? '' : 'disabled'}`;
     card.dataset.taskId = task.id;
-    card.draggable = true;  // 启用拖拽
     
     const countdown = getTaskCountdown(task);
     
@@ -1683,14 +1756,6 @@ function createTaskCard(task) {
     
     toggleBtn.addEventListener('click', () => toggleTask(task.id));
     deleteBtn.addEventListener('click', () => deleteTask(task.id));
-    
-    // 绑定拖拽事件
-    card.addEventListener('dragstart', handleDragStart);
-    card.addEventListener('dragend', handleDragEnd);
-    card.addEventListener('dragover', handleDragOver);
-    card.addEventListener('dragenter', handleDragEnter);
-    card.addEventListener('dragleave', handleDragLeave);
-    card.addEventListener('drop', handleDrop);
     
     return card;
 }
@@ -1830,73 +1895,6 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
-}
-
-// ============================================
-// 拖拽排序相关
-// ============================================
-let draggedTaskId = null;
-
-function handleDragStart(e) {
-    draggedTaskId = e.currentTarget.dataset.taskId;
-    e.currentTarget.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-}
-
-function handleDragEnd(e) {
-    e.currentTarget.classList.remove('dragging');
-    // 移除所有 drag-over 样式
-    document.querySelectorAll('.alarm-task-card.drag-over').forEach(card => {
-        card.classList.remove('drag-over');
-    });
-    draggedTaskId = null;
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-}
-
-function handleDragEnter(e) {
-    e.preventDefault();
-    const card = e.currentTarget;
-    if (card.dataset.taskId !== draggedTaskId) {
-        card.classList.add('drag-over');
-    }
-}
-
-function handleDragLeave(e) {
-    const card = e.currentTarget;
-    // 确保离开的是卡片本身，而不是子元素
-    if (!card.contains(e.relatedTarget)) {
-        card.classList.remove('drag-over');
-    }
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    const targetCard = e.currentTarget;
-    const targetTaskId = targetCard.dataset.taskId;
-    
-    if (draggedTaskId && targetTaskId && draggedTaskId !== targetTaskId) {
-        // 找到拖拽的任务和目标任务的索引
-        const draggedIndex = alarmState.tasks.findIndex(t => t.id === draggedTaskId);
-        const targetIndex = alarmState.tasks.findIndex(t => t.id === targetTaskId);
-        
-        if (draggedIndex !== -1 && targetIndex !== -1) {
-            // 从数组中移除拖拽的任务
-            const [draggedTask] = alarmState.tasks.splice(draggedIndex, 1);
-            // 插入到目标位置
-            alarmState.tasks.splice(targetIndex, 0, draggedTask);
-            
-            // 保存并重新渲染
-            saveTasks();
-            renderTaskList();
-        }
-    }
-    
-    targetCard.classList.remove('drag-over');
 }
 
 // ============================================
