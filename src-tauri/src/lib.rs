@@ -1,7 +1,32 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+use futures_util::StreamExt;
+
+// 下载任务状态
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DownloadTask {
+    pub id: String,
+    pub url: String,
+    pub filename: String,
+    pub save_path: String,
+    pub total_size: u64,
+    pub downloaded: u64,
+    pub status: String, // "downloading" | "completed" | "error" | "paused"
+    pub error_message: Option<String>,
+    pub speed: f64, // bytes per second
+}
+
+// 全局下载任务管理
+lazy_static::lazy_static! {
+    static ref DOWNLOAD_TASKS: Arc<Mutex<HashMap<String, DownloadTask>>> = Arc::new(Mutex::new(HashMap::new()));
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -34,6 +59,276 @@ fn run_command(cmd: String, args: Vec<String>) -> Result<String, String> {
     }
 }
 
+/// 开始下载文件
+#[tauri::command]
+async fn start_download(
+    app: AppHandle,
+    url: String,
+    save_path: String,
+    custom_filename: Option<String>,
+) -> Result<String, String> {
+    let task_id = uuid::Uuid::new_v4().to_string();
+    
+    // 从 URL 提取文件名
+    let filename = custom_filename.unwrap_or_else(|| {
+        url.split('/').last().unwrap_or("download").to_string()
+    });
+    
+    // 完整保存路径
+    let full_path = Path::new(&save_path).join(&filename);
+    let full_path_str = full_path.to_string_lossy().to_string();
+    
+    // 确保保存目录存在
+    if let Some(parent) = full_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+        }
+    }
+    
+    // 创建初始任务
+    let task = DownloadTask {
+        id: task_id.clone(),
+        url: url.clone(),
+        filename: filename.clone(),
+        save_path: full_path_str.clone(),
+        total_size: 0,
+        downloaded: 0,
+        status: "downloading".to_string(),
+        error_message: None,
+        speed: 0.0,
+    };
+    
+    // 存储任务
+    {
+        let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+        tasks.insert(task_id.clone(), task.clone());
+    }
+    
+    // 发送初始状态
+    let _ = app.emit("download-started", &task);
+    
+    // 在后台线程执行下载
+    let app_clone = app.clone();
+    let task_id_clone = task_id.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        match download_file_internal(&app_clone, &task_id_clone, &url, &full_path_str).await {
+            Ok(_) => {
+                update_task_status(&app_clone, &task_id_clone, "completed", None);
+            }
+            Err(e) => {
+                update_task_status(&app_clone, &task_id_clone, "error", Some(e));
+            }
+        }
+    });
+    
+    Ok(task_id)
+}
+
+/// 内部下载实现
+async fn download_file_internal(
+    app: &AppHandle,
+    task_id: &str,
+    url: &str,
+    save_path: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("HTTP 错误: {}", response.status()));
+    }
+    
+    let total_size = response.content_length().unwrap_or(0);
+    
+    // 更新总大小
+    {
+        let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.total_size = total_size;
+        }
+    }
+    
+    let mut file = File::create(save_path)
+        .map_err(|e| format!("创建文件失败: {}", e))?;
+    
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit_time = std::time::Instant::now();
+    let mut last_downloaded: u64 = 0;
+    
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("读取数据失败: {}", e))?;
+        
+        file.write_all(&chunk)
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+        
+        downloaded += chunk.len() as u64;
+        
+        // 每 200ms 发送一次进度更新
+        let now = std::time::Instant::now();
+        if now.duration_since(last_emit_time).as_millis() >= 200 {
+            let elapsed = now.duration_since(last_emit_time).as_secs_f64();
+            let speed = if elapsed > 0.0 {
+                (downloaded - last_downloaded) as f64 / elapsed
+            } else {
+                0.0
+            };
+            
+            // 更新任务状态
+            {
+                let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+                if let Some(task) = tasks.get_mut(task_id) {
+                    task.downloaded = downloaded;
+                    task.speed = speed;
+                }
+            }
+            
+            // 发送进度事件
+            let progress = DownloadProgress {
+                id: task_id.to_string(),
+                downloaded,
+                total_size,
+                speed,
+                percentage: if total_size > 0 {
+                    (downloaded as f64 / total_size as f64 * 100.0) as u8
+                } else {
+                    0
+                },
+            };
+            let _ = app.emit("download-progress", &progress);
+            
+            last_emit_time = now;
+            last_downloaded = downloaded;
+        }
+    }
+    
+    Ok(())
+}
+
+#[derive(Clone, Serialize)]
+struct DownloadProgress {
+    id: String,
+    downloaded: u64,
+    total_size: u64,
+    speed: f64,
+    percentage: u8,
+}
+
+/// 更新任务状态并发送事件
+fn update_task_status(app: &AppHandle, task_id: &str, status: &str, error: Option<String>) {
+    let task = {
+        let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.status = status.to_string();
+            task.error_message = error;
+            if status == "completed" {
+                task.downloaded = task.total_size;
+            }
+            task.clone()
+        } else {
+            return;
+        }
+    };
+    
+    let _ = app.emit("download-status-changed", &task);
+}
+
+/// 获取所有下载任务
+#[tauri::command]
+fn get_download_tasks() -> Vec<DownloadTask> {
+    let tasks = DOWNLOAD_TASKS.lock().unwrap();
+    tasks.values().cloned().collect()
+}
+
+/// 取消下载任务
+#[tauri::command]
+fn cancel_download(task_id: String) -> Result<(), String> {
+    let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+    if let Some(task) = tasks.get_mut(&task_id) {
+        task.status = "cancelled".to_string();
+        // 删除未完成的文件
+        let _ = fs::remove_file(&task.save_path);
+    }
+    tasks.remove(&task_id);
+    Ok(())
+}
+
+/// 删除下载记录
+#[tauri::command]
+fn remove_download_record(task_id: String) -> Result<(), String> {
+    let mut tasks = DOWNLOAD_TASKS.lock().unwrap();
+    tasks.remove(&task_id);
+    Ok(())
+}
+
+/// 打开文件所在目录
+#[tauri::command]
+fn open_file_location(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(parent) = Path::new(&path).parent() {
+            Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// 打开文件
+#[tauri::command]
+fn open_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| format!("打开文件失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开文件失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开文件失败: {}", e))?;
+    }
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -41,7 +336,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![greet, write_binary_file, run_command])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            write_binary_file,
+            run_command,
+            start_download,
+            get_download_tasks,
+            cancel_download,
+            remove_download_record,
+            open_file_location,
+            open_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
