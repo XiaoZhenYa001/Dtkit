@@ -31,10 +31,30 @@ export function initDownloadsView() {
     downloadsContent = document.getElementById('downloadsContent');
     
     // 初始化 Tauri API
+    ensureTauriApi();
+}
+
+/**
+ * 确保 Tauri API 已初始化
+ */
+function ensureTauriApi() {
     if (window.__TAURI__) {
-        tauriInvoke = window.__TAURI__.core.invoke;
-        tauriListen = window.__TAURI__.event.listen;
+        // Tauri 2.0 API 路径
+        tauriInvoke = window.__TAURI__.core?.invoke;
+        tauriListen = window.__TAURI__.event?.listen;
         tauriDialog = window.__TAURI__.dialog;
+        
+        // 调试日志
+        console.log('Tauri API 状态:', {
+            hasTauri: !!window.__TAURI__,
+            hasCore: !!window.__TAURI__.core,
+            hasInvoke: !!tauriInvoke,
+            hasListen: !!tauriListen,
+            hasDialog: !!tauriDialog,
+            tauriKeys: Object.keys(window.__TAURI__)
+        });
+    } else {
+        console.log('window.__TAURI__ 不存在');
     }
 }
 
@@ -223,6 +243,9 @@ export function renderDownloadsPage() {
             </div>
         </div>
     `;
+    
+    // 确保 Tauri API 已初始化
+    ensureTauriApi();
     
     // 绑定事件
     bindDownloadsEvents();
