@@ -6,172 +6,461 @@
     display: flex;
     flex-direction: column;
     gap: var(--spacing-lg);
-    height: 100%;
+    padding: var(--spacing-lg);
+    min-height: 100%;
+    position: relative;
 }
 
-/* 页面头部 */
+/* 头部 */
 .downloads-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 var(--spacing-sm);
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
 }
 
-.downloads-header__actions {
-    display: flex;
-    gap: var(--spacing-sm);
+.downloads-header__left h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    margin-bottom: var(--spacing-xs);
 }
 
-/* 下载列表 */
-.downloads-list {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    overflow-y: auto;
-}
-
-/* 空状态 */
-.downloads-list .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: var(--spacing-3xl);
+.downloads-header__left p {
     color: var(--color-text-tertiary);
+    font-size: var(--font-size-sm);
 }
 
-.empty-state__icon {
-    font-size: 4rem;
-    margin-bottom: var(--spacing-md);
-    opacity: 0.5;
+/* 统计卡片 */
+.downloads-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--spacing-md);
 }
 
-.empty-state__hint {
-    font-size: var(--font-size-xs);
-    margin-top: var(--spacing-xs);
-    opacity: 0.7;
-}
-
-/* 下载项 */
-.download-item {
+.stat-card {
+    background: var(--color-bg-secondary);
+    padding: var(--spacing-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
-    padding: var(--spacing-md);
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-lg);
+}
+
+.stat-icon {
+    width: 48px;
+    height: 48px;
     border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
-}
-
-.download-item:hover {
-    border-color: var(--color-primary-light);
-    box-shadow: var(--shadow-sm);
-}
-
-/* 文件图标 */
-.download-item__icon {
-    width: 2.5rem;
-    height: 2.5rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--color-primary-light);
-    color: var(--color-primary);
-    border-radius: var(--radius-md);
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     flex-shrink: 0;
+    color: white;
 }
 
-/* 文件信息 */
-.download-item__info {
+.stat-icon.downloading { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); }
+.stat-icon.completed { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+.stat-icon.failed { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+.stat-icon.speed { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+
+.stat-info h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    margin-bottom: 2px;
+}
+
+.stat-info p {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+}
+
+/* 工具栏 */
+.downloads-toolbar {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.downloads-search {
+    flex: 1;
+    min-width: 250px;
+    position: relative;
+}
+
+.downloads-search input {
+    width: 100%;
+    padding: 12px 16px 12px 44px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-sm);
+    transition: all 0.3s ease;
+}
+
+.downloads-search input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.downloads-search input::placeholder {
+    color: var(--color-text-tertiary);
+}
+
+.downloads-search i {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--color-text-tertiary);
+    font-size: 1.125rem;
+}
+
+.filter-btn {
+    padding: 12px 20px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.filter-btn:hover {
+    background: var(--color-bg-tertiary);
+    border-color: var(--color-primary);
+}
+
+.filter-btn.active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+}
+
+/* 任务列表 */
+.downloads-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+/* 任务卡片 */
+.task-card {
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--color-border);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.task-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    transition: all 0.3s ease;
+}
+
+.task-card.downloading::before { background: var(--color-primary); }
+.task-card.error::before { background: #ef4444; }
+.task-card.completed::before { background: #10b981; }
+.task-card.paused::before { background: #f59e0b; }
+
+.task-card:hover {
+    transform: translateX(4px);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-md);
+}
+
+.task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--spacing-md);
+    gap: var(--spacing-md);
+}
+
+.task-info {
+    display: flex;
+    gap: var(--spacing-md);
     flex: 1;
     min-width: 0;
 }
 
-.download-item__name {
-    font-weight: 600;
-    color: var(--color-text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: var(--spacing-xs);
-}
-
-.download-item__meta {
-    display: flex;
-    gap: var(--spacing-md);
-    font-size: var(--font-size-xs);
-    color: var(--color-text-tertiary);
-}
-
-/* 下载进度条 */
-.download-item__progress {
-    width: 100%;
-    height: 4px;
-    background: var(--color-border);
-    border-radius: var(--radius-full);
-    margin-top: var(--spacing-sm);
-    overflow: hidden;
-}
-
-.download-item__progress-bar {
-    height: 100%;
-    background: var(--color-primary);
-    border-radius: var(--radius-full);
-    transition: width 0.3s ease;
-}
-
-/* 下载状态 */
-.download-item__status {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    font-size: var(--font-size-xs);
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border-radius: var(--radius-sm);
-}
-
-.download-item__status--completed {
-    background: #dcfce7;
-    color: #16a34a;
-}
-
-.download-item__status--downloading {
-    background: var(--color-primary-light);
-    color: var(--color-primary);
-}
-
-.download-item__status--failed {
-    background: #fee2e2;
-    color: #dc2626;
-}
-
-/* 操作按钮 */
-.download-item__actions {
-    display: flex;
-    gap: var(--spacing-xs);
-}
-
-.download-item__action-btn {
-    width: 2rem;
-    height: 2rem;
+.file-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: transparent;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
+    font-size: 1.75rem;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+    color: var(--color-primary);
 }
 
-.download-item__action-btn:hover {
-    background: var(--color-bg-tertiary);
+.file-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin-bottom: var(--spacing-xs);
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-status {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.speed-badge {
+    padding: 4px 10px;
+    background: rgba(99, 102, 241, 0.15);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
     color: var(--color-primary);
-    border-color: var(--color-primary-light);
+    font-weight: 600;
+}
+
+/* 状态徽章 */
+.badge {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.badge.downloading {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--color-primary);
+}
+
+.badge.error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.badge.completed {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+}
+
+.badge.paused {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+/* 进度条 */
+.progress-section {
+    margin-bottom: var(--spacing-md);
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-xs);
+    font-size: var(--font-size-sm);
+}
+
+.progress-percentage {
+    font-weight: 600;
+    color: var(--color-primary);
+}
+
+.progress-container {
+    height: 8px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-primary) 0%, #8b5cf6 100%);
+    border-radius: var(--radius-full);
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-bar.paused {
+    background: linear-gradient(90deg, #f59e0b 0%, #fb923c 100%);
+}
+
+.progress-bar.error {
+    background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
+}
+
+.progress-bar.completed {
+    background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+}
+
+/* 控制按钮 */
+.task-controls {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.task-btn {
+    padding: 10px 18px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 500;
+}
+
+.task-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+}
+
+.task-btn:active {
+    transform: translateY(0);
+}
+
+.task-btn.primary {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #8b5cf6 100%);
+    border-color: var(--color-primary);
+    color: white;
+}
+
+.task-btn.primary:hover {
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+}
+
+.task-btn.danger {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.task-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: #ef4444;
+}
+
+.task-btn.success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border-color: #10b981;
+    color: white;
+}
+
+.task-btn.success:hover {
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
+}
+
+/* 空状态 */
+.downloads-empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--color-text-tertiary);
+}
+
+.downloads-empty i {
+    font-size: 5rem;
+    margin-bottom: var(--spacing-lg);
+    opacity: 0.3;
+    display: block;
+}
+
+.downloads-empty h3 {
+    font-size: 1.25rem;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.downloads-empty p {
+    font-size: var(--font-size-sm);
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .downloads-page {
+        padding: var(--spacing-md);
+    }
+
+    .downloads-header__left h1 {
+        font-size: 1.5rem;
+    }
+
+    .downloads-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .task-info {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+    }
+
+    .file-icon {
+        width: 48px;
+        height: 48px;
+        font-size: 1.5rem;
+    }
+
+    .task-controls {
+        width: 100%;
+    }
+
+    .task-btn {
+        flex: 1;
+        justify-content: center;
+    }
 }
