@@ -16,6 +16,8 @@
     <link rel="stylesheet" href="css/tools-library.css">
     <!-- 设置页面样式 -->
     <link rel="stylesheet" href="css/settings.css">
+    <!-- 下载页面样式 -->
+    <link rel="stylesheet" href="css/downloads.css">
     <!-- 工具样式 -->
     <link rel="stylesheet" href="css/tools/timestamp-converter.css">
     <link rel="stylesheet" href="css/tools/json-formatter.css">
@@ -43,11 +45,11 @@
                 <span class="nav-btn__label">收藏</span>
             </button>
 
-            <button class="nav-btn" data-view="history" title="暂时不知道是什么">
+            <button class="nav-btn" data-view="downloads" title="下载">
                 <div class="nav-btn__icon">
-                    <i class="ri-history-line"></i>
+                    <i class="ri-download-2-line"></i>
                 </div>
-                <span class="nav-btn__label">入库</span>
+                <span class="nav-btn__label">下载</span>
             </button>
         </nav>
 
@@ -74,7 +76,7 @@
         <main id="contentArea" class="content-area">
             
             <!-- 导航栏（搜索 + 后退前进） -->
-            <div class="navbar">
+            <div id="navbar" class="navbar">
                 <div class="navbar__nav-buttons">
                     <button id="backBtn" class="nav-btn-icon" title="返回上一步">
                         <i class="ri-arrow-left-s-line"></i>
@@ -148,6 +150,15 @@
                     </div>
                     <div class="tool-grid" id="favoritesGrid">
                         <!-- 收藏工具卡片动态生成 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 下载视图 -->
+            <div id="downloadsView" class="view">
+                <div class="view-container">
+                    <div id="downloadsContent">
+                        <!-- 下载内容由 JavaScript 动态注入 -->
                     </div>
                 </div>
             </div>

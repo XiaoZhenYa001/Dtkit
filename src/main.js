@@ -35,6 +35,7 @@ import { updateBackForwardButtons, goBack, goForward, initNavigationListeners, s
 // ============================================
 import { renderToolLibrary, handleSearch, initSearchListener, setToolLibraryCallbacks } from './views/toolLibrary.js';
 import { renderFavoritesPage, updateClearFavoritesButton, initClearFavoritesListener, setFavoritesCallbacks } from './views/favorites.js';
+import { renderDownloadsPage, initDownloadsView } from './views/downloads.js';
 import { initSettings } from './views/settings.js';
 
 // ============================================
@@ -80,7 +81,10 @@ function updateContentView() {
     DOM.toolLibraryView?.classList.remove('view--active');
     DOM.favoritesView?.classList.remove('view--active');
     DOM.settingsView?.classList.remove('view--active');
-    if (DOM.searchContainer) DOM.searchContainer.style.display = 'none';
+    DOM.downloadsView?.classList.remove('view--active');
+    
+    // 默认隐藏导航栏
+    if (DOM.navbar) DOM.navbar.style.display = 'none';
     
     // 隐藏动态工具容器
     hideDynamicContainer();
@@ -108,13 +112,17 @@ function updateContentView() {
     }
     else if (appState.currentView === 'favorites') {
         DOM.favoritesView?.classList.add('view--active');
-        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
+        if (DOM.navbar) DOM.navbar.style.display = 'flex';
         renderFavoritesPage();
         appState.currentToolId = null;
         updateClearFavoritesButton();
+    } else if (appState.currentView === 'downloads') {
+        DOM.downloadsView?.classList.add('view--active');
+        renderDownloadsPage();
+        appState.currentToolId = null;
     } else {
         DOM.toolLibraryView?.classList.add('view--active');
-        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
+        if (DOM.navbar) DOM.navbar.style.display = 'flex';
         appState.currentToolId = null;
     }
     
@@ -184,9 +192,14 @@ function initNavButtonListeners() {
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
                 }
-            } else if (view === 'history') {
-                alert('历史功能即将推出');
-                return;
+            } else if (view === 'downloads') {
+                appState.currentView = 'downloads';
+                if (activeTab) {
+                    activeTab.toolId = null;
+                    activeTab.viewType = 'downloads';
+                    activeTab.title = '下载';
+                    activeTab.icon = 'ri-download-2-line';
+                }
             } else if (view === 'settings') {
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
                 

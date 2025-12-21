@@ -14,6 +14,7 @@ const DOM = {
     // 视图容器
     toolLibraryView: null,
     favoritesView: null,
+    downloadsView: null,
     settingsView: null,
     
     // 工具网格
@@ -26,6 +27,9 @@ const DOM = {
     // 导航按钮
     backBtn: null,
     forwardBtn: null,
+    
+    // 导航栏
+    navbar: null,
     
     // 搜索
     searchContainer: null,
@@ -41,6 +45,7 @@ export function initDOM() {
     DOM.contentArea = document.getElementById('contentArea');
     DOM.toolLibraryView = document.getElementById('toolLibraryView');
     DOM.favoritesView = document.getElementById('favoritesView');
+    DOM.downloadsView = document.getElementById('downloadsView');
     DOM.settingsView = document.getElementById('settingsView');
     DOM.devToolsGrid = document.getElementById('devToolsGrid');
     DOM.designToolsGrid = document.getElementById('designToolsGrid');
@@ -49,6 +54,7 @@ export function initDOM() {
     DOM.favoritesGrid = document.getElementById('favoritesGrid');
     DOM.backBtn = document.getElementById('backBtn');
     DOM.forwardBtn = document.getElementById('forwardBtn');
+    DOM.navbar = document.getElementById('navbar');
     DOM.searchContainer = document.getElementById('searchContainer');
     DOM.searchInput = document.getElementById('searchInput');
 }
