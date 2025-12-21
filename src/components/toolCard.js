@@ -21,6 +21,9 @@ export function createToolCard(tool, onOpenTool) {
         <button class="tool-card__favorite ${favorited ? 'tool-card__favorite--active' : ''}" title="${favorited ? '取消收藏' : '收藏'}">
             <i class="ri-star-fill"></i>
         </button>
+        <button class="tool-card__drag-handle" title="拖动调整顺序" style="display: none;">
+            <i class="ri-draggable"></i>
+        </button>
         <div class="tool-card__header">
             <div class="tool-card__icon ${colorClass}">
                 <i class="${tool.icon}"></i>
