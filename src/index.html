@@ -195,27 +195,55 @@
 
                                 <hr class="settings-divider">
 
-                                <div class="settings-item">
-                                    <div class="settings-item-header">
-                                        <label class="settings-label">工具资源镜像源 (Mirror Source)</label>
-                                        <span class="settings-status-badge"><i class="ri-wifi-line"></i> 24ms</span>
+                                <!-- 镜像源设置区域 -->
+                                <div class="settings-mirror-section">
+                                    <!-- 上部：镜像源选择 -->
+                                    <div class="settings-item settings-item--mirror">
+                                        <div class="settings-mirror-header">
+                                            <div class="settings-mirror-title">
+                                                <label class="settings-label">工具资源镜像源</label>
+                                                <span class="settings-label-sub">Mirror Source</span>
+                                            </div>
+                                            <span class="settings-status-badge" id="mirrorPingStatus">
+                                                <i class="ri-wifi-line"></i> <span>--</span>
+                                            </span>
+                                        </div>
+                                        <div class="settings-mirror-controls">
+                                            <select id="mirrorSourceSelect" class="settings-select" title="选择镜像源">
+                                                <option value="official" data-url="https://registry.npmjs.org/">官方源 (Default)</option>
+                                                <option value="aliyun" data-url="https://registry.npmmirror.com/" selected>阿里云 (Aliyun)</option>
+                                                <option value="tencent" data-url="https://mirrors.cloud.tencent.com/npm/">腾讯云 (Tencent)</option>
+                                                <option value="huawei" data-url="https://repo.huaweicloud.com/repository/npm/">华为云 (Huawei)</option>
+                                                <option value="custom" data-url="">自定义...</option>
+                                            </select>
+                                            <button id="testMirrorSpeedBtn" class="settings-btn settings-btn--icon-text" title="测试延迟">
+                                                <i class="ri-speed-line"></i>
+                                                <span>测速</span>
+                                            </button>
+                                        </div>
+                                        <!-- 智能镜像检测开关 -->
+                                        <div class="settings-toggle-row">
+                                            <label class="settings-toggle">
+                                                <input type="checkbox" id="autoMirrorDetect" class="settings-toggle-input" checked>
+                                                <span class="settings-toggle-slider"></span>
+                                            </label>
+                                            <span class="settings-toggle-label">智能镜像检测</span>
+                                            <span class="settings-toggle-hint">自动检测受限链接并选择最快镜像</span>
+                                        </div>
+                                        <p class="settings-help-text">用于加速 NPM 包、图片资源及插件的下载。</p>
                                     </div>
-                                    <div class="settings-input-group">
-                                        <select class="settings-select">
-                                            <option value="official">官方源 (Default)</option>
-                                            <option value="aliyun" selected>阿里云 (Aliyun Mirror)</option>
-                                            <option value="tencent">腾讯云 (Tencent Mirror)</option>
-                                            <option value="custom">自定义...</option>
-                                        </select>
-                                        <button class="settings-btn settings-btn--secondary">
-                                            <i class="ri-speed-line"></i> 测速
+                                    
+                                    <!-- 下部：自定义源配置 -->
+                                    <div class="settings-custom-source-box">
+                                        <button id="configCustomSourceBtn" class="settings-custom-source-btn">
+                                            <i class="ri-add-circle-line"></i>
+                                            <span>配置自定义源</span>
                                         </button>
+                                        <p class="settings-custom-source-hint">支持多个镜像源备用切换</p>
                                     </div>
-                                    <p class="settings-help-text">用于加速 NPM 包、图片资源及插件的下载。</p>
                                 </div>
                             </div>
                         </section>
-
                         <!-- 快捷键绑定 -->
                         <section class="settings-section">
                             <div class="settings-section-header">
@@ -316,6 +344,40 @@
             </div>
 
         </main>
+    </div>
+
+    <!-- 自定义镜像源配置对话框 -->
+    <div id="customSourceDialog" class="modal-overlay" style="display: none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="ri-settings-4-line"></i> 配置自定义镜像源</h3>
+                <button class="modal-close" id="closeCustomSourceDialog">
+                    <i class="ri-close-line"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-description">
+                    <i class="ri-information-line"></i>
+                    <span>请输入 JSON 格式的镜像源配置。自定义配置源可能伴随着安全风险，请仅使用可信任的源。</span>
+                </div>
+                <textarea 
+                    id="customSourceInput" 
+                    class="modal-textarea" 
+                    placeholder="{\n  &quot;name&quot;: &quot;自定义镜像源&quot;,\n  &quot;url&quot;: &quot;https://example.com/registry/&quot;,\n  &quot;description&quot;: &quot;镜像源描述&quot;\n}"
+                    rows="10"
+                ></textarea>
+                <div class="modal-hint">
+                    <i class="ri-lightbulb-line"></i>
+                    示例格式：包含 name（名称）、url（地址）和可选的 description（描述）字段
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn--secondary" id="cancelCustomSource">取消</button>
+                <button class="modal-btn modal-btn--primary" id="confirmCustomSource">
+                    <i class="ri-check-line"></i> 确定
+                </button>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="main.js"></script>

@@ -4,6 +4,12 @@
  */
 import { getDownloadPath } from '../core/state.js';
 import { showToast } from '../core/utils.js';
+import { 
+    mirrorDetector, 
+    detectRestrictedUrl, 
+    isAutoDetectEnabled,
+    getMirrorSourceName 
+} from '../core/mirrorSource.js';
 
 // DOM 元素引用
 let downloadsContent = null;
@@ -23,6 +29,7 @@ let tauriDialog = null;
 let unlistenProgress = null;
 let unlistenStatusChanged = null;
 let unlistenStarted = null;
+let unlistenRetry = null;
 
 /**
  * 初始化下载视图
@@ -81,6 +88,13 @@ async function setupEventListeners() {
     unlistenStarted = await tauriListen('download-started', (event) => {
         addTaskToList(event.payload);
     });
+    
+    // 监听镜像重试
+    unlistenRetry = await tauriListen('download-retry', (event) => {
+        const { id, attempt, message } = event.payload;
+        showToast(`${message}`, 'info');
+        updateTaskRetryStatus(id, attempt);
+    });
 }
 
 /**
@@ -98,6 +112,10 @@ async function cleanupEventListeners() {
     if (unlistenStarted) {
         await unlistenStarted();
         unlistenStarted = null;
+    }
+    if (unlistenRetry) {
+        await unlistenRetry();
+        unlistenRetry = null;
     }
 }
 
@@ -188,6 +206,12 @@ export function renderDownloadsPage() {
                         <i class="ri-download-2-line"></i>
                         开始下载
                     </button>
+                </div>
+                
+                <!-- 镜像源提示（动态显示） -->
+                <div class="mirror-tip" id="mirrorTip" style="display: none;">
+                    <i class="ri-flashlight-line"></i>
+                    <span id="mirrorTipText"></span>
                 </div>
                 
                 <!-- 高级选项（可折叠） -->
@@ -282,6 +306,13 @@ function bindDownloadsEvents() {
         if (e.key === 'Enter') handleStartDownload();
     });
     
+    // 实时检测受限链接
+    urlInput?.addEventListener('input', handleUrlInputChange);
+    urlInput?.addEventListener('paste', () => {
+        // 延迟处理粘贴事件，等待值更新
+        setTimeout(handleUrlInputChange, 50);
+    });
+    
     // 高级选项切换
     const toggleAdvancedBtn = document.getElementById('toggleAdvancedBtn');
     toggleAdvancedBtn?.addEventListener('click', toggleAdvancedOptions);
@@ -357,12 +388,78 @@ function bindDownloadsEvents() {
 }
 
 /**
+ * 处理 URL 输入变化，实时检测受限链接
+ */
+function handleUrlInputChange() {
+    const urlInput = document.getElementById('downloadUrlInput');
+    const mirrorTip = document.getElementById('mirrorTip');
+    const mirrorTipText = document.getElementById('mirrorTipText');
+    
+    if (!urlInput || !mirrorTip || !mirrorTipText) return;
+    
+    const url = urlInput.value.trim();
+    
+    // 清空时隐藏提示
+    if (!url) {
+        mirrorTip.style.display = 'none';
+        mirrorTip.className = 'mirror-tip';
+        return;
+    }
+    
+    // 简单验证 URL 格式
+    if (!url.match(/^https?:/i)) {
+        mirrorTip.style.display = 'none';
+        return;
+    }
+    
+    // 检测是否受限
+    const restriction = detectRestrictedUrl(url);
+    
+    if (restriction.restricted && isAutoDetectEnabled()) {
+        mirrorTip.style.display = 'flex';
+        mirrorTip.className = 'mirror-tip mirror-tip--warning';
+        mirrorTipText.textContent = `检测到 ${restriction.label} 链接，将自动使用镜像加速`;
+    } else if (restriction.restricted) {
+        mirrorTip.style.display = 'flex';
+        mirrorTip.className = 'mirror-tip mirror-tip--info';
+        mirrorTipText.textContent = `检测到 ${restriction.label} 链接（自动加速已禁用）`;
+    } else {
+        mirrorTip.style.display = 'none';
+    }
+}
+
+/**
+ * 显示镜像提示
+ */
+function showMirrorTip(message, type = 'info') {
+    const mirrorTip = document.getElementById('mirrorTip');
+    const mirrorTipText = document.getElementById('mirrorTipText');
+    
+    if (!mirrorTip || !mirrorTipText) return;
+    
+    mirrorTip.style.display = 'flex';
+    mirrorTip.className = `mirror-tip mirror-tip--${type}`;
+    mirrorTipText.textContent = message;
+}
+
+/**
+ * 隐藏镜像提示
+ */
+function hideMirrorTip() {
+    const mirrorTip = document.getElementById('mirrorTip');
+    if (mirrorTip) {
+        mirrorTip.style.display = 'none';
+    }
+}
+
+/**
  * 处理开始下载
  */
 async function handleStartDownload() {
     const urlInput = document.getElementById('downloadUrlInput');
     const customFilename = document.getElementById('customFilename');
     const savePath = document.getElementById('savePath');
+    const startBtn = document.getElementById('startDownloadBtn');
     
     const url = urlInput?.value.trim();
     
@@ -393,18 +490,70 @@ async function handleStartDownload() {
     
     const filename = customFilename?.value.trim() || null;
     
+    // 智能镜像检测
+    let finalUrl = url;
+    let mirrorInfo = null;
+    let mirrorUrls = []; // 备用镜像 URL 列表
+    
+    if (isAutoDetectEnabled()) {
+        // 显示检测中状态
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.innerHTML = '<i class="ri-loader-4-line spinning"></i> 检测中...';
+        }
+        showMirrorTip('正在选择最优线路...', 'info');
+        
+        try {
+            mirrorInfo = await mirrorDetector.getBestMirror(url);
+            finalUrl = mirrorInfo.url;
+            
+            // 获取所有备用镜像 URL（排除已选中的）
+            const allMirrors = mirrorDetector.getAllMirrorUrls(url);
+            mirrorUrls = allMirrors
+                .filter(m => m.url !== finalUrl)
+                .map(m => m.url);
+            
+            if (mirrorInfo.isAccelerated) {
+                const mirrorCount = mirrorUrls.length;
+                showMirrorTip(`使用 ${mirrorInfo.sourceName} 加速${mirrorCount > 0 ? ` | ${mirrorCount} 个备用镜像` : ''}`, 'success');
+            } else if (mirrorInfo.reason) {
+                showMirrorTip(mirrorInfo.reason, 'warning');
+            }
+        } catch (error) {
+            console.error('镜像检测失败:', error);
+            showMirrorTip('镜像检测失败，将使用原始链接', 'warning');
+        }
+        
+        // 恢复按钮状态
+        if (startBtn) {
+            startBtn.disabled = false;
+            startBtn.innerHTML = '<i class="ri-download-2-line"></i> 开始下载';
+        }
+    }
+    
     // 调用 Tauri API 开始下载
     if (tauriInvoke) {
         try {
+            // 调试输出
+            console.log('下载参数:', {
+                url: finalUrl,
+                mirrorUrls: mirrorUrls,
+                mirrorCount: mirrorUrls.length
+            });
+            
             await tauriInvoke('start_download', {
-                url: url,
+                url: finalUrl,
                 savePath: downloadPath,
-                customFilename: filename
+                customFilename: filename,
+                mirrorUrls: mirrorUrls.length > 0 ? mirrorUrls : null // Tauri 会自动转换为 snake_case
             });
             
             // 清空输入框
             if (urlInput) urlInput.value = '';
             if (customFilename) customFilename.value = '';
+            
+            // 隐藏镜像提示
+            hideMirrorTip();
             
             // 显示成功反馈
             showDownloadAddedFeedback();
@@ -614,6 +763,31 @@ function updateTaskFromBackend(task) {
 }
 
 /**
+ * 更新任务重试状态
+ */
+function updateTaskRetryStatus(taskId, attempt) {
+    const taskCard = document.querySelector(`[data-task-id="${taskId}"]`);
+    if (!taskCard) return;
+    
+    // 在任务卡片上显示重试信息
+    const fileStatus = taskCard.querySelector('.file-status');
+    if (fileStatus) {
+        fileStatus.innerHTML = `
+            <span class="retry-badge">
+                <i class="ri-refresh-line spinning"></i>
+                正在尝试镜像 ${attempt}...
+            </span>
+        `;
+    }
+    
+    // 重置进度条
+    const progressBar = taskCard.querySelector('.progress-bar');
+    if (progressBar) {
+        progressBar.style.width = '0%';
+    }
+}
+
+/**
  * 更新任务进度
  */
 function updateTaskProgress(progress) {
@@ -775,7 +949,7 @@ function renderTaskCard(task) {
         `;
         
         controlButtons = `
-            <button class="task-btn primary btn-retry" data-url="${task.url}" data-path="${task.save_path}" data-filename="${task.filename}">
+            <button class="task-btn primary btn-retry" data-task-id="${task.id}" data-url="${task.url}" data-path="${task.save_path}" data-filename="${task.filename}">
                 <i class="ri-refresh-line"></i>
                 重试
             </button>
@@ -888,12 +1062,34 @@ function bindTaskButtonEvents() {
     // 重试下载
     document.querySelectorAll('.btn-retry').forEach(btn => {
         btn.addEventListener('click', async () => {
+            const taskId = btn.dataset.taskId;
             const url = btn.dataset.url;
             const savePath = btn.dataset.path;
             const filename = btn.dataset.filename;
             
             if (tauriInvoke) {
                 try {
+                    // 删除失败的任务卡片
+                    const taskCard = btn.closest('.download-card');
+                    if (taskCard) {
+                        taskCard.remove();
+                    }
+                    
+                    // 从任务列表中移除
+                    const taskIndex = downloadTasks.findIndex(t => t.id === taskId);
+                    if (taskIndex !== -1) {
+                        downloadTasks.splice(taskIndex, 1);
+                    }
+                    
+                    // 删除后端记录
+                    if (taskId) {
+                        try {
+                            await tauriInvoke('remove_download_record', { taskId: taskId });
+                        } catch (e) {
+                            console.log('删除记录失败:', e);
+                        }
+                    }
+                    
                     // 获取目录路径
                     const dirPath = savePath.substring(0, savePath.lastIndexOf('\\')) || savePath.substring(0, savePath.lastIndexOf('/'));
                     await tauriInvoke('start_download', {
@@ -901,7 +1097,9 @@ function bindTaskButtonEvents() {
                         savePath: dirPath,
                         customFilename: filename
                     });
+                    
                     showToast('重新开始下载', 'success');
+                    updateStats();
                 } catch (error) {
                     showToast('重试失败: ' + error, 'error');
                 }

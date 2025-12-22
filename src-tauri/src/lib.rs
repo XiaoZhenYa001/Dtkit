@@ -59,15 +59,26 @@ fn run_command(cmd: String, args: Vec<String>) -> Result<String, String> {
     }
 }
 
-/// 开始下载文件
+/// 开始下载文件（支持多镜像自动重试）
 #[tauri::command]
 async fn start_download(
     app: AppHandle,
     url: String,
     save_path: String,
     custom_filename: Option<String>,
+    mirror_urls: Option<Vec<String>>, // 备用镜像 URL 列表
 ) -> Result<String, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
+    
+    // 调试日志
+    println!("=== 开始下载 ===");
+    println!("主 URL: {}", url);
+    println!("备用镜像数量: {:?}", mirror_urls.as_ref().map(|v| v.len()));
+    if let Some(ref mirrors) = mirror_urls {
+        for (i, m) in mirrors.iter().enumerate() {
+            println!("  备用镜像 {}: {}", i + 1, m);
+        }
+    }
     
     // 从 URL 提取文件名
     let filename = custom_filename.unwrap_or_else(|| {
@@ -83,6 +94,12 @@ async fn start_download(
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
         }
+    }
+    
+    // 构建所有要尝试的 URL 列表
+    let mut urls_to_try = vec![url.clone()];
+    if let Some(mirrors) = mirror_urls {
+        urls_to_try.extend(mirrors);
     }
     
     // 创建初始任务
@@ -112,14 +129,47 @@ async fn start_download(
     let task_id_clone = task_id.clone();
     
     tauri::async_runtime::spawn(async move {
-        match download_file_internal(&app_clone, &task_id_clone, &url, &full_path_str).await {
-            Ok(_) => {
-                update_task_status(&app_clone, &task_id_clone, "completed", None);
+        // 依次尝试每个 URL
+        let mut last_error = String::new();
+        
+        println!("共有 {} 个 URL 需要尝试", urls_to_try.len());
+        
+        for (index, try_url) in urls_to_try.iter().enumerate() {
+            println!("尝试第 {} 个: {}", index + 1, try_url);
+            
+            // 发送正在尝试的镜像信息
+            if index > 0 {
+                let _ = app_clone.emit("download-retry", serde_json::json!({
+                    "id": task_id_clone,
+                    "attempt": index + 1,
+                    "url": try_url,
+                    "message": format!("正在尝试镜像 {} ...", index + 1)
+                }));
             }
-            Err(e) => {
-                update_task_status(&app_clone, &task_id_clone, "error", Some(e));
+            
+            match download_file_internal(&app_clone, &task_id_clone, try_url, &full_path_str).await {
+                Ok(_) => {
+                    println!("下载成功: {}", try_url);
+                    update_task_status(&app_clone, &task_id_clone, "completed", None);
+                    return; // 下载成功，退出
+                }
+                Err(e) => {
+                    println!("下载失败: {} - 错误: {}", try_url, e);
+                    last_error = e.clone();
+                    // 如果还有更多镜像可尝试，继续；否则报错
+                    if index < urls_to_try.len() - 1 {
+                        println!("将尝试下一个镜像...");
+                        // 删除可能存在的不完整文件
+                        let _ = fs::remove_file(&full_path_str);
+                        continue;
+                    }
+                }
             }
         }
+        
+        // 所有镜像都失败了
+        println!("所有 {} 个镜像均失败", urls_to_try.len());
+        update_task_status(&app_clone, &task_id_clone, "error", Some(format!("所有镜像均失败: {}", last_error)));
     });
     
     Ok(task_id)
@@ -132,10 +182,43 @@ async fn download_file_internal(
     url: &str,
     save_path: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    // 创建带有自定义 User-Agent 的客户端，并允许重定向
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
     
-    let response = client
+    // 根据 URL 设置适当的 Referer
+    let referer = if url.contains("nuaa.cf") {
+        "https://hub.nuaa.cf/"
+    } else if url.contains("yzuu.cf") {
+        "https://hub.yzuu.cf/"
+    } else if url.contains("kkgithub.com") {
+        "https://kkgithub.com/"
+    } else if url.contains("ghproxy.net") {
+        "https://ghproxy.net/"
+    } else if url.contains("gh-proxy.com") {
+        "https://gh-proxy.com/"
+    } else if url.contains("github.com") {
+        "https://github.com/"
+    } else {
+        ""
+    };
+    
+    let mut request = client
         .get(url)
+        .header("Accept", "*/*")
+        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .header("Accept-Encoding", "gzip, deflate, br")
+        .header("Connection", "keep-alive");
+    
+    // 添加 Referer 头（如果有）
+    if !referer.is_empty() {
+        request = request.header("Referer", referer);
+    }
+    
+    let response = request
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;

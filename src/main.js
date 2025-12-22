@@ -98,6 +98,9 @@ function updateContentView() {
     else if (activeTab.toolId) {
         const tool = getTool(activeTab.toolId);
         if (tool) {
+            // 工具页面也显示导航栏（后退/前进按钮）
+            if (DOM.navbar) DOM.navbar.style.display = 'flex';
+            
             if (hasToolTemplate(activeTab.toolId)) {
                 renderToolView(activeTab.toolId);
                 showDynamicContainer();
@@ -292,7 +295,7 @@ function initializeApp() {
     initAddTabListener();
     initClearFavoritesListener();
     
-    // 初始化设置（下载路径、快捷键）
+    // 初始化设置（下载路径、镜像源、快捷键）
     initSettings();
 }
 
