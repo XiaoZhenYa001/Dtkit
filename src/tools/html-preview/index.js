@@ -10,7 +10,8 @@ import { registerTool } from '../toolRegistry.js';
 const previewState = {
     autoRefresh: true,
     refreshTimer: null,
-    refreshDelay: 500
+    refreshDelay: 500,
+    isFullscreen: false
 };
 
 // ============================================
@@ -70,11 +71,16 @@ function getTemplate() {
                     </div>
 
                     <!-- 预览区 -->
-                    <div class="html-preview-result-panel">
+                    <div id="previewResultPanel" class="html-preview-result-panel">
                         <div class="html-preview-panel-header">
                             <span><i class="ri-eye-line"></i> 预览效果</span>
-                            <div class="html-preview-size-info">
-                                <span id="previewSize">--</span>
+                            <div class="html-preview-header-actions">
+                                <div class="html-preview-size-info">
+                                    <span id="previewSize">--</span>
+                                </div>
+                                <button id="fullscreenBtn" class="html-preview-fullscreen-btn" title="全屏预览">
+                                    <i class="ri-fullscreen-line"></i>
+                                </button>
                             </div>
                         </div>
                         <div class="html-preview-frame-wrapper">
@@ -358,15 +364,91 @@ function getStyles() {
             flex-direction: column;
             min-height: 0;
             background: var(--color-bg-primary);
+            transition: all 0.3s ease;
+        }
+
+        .html-preview-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: auto;
         }
 
         .html-preview-size-info {
-            margin-left: auto;
             font-size: 12px;
             color: var(--color-text-tertiary);
             padding: 4px 10px;
             background: var(--color-bg-secondary);
             border-radius: 4px;
+        }
+
+        .html-preview-fullscreen-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .html-preview-fullscreen-btn:hover {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: white;
+        }
+
+        .html-preview-fullscreen-btn i {
+            font-size: 16px;
+        }
+
+        /* 全屏模式 */
+        .html-preview-result-panel.fullscreen {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: white;
+            border-radius: 0;
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-panel-header {
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-bottom: none;
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-panel-header span {
+            color: white;
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-size-info {
+            background: rgba(255, 255, 255, 0.2);
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-fullscreen-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-fullscreen-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-frame-wrapper {
+            padding: 20px;
+            background: #f1f5f9;
+        }
+
+        .html-preview-result-panel.fullscreen .html-preview-frame {
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
         }
 
         .html-preview-frame-wrapper {
@@ -805,10 +887,48 @@ function bindEvents() {
         });
     }
 
+    // 全屏按钮
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
+
+    // ESC 键退出全屏
+    document.addEventListener('keydown', handleKeydown);
+
     // 示例按钮
     document.querySelectorAll('.html-preview-example-btn').forEach(btn => {
         btn.addEventListener('click', () => loadExample(btn.dataset.example));
     });
+}
+
+// ============================================
+// 全屏切换
+// ============================================
+function toggleFullscreen() {
+    const panel = document.getElementById('previewResultPanel');
+    const btn = document.getElementById('fullscreenBtn');
+    if (!panel || !btn) return;
+
+    previewState.isFullscreen = !previewState.isFullscreen;
+    panel.classList.toggle('fullscreen', previewState.isFullscreen);
+    
+    // 更新按钮图标
+    const icon = btn.querySelector('i');
+    if (icon) {
+        icon.className = previewState.isFullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line';
+    }
+    btn.title = previewState.isFullscreen ? '退出全屏' : '全屏预览';
+}
+
+// ============================================
+// 键盘事件处理
+// ============================================
+function handleKeydown(e) {
+    // ESC 退出全屏
+    if (e.key === 'Escape' && previewState.isFullscreen) {
+        toggleFullscreen();
+    }
 }
 
 // ============================================
@@ -953,6 +1073,12 @@ function loadExample(name) {
 function destroy() {
     if (previewState.refreshTimer) {
         clearTimeout(previewState.refreshTimer);
+    }
+    // 移除键盘事件监听
+    document.removeEventListener('keydown', handleKeydown);
+    // 如果在全屏状态，退出全屏
+    if (previewState.isFullscreen) {
+        previewState.isFullscreen = false;
     }
     console.log('[HTMLPreview] 工具已销毁');
 }
