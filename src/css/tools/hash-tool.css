@@ -1,0 +1,573 @@
+/* ============================================
+   Hash 工具 - 玻璃拟态风格
+   ============================================ */
+
+/* 主容器 - 使用视口高度 */
+.view-container.hash-tool-view {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 46px - 3.5rem - 2rem);
+    max-height: calc(100vh - 46px - 3.5rem - 2rem);
+    padding: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* 玻璃容器 */
+.hash-glass-container {
+    flex: 1;
+    min-height: 0;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 24px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.05);
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    overflow: hidden;
+    margin: var(--spacing-lg);
+}
+
+/* 主操作区 */
+.hash-main-panel {
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.hash-main-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.hash-main-panel::-webkit-scrollbar-thumb {
+    background: rgba(203, 213, 225, 0.5);
+    border-radius: 999px;
+}
+
+/* 标题区 */
+.hash-header-title h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    animation: hashFadeInDown 0.6s ease;
+}
+
+.hash-header-title p {
+    margin: 5px 0 0;
+    color: #64748b;
+    font-size: 14px;
+    animation: hashFadeInDown 0.6s ease 0.1s both;
+}
+
+@keyframes hashFadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes hashFadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 内容卡片 */
+.hash-content-card {
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 16px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    animation: hashFadeInUp 0.6s ease 0.2s both;
+}
+
+.hash-content-card:hover {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.hash-textarea {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    outline: none;
+    resize: none;
+    color: var(--color-text-primary);
+    height: 120px;
+    font-family: inherit;
+    line-height: 1.6;
+}
+
+.hash-textarea::placeholder {
+    color: #94a3b8;
+}
+
+/* 文件上传区 */
+.hash-file-upload {
+    border: 2px dashed #cbd5e1;
+    border-radius: 16px;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    animation: hashFadeInUp 0.6s ease 0.3s both;
+    padding: 20px;
+    gap: 10px;
+}
+
+.hash-file-upload:hover {
+    background: rgba(99, 102, 241, 0.05);
+    border-color: #6366f1;
+    transform: translateY(-3px);
+}
+
+.hash-file-upload:active {
+    transform: scale(0.98);
+}
+
+.hash-file-upload.dragover {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: #6366f1;
+    border-style: solid;
+}
+
+.hash-file-upload i {
+    font-size: 2rem;
+    color: #94a3b8;
+    transition: color 0.3s ease;
+}
+
+.hash-file-upload:hover i {
+    color: #6366f1;
+}
+
+.hash-file-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #475569;
+}
+
+.hash-file-info .file-name {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.hash-file-info .file-size {
+    color: #94a3b8;
+}
+
+.hash-clear-file {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.hash-clear-file:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* 进度条 */
+.hash-progress-container {
+    width: 100%;
+    height: 6px;
+    background: rgba(203, 213, 225, 0.3);
+    border-radius: 10px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.hash-progress-container.active {
+    opacity: 1;
+}
+
+.hash-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    border-radius: 10px;
+    width: 0%;
+    transition: width 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+    animation: hashShimmer 1.5s infinite;
+}
+
+@keyframes hashShimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* 结果区域 */
+.hash-results-container {
+    animation: hashFadeInUp 0.6s ease 0.4s both;
+}
+
+.hash-section-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #94a3b8;
+    margin-bottom: 15px;
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.hash-result-pill {
+    display: flex;
+    align-items: center;
+    background: white;
+    padding: 12px 20px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+    transition: all 0.3s ease;
+    cursor: default;
+    border: 1px solid transparent;
+}
+
+.hash-result-pill:hover {
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+    transform: translateX(5px);
+    border-color: rgba(99, 102, 241, 0.2);
+}
+
+.hash-algo-tag {
+    background: #eef2ff;
+    color: #6366f1;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 15px;
+    min-width: 65px;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.hash-string {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 13px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #334155;
+    user-select: all;
+}
+
+.hash-copy-btn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: #6366f1;
+    transition: all 0.3s ease;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.hash-copy-btn:hover {
+    background: rgba(99, 102, 241, 0.1);
+    transform: scale(1.05);
+}
+
+.hash-copy-btn:active {
+    transform: scale(0.95);
+}
+
+.hash-copy-btn.copied {
+    color: #10b981;
+}
+
+/* 空状态 */
+.hash-empty-results {
+    text-align: center;
+    padding: 40px 20px;
+    color: #94a3b8;
+}
+
+.hash-empty-results i {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    opacity: 0.5;
+}
+
+.hash-empty-results p {
+    margin: 0;
+    font-size: 14px;
+}
+
+/* 右侧配置面板 */
+.hash-config-panel {
+    background: rgba(255, 255, 255, 0.3);
+    border-left: 1px solid rgba(255, 255, 255, 0.4);
+    padding: 40px 25px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    animation: hashFadeInRight 0.6s ease 0.3s both;
+    overflow-y: auto;
+}
+
+@keyframes hashFadeInRight {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* 算法开关组 */
+.hash-switch-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(203, 213, 225, 0.3);
+    transition: all 0.3s ease;
+}
+
+.hash-switch-group:hover {
+    transform: translateX(5px);
+}
+
+.hash-switch-group span {
+    font-size: 14px;
+    color: #475569;
+    font-weight: 500;
+}
+
+/* 自定义开关样式 */
+.hash-switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: #cbd5e1;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.hash-switch.active {
+    background: #6366f1;
+}
+
+.hash-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.hash-switch.active::after {
+    left: 22px;
+}
+
+/* 计算按钮 */
+.hash-btn-calculate {
+    width: 100%;
+    background: #6366f1;
+    color: white;
+    border: none;
+    padding: 14px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    margin-top: auto;
+}
+
+.hash-btn-calculate::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s ease, height 0.6s ease;
+}
+
+.hash-btn-calculate:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.hash-btn-calculate:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 25px rgba(99, 102, 241, 0.3);
+}
+
+.hash-btn-calculate:active {
+    transform: translateY(0);
+}
+
+.hash-btn-calculate:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.hash-btn-calculate:disabled:hover {
+    transform: none;
+}
+
+/* 安全提示 */
+.hash-security-tip {
+    padding: 15px;
+    border-radius: 12px;
+    background: rgba(99, 102, 241, 0.05);
+    font-size: 12px;
+    line-height: 1.6;
+    color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.hash-security-tip b {
+    display: block;
+    margin-bottom: 5px;
+}
+
+/* 校验区域 */
+.hash-verify-section {
+    margin-top: 10px;
+}
+
+.hash-verify-input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid rgba(203, 213, 225, 0.5);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    outline: none;
+    transition: all 0.3s ease;
+    color: var(--color-text-primary);
+}
+
+.hash-verify-input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.hash-verify-input::placeholder {
+    color: #94a3b8;
+    font-family: inherit;
+}
+
+.hash-verify-result {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    display: none;
+}
+
+.hash-verify-result.match {
+    display: block;
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.hash-verify-result.mismatch {
+    display: block;
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* 响应式 */
+@media (max-width: 992px) {
+    .hash-glass-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr auto;
+    }
+    
+    .hash-config-panel {
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.4);
+        padding: 25px;
+    }
+}
+
+@media (max-width: 768px) {
+    .hash-glass-container {
+        margin: var(--spacing-md);
+        border-radius: 16px;
+    }
+    
+    .hash-main-panel {
+        padding: 25px;
+    }
+    
+    .hash-header-title h1 {
+        font-size: 20px;
+    }
+    
+    .hash-result-pill {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .hash-string {
+        width: 100%;
+        font-size: 11px;
+    }
+}

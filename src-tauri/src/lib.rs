@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Write, Read, BufReader};
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -8,6 +8,11 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use futures_util::StreamExt;
+
+// 哈希计算相关
+use md5::Md5;
+use sha1::Sha1;
+use sha2::{Sha256, Sha512, Digest};
 
 // 下载任务状态
 #[derive(Clone, Serialize, Deserialize)]
@@ -43,6 +48,137 @@ fn write_binary_file(path: String, data: Vec<u8>) -> Result<(), String> {
     }
     
     fs::write(&path, &data).map_err(|e| format!("写入文件失败: {}", e))
+}
+
+// ============================================
+// 哈希计算相关命令
+// ============================================
+
+/// 计算文本的哈希值
+#[tauri::command]
+fn calculate_text_hash(text: String, algorithms: Vec<String>, uppercase: bool) -> Result<HashMap<String, String>, String> {
+    let mut results = HashMap::new();
+    let bytes = text.as_bytes();
+    
+    for algo in algorithms {
+        let hash = match algo.to_lowercase().as_str() {
+            "md5" => {
+                let mut hasher = Md5::new();
+                hasher.update(bytes);
+                hex::encode(hasher.finalize())
+            }
+            "sha1" | "sha-1" => {
+                let mut hasher = Sha1::new();
+                hasher.update(bytes);
+                hex::encode(hasher.finalize())
+            }
+            "sha256" | "sha-256" => {
+                let mut hasher = Sha256::new();
+                hasher.update(bytes);
+                hex::encode(hasher.finalize())
+            }
+            "sha512" | "sha-512" => {
+                let mut hasher = Sha512::new();
+                hasher.update(bytes);
+                hex::encode(hasher.finalize())
+            }
+            _ => continue,
+        };
+        
+        let hash = if uppercase { hash.to_uppercase() } else { hash };
+        results.insert(algo, hash);
+    }
+    
+    Ok(results)
+}
+
+/// 计算文件的哈希值（支持大文件流式处理）
+#[tauri::command]
+async fn calculate_file_hash(
+    app: AppHandle,
+    file_path: String,
+    algorithms: Vec<String>,
+    uppercase: bool,
+    task_id: String,
+) -> Result<HashMap<String, String>, String> {
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err("文件不存在".to_string());
+    }
+    
+    let file = File::open(path).map_err(|e| format!("无法打开文件: {}", e))?;
+    let file_size = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut reader = BufReader::new(file);
+    
+    // 初始化所有需要的 hasher
+    let mut md5_hasher: Option<Md5> = None;
+    let mut sha1_hasher: Option<Sha1> = None;
+    let mut sha256_hasher: Option<Sha256> = None;
+    let mut sha512_hasher: Option<Sha512> = None;
+    
+    for algo in &algorithms {
+        match algo.to_lowercase().as_str() {
+            "md5" => md5_hasher = Some(Md5::new()),
+            "sha1" | "sha-1" => sha1_hasher = Some(Sha1::new()),
+            "sha256" | "sha-256" => sha256_hasher = Some(Sha256::new()),
+            "sha512" | "sha-512" => sha512_hasher = Some(Sha512::new()),
+            _ => {}
+        }
+    }
+    
+    // 流式读取文件
+    let mut buffer = [0u8; 65536]; // 64KB 缓冲区
+    let mut total_read: u64 = 0;
+    let mut last_progress: u64 = 0;
+    
+    loop {
+        let bytes_read = reader.read(&mut buffer).map_err(|e| format!("读取文件失败: {}", e))?;
+        if bytes_read == 0 {
+            break;
+        }
+        
+        let chunk = &buffer[..bytes_read];
+        
+        // 更新所有 hasher
+        if let Some(ref mut h) = md5_hasher { h.update(chunk); }
+        if let Some(ref mut h) = sha1_hasher { h.update(chunk); }
+        if let Some(ref mut h) = sha256_hasher { h.update(chunk); }
+        if let Some(ref mut h) = sha512_hasher { h.update(chunk); }
+        
+        total_read += bytes_read as u64;
+        
+        // 每 1MB 发送一次进度更新
+        if total_read - last_progress > 1048576 || total_read == file_size {
+            let progress = if file_size > 0 { (total_read as f64 / file_size as f64) * 100.0 } else { 100.0 };
+            let _ = app.emit("hash-progress", serde_json::json!({
+                "taskId": task_id,
+                "progress": progress,
+                "bytesProcessed": total_read,
+                "totalBytes": file_size
+            }));
+            last_progress = total_read;
+        }
+    }
+    
+    // 收集结果
+    let mut results = HashMap::new();
+    
+    for algo in algorithms {
+        let hash = match algo.to_lowercase().as_str() {
+            "md5" => md5_hasher.take().map(|h| hex::encode(h.finalize())),
+            "sha1" | "sha-1" => sha1_hasher.take().map(|h| hex::encode(h.finalize())),
+            "sha256" | "sha-256" => sha256_hasher.take().map(|h| hex::encode(h.finalize())),
+            "sha512" | "sha-512" => sha512_hasher.take().map(|h| hex::encode(h.finalize())),
+            _ => None,
+        };
+        
+        if let Some(h) = hash {
+            let h = if uppercase { h.to_uppercase() } else { h };
+            results.insert(algo, h);
+        }
+    }
+    
+    Ok(results)
 }
 
 #[tauri::command]
@@ -423,6 +559,8 @@ pub fn run() {
             greet,
             write_binary_file,
             run_command,
+            calculate_text_hash,
+            calculate_file_hash,
             start_download,
             get_download_tasks,
             cancel_download,

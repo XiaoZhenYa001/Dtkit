@@ -42,7 +42,8 @@ import './image-compressor.js';             // 图片压缩（待迁移）
 import './favicon-generator.js';            // Favicon 生成器（待迁移）
 
 // === 其他实用工具 ===
-import './hash-calculator.js';              // Hash 计算（待迁移）
+import './hash-tool/index.js';              // Hash 计算（新版玻璃拟态）
+// import './hash-calculator.js';           // Hash 计算（旧版-已弃用）
 import './url-encoder.js';                  // URL 编解码（待迁移）
 import './crontab-explainer.js';            // Crontab 解释器（待迁移）
 import './unit-converter.js';               // 单位转换器（待迁移）
