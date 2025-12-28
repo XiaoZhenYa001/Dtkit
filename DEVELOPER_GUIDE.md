@@ -88,12 +88,13 @@ DtKit/
 │   │   ├── color-picker/         # 颜色选择器工具
 │   │   ├── qr-generator/         # 二维码生成器
 │   │   ├── alarm-clock/          # 闹钟工具
-│   │   ├── image-compressor.js   # 图片压缩
-│   │   ├── favicon-generator.js  # Favicon 生成器
-│   │   ├── hash-calculator.js    # Hash 计算器
-│   │   ├── url-encoder.js        # URL 编解码
-│   │   ├── crontab-explainer.js  # Crontab 解释器
-│   │   └── unit-converter.js     # 单位转换器
+│   │   ├── hash-tool/            # Hash 计算器（玻璃拟态）
+│   │   ├── html-preview/         # HTML 代码预览
+│   │   ├── image-compressor.js   # 图片压缩（待迁移）
+│   │   ├── favicon-generator.js  # Favicon 生成器（待迁移）
+│   │   ├── url-encoder.js        # URL 编解码（待迁移）
+│   │   ├── crontab-explainer.js  # Crontab 解释器（待迁移）
+│   │   └── unit-converter.js     # 单位转换器（待迁移）
 │   │
 │   ├── css/                      # 样式文件
 │   │   ├── base.css              # 基础样式和变量
@@ -535,15 +536,51 @@ const data = JSON.parse(localStorage.getItem('dtkit_my_key') || '{}');
 | 时间戳转换 | timestamp-converter | dev | ✅ 完成 |
 | JSON 格式化 | json-formatter | dev | ✅ 完成 |
 | Base64 编解码 | base64-codec | dev | ✅ 完成 |
+| Hash 计算器 | hash-tool | dev | ✅ 完成（玻璃拟态风格） |
 | 颜色提取器 | color-picker | design | ✅ 完成 |
 | 二维码生成器 | qr-generator | design | ✅ 完成 |
-| 闹钟 | alarm-clock | daily | ✅ 完成 |
+| HTML 代码预览 | html-preview | design | ✅ 完成（支持全屏） |
+| 定时闹钟 | alarm-clock | daily | ✅ 完成 |
 | 图片压缩 | image-compressor | design | 🔄 待迁移 |
 | Favicon 生成器 | favicon-generator | design | 🔄 待迁移 |
-| Hash 计算器 | hash-calculator | dev | 🔄 待迁移 |
 | URL 编解码 | url-encoder | dev | 🔄 待迁移 |
 | Crontab 解释器 | crontab-explainer | dev | 🔄 待迁移 |
 | 单位转换器 | unit-converter | other | 🔄 待迁移 |
+
+---
+
+## Rust 后端命令
+
+### 已注册的命令
+
+| 命令 | 参数 | 返回值 | 用途 |
+|------|------|--------|------|
+| `greet` | name: String | String | 测试命令 |
+| `write_binary_file` | path: String, data: Vec<u8> | Result<()> | 写入二进制文件 |
+| `run_command` | cmd: String, args: Vec<String> | Result<String> | 执行系统命令 |
+| `calculate_text_hash` | text, algorithms, uppercase | HashMap | 计算文本哈希值 |
+| `calculate_file_hash` | file_path, algorithms, uppercase, task_id | HashMap | 计算文件哈希值（流式） |
+| `start_download` | url, save_path, custom_filename | Result<String> | 开始下载文件 |
+| `get_download_tasks` | - | Vec<DownloadTask> | 获取所有下载任务 |
+| `cancel_download` | task_id: String | Result<()> | 取消下载 |
+| `remove_download_record` | task_id: String | Result<()> | 删除下载记录 |
+| `open_file` | path: String | Result<()> | 打开文件 |
+| `open_file_location` | path: String | Result<()> | 打开文件所在目录 |
+
+### Rust 依赖
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| tauri | 2.x | 核心框架 |
+| tauri-plugin-dialog | 2.x | 文件/文件夹选择对话框 |
+| tauri-plugin-fs | 2.x | 文件系统操作 |
+| tauri-plugin-shell | 2.x | 系统命令执行 |
+| reqwest | 0.11 | HTTP 请求（下载功能） |
+| tokio | 1.x | 异步运行时 |
+| uuid | 1.x | 唯一 ID 生成 |
+| md-5/sha1/sha2 | 0.10 | 哈希计算 |
+| hex | 0.4 | 十六进制编码 |
+| lazy_static | 1.4 | 全局状态管理 |
 
 ---
 
@@ -553,4 +590,4 @@ const data = JSON.parse(localStorage.getItem('dtkit_my_key') || '{}');
 
 ---
 
-*最后更新：2025年12月21日*
+*最后更新：2025年12月28日*
