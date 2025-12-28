@@ -38,6 +38,7 @@ import './base64-codec/index.js';           // Base64 编解码
 // === 设计与图像工具 ===
 import './color-picker/index.js';           // 颜色提取器
 import './qr-generator/index.js';           // 二维码生成器
+import './html-preview/index.js';           // HTML 代码预览
 import './image-compressor.js';             // 图片压缩（待迁移）
 import './favicon-generator.js';            // Favicon 生成器（待迁移）
 
