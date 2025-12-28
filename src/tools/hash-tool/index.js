@@ -107,8 +107,8 @@ function getTemplate() {
                     </button>
 
                     <div class="hash-security-tip">
-                        <b>🔒 安全提示</b>
-                        所有计算均在本地完成，不会上传您的文件或文本到任何服务器。
+                        <b><i class="ri-shield-check-line"></i> 安全提示</b>
+                        <span>所有计算均在本地完成，不会上传您的文件或文本到任何服务器。</span>
                     </div>
                 </div>
             </div>
@@ -152,7 +152,43 @@ function bindEvents() {
     const fileInput = document.getElementById('hashFileInput');
     
     if (fileUpload && fileInput) {
-        fileUpload.addEventListener('click', () => fileInput.click());
+        // 点击上传区域
+        fileUpload.addEventListener('click', async () => {
+            // 如果已选择文件，则不响应点击
+            if (hashState.selectedFile) return;
+            
+            // 在 Tauri 环境中使用原生对话框以获取文件路径
+            if (window.__TAURI__?.dialog?.open) {
+                try {
+                    const filePath = await window.__TAURI__.dialog.open({
+                        multiple: false,
+                        title: '选择文件'
+                    });
+                    if (filePath) {
+                        // 从路径中提取文件名
+                        const fileName = filePath.split(/[/\\]/).pop() || '未知文件';
+                        // 获取文件信息
+                        let fileSize = 0;
+                        try {
+                            const stat = await window.__TAURI__.fs.stat(filePath);
+                            fileSize = stat.size || 0;
+                        } catch (e) {
+                            console.warn('[HashTool] 无法获取文件大小');
+                        }
+                        // 创建伪 File 对象
+                        const fakeFile = { name: fileName, size: fileSize, path: filePath };
+                        selectFile(fakeFile);
+                    }
+                } catch (err) {
+                    console.error('[HashTool] 选择文件失败:', err);
+                    // fallback 到原生 input
+                    fileInput.click();
+                }
+            } else {
+                // 浏览器环境使用原生 input
+                fileInput.click();
+            }
+        });
         
         fileInput.addEventListener('change', (e) => {
             if (e.target.files && e.target.files[0]) {
@@ -163,7 +199,9 @@ function bindEvents() {
         // 拖放支持
         fileUpload.addEventListener('dragover', (e) => {
             e.preventDefault();
-            fileUpload.classList.add('dragover');
+            if (!hashState.selectedFile) {
+                fileUpload.classList.add('dragover');
+            }
         });
         
         fileUpload.addEventListener('dragleave', () => {
@@ -173,6 +211,8 @@ function bindEvents() {
         fileUpload.addEventListener('drop', (e) => {
             e.preventDefault();
             fileUpload.classList.remove('dragover');
+            // 如果已选择文件，则不响应拖放
+            if (hashState.selectedFile) return;
             if (e.dataTransfer.files && e.dataTransfer.files[0]) {
                 selectFile(e.dataTransfer.files[0]);
             }
@@ -242,21 +282,25 @@ async function setupProgressListener() {
 // ============================================
 function selectFile(file) {
     hashState.selectedFile = file;
+    // 保存文件路径（如果有的话）
+    hashState.selectedFilePath = file.path || null;
     
     // 清空文本输入
     const textInput = document.getElementById('hashTextInput');
     if (textInput) textInput.value = '';
     
-    // 更新 UI
+    // 更新 UI - 选择后禁止点击
     const fileUpload = document.getElementById('hashFileUpload');
     if (fileUpload) {
+        fileUpload.style.cursor = 'default';
+        fileUpload.style.pointerEvents = 'none';
         fileUpload.innerHTML = `
             <div class="hash-file-info">
                 <i class="ri-file-3-line" style="font-size: 1.5rem; color: #6366f1;"></i>
                 <span class="file-name">${escapeHtml(file.name)}</span>
                 <span class="file-size">(${formatFileSize(file.size)})</span>
-                <button class="hash-clear-file" onclick="window.__hashTool_clearFile()">
-                    <i class="ri-close-line"></i>
+                <button class="hash-clear-file" style="pointer-events: auto; cursor: pointer;" onclick="event.stopPropagation(); window.__hashTool_clearFile();">
+                    <i class="ri-close-line"></i> 取消
                 </button>
             </div>
         `;
@@ -271,9 +315,13 @@ function selectFile(file) {
 // ============================================
 function clearFile() {
     hashState.selectedFile = null;
+    hashState.selectedFilePath = null;
     
     const fileUpload = document.getElementById('hashFileUpload');
     if (fileUpload) {
+        // 恢复可点击状态
+        fileUpload.style.cursor = 'pointer';
+        fileUpload.style.pointerEvents = 'auto';
         fileUpload.innerHTML = `
             <i class="ri-upload-cloud-2-line"></i>
             <span>将文件拖放到此处，或 <b>点击浏览</b></span>
@@ -368,20 +416,24 @@ async function calculateFileHash(algorithms) {
     
     try {
         if (window.__TAURI__?.core?.invoke) {
-            // Tauri 环境 - 需要获取文件路径
-            // 由于 Web File API 无法直接获取路径，需要使用对话框
-            const { open } = window.__TAURI__.dialog;
+            // Tauri 环境
+            let filePath = hashState.selectedFilePath;
             
-            // 使用对话框选择文件获取路径
-            const filePath = await open({
-                multiple: false,
-                title: '选择要计算哈希的文件',
-                defaultPath: file.name
-            });
-            
+            // 如果没有保存的路径，需要用对话框选择
             if (!filePath) {
-                showToast('未选择文件', 'warning');
-                return;
+                const { open } = window.__TAURI__.dialog;
+                filePath = await open({
+                    multiple: false,
+                    title: '选择要计算哈希的文件',
+                    defaultPath: file.name
+                });
+                
+                if (!filePath) {
+                    showToast('未选择文件', 'warning');
+                    return;
+                }
+                // 保存路径供后续使用
+                hashState.selectedFilePath = filePath;
             }
             
             const taskId = Date.now().toString();

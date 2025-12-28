@@ -1,8 +1,9 @@
 /* ============================================
-   Hash 工具 - 玻璃拟态风格
+   Hash 工具 - 玻璃拟态风格 (优化版)
+   Premium Glass Morphism Design
    ============================================ */
 
-/* 主容器 - 使用视口高度 */
+/* 主容器 - 使用视口高度 + 渐变背景 */
 .view-container.hash-tool-view {
     display: flex;
     flex-direction: column;
@@ -11,63 +12,148 @@
     padding: 0;
     overflow: hidden;
     box-sizing: border-box;
+    /* 优雅的多色渐变背景 */
+    background: 
+        radial-gradient(ellipse at top left, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at bottom right, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+        linear-gradient(135deg, #f0f4ff 0%, #faf5ff 50%, #fff1f2 100%);
 }
 
 /* 玻璃容器 */
 .hash-glass-container {
     flex: 1;
     min-height: 0;
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    border-radius: 24px;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.05);
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 28px;
+    box-shadow: 
+        0 25px 60px rgba(0, 0, 0, 0.06),
+        0 8px 20px rgba(0, 0, 0, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.7);
     display: grid;
-    grid-template-columns: 1fr 320px;
+    grid-template-columns: 1fr 340px;
     overflow: hidden;
     margin: var(--spacing-lg);
+    position: relative;
+}
+
+/* 装饰性光晕效果 */
+.hash-glass-container::before {
+    content: '';
+    position: absolute;
+    top: -120px;
+    right: -120px;
+    width: 350px;
+    height: 350px;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+    animation: hashGlowPulse 6s ease-in-out infinite;
+}
+
+.hash-glass-container::after {
+    content: '';
+    position: absolute;
+    bottom: -100px;
+    left: -100px;
+    width: 280px;
+    height: 280px;
+    background: radial-gradient(circle, rgba(236, 72, 153, 0.08) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+    animation: hashGlowPulse 6s ease-in-out 3s infinite;
+}
+
+@keyframes hashGlowPulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.1); }
 }
 
 /* 主操作区 */
 .hash-main-panel {
-    padding: 40px;
+    padding: 45px;
     display: flex;
     flex-direction: column;
-    gap: 25px;
+    gap: 28px;
     overflow-y: auto;
     min-height: 0;
+    position: relative;
+    z-index: 1;
 }
 
 .hash-main-panel::-webkit-scrollbar {
     width: 6px;
 }
 
+.hash-main-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
 .hash-main-panel::-webkit-scrollbar-thumb {
-    background: rgba(203, 213, 225, 0.5);
+    background: rgba(99, 102, 241, 0.15);
     border-radius: 999px;
+    transition: background 0.3s;
+}
+
+.hash-main-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.35);
 }
 
 /* 标题区 */
+.hash-header-title {
+    position: relative;
+}
+
 .hash-header-title h1 {
     margin: 0;
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--color-text-primary);
-    animation: hashFadeInDown 0.6s ease;
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #1e293b 0%, #4f46e5 50%, #7c3aed 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: hashFadeInDown 0.7s cubic-bezier(0.16, 1, 0.3, 1), hashGradientFlow 4s ease infinite;
+    letter-spacing: -0.5px;
+}
+
+@keyframes hashGradientFlow {
+    0%, 100% { background-position: 0% center; }
+    50% { background-position: 100% center; }
+}
+
+.hash-header-title h1::after {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: 0;
+    width: 55px;
+    height: 4px;
+    background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
+    background-size: 200% auto;
+    border-radius: 2px;
+    animation: hashExpandLine 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both, hashGradientFlow 3s ease infinite;
+}
+
+@keyframes hashExpandLine {
+    from { width: 0; opacity: 0; }
+    to { width: 55px; opacity: 1; }
 }
 
 .hash-header-title p {
-    margin: 5px 0 0;
+    margin: 20px 0 0;
     color: #64748b;
-    font-size: 14px;
-    animation: hashFadeInDown 0.6s ease 0.1s both;
+    font-size: 15px;
+    animation: hashFadeInDown 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+    line-height: 1.6;
 }
 
 @keyframes hashFadeInDown {
     from {
         opacity: 0;
-        transform: translateY(-10px);
+        transform: translateY(-18px);
     }
     to {
         opacity: 1;
@@ -78,7 +164,7 @@
 @keyframes hashFadeInUp {
     from {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(25px);
     }
     to {
         opacity: 1;
@@ -88,133 +174,287 @@
 
 /* 内容卡片 */
 .hash-content-card {
-    background: rgba(255, 255, 255, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    border-radius: 16px;
-    padding: 20px;
-    transition: all 0.3s ease;
-    animation: hashFadeInUp 0.6s ease 0.2s both;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.55));
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 20px;
+    padding: 25px;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: hashFadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-content-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 10%, rgba(255, 255, 255, 0.9) 50%, transparent 90%);
+}
+
+.hash-content-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+}
+
+.hash-content-card:hover::after {
+    opacity: 1;
 }
 
 .hash-content-card:hover {
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
-    transform: translateY(-2px);
+    box-shadow: 
+        0 15px 35px rgba(99, 102, 241, 0.1),
+        0 5px 12px rgba(0, 0, 0, 0.04);
+    transform: translateY(-4px);
+    border-color: rgba(99, 102, 241, 0.25);
+}
+
+.hash-content-card:focus-within {
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 
+        0 0 0 4px rgba(99, 102, 241, 0.08),
+        0 15px 35px rgba(99, 102, 241, 0.12);
 }
 
 .hash-textarea {
     width: 100%;
     border: none;
     background: transparent;
-    font-size: 16px;
+    font-size: 15px;
     outline: none;
     resize: none;
-    color: var(--color-text-primary);
-    height: 120px;
-    font-family: inherit;
-    line-height: 1.6;
+    color: #1e293b;
+    height: 50px;
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.75;
+    letter-spacing: 0.2px;
+    position: relative;
+    z-index: 1;
+    padding: 0;
+    margin: 0;
+    vertical-align: top;
 }
 
 .hash-textarea::placeholder {
     color: #94a3b8;
+    font-weight: 400;
 }
 
 /* 文件上传区 */
 .hash-file-upload {
-    border: 2px dashed #cbd5e1;
-    border-radius: 16px;
-    min-height: 100px;
+    border: 2px dashed rgba(148, 163, 184, 0.45);
+    border-radius: 20px;
+    min-height: 130px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     color: #64748b;
     cursor: pointer;
-    transition: all 0.3s ease;
-    animation: hashFadeInUp 0.6s ease 0.3s both;
-    padding: 20px;
-    gap: 10px;
+    transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: hashFadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both;
+    padding: 28px;
+    gap: 14px;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.15));
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-file-upload::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(99, 102, 241, 0.1) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+
+.hash-file-upload:hover::before {
+    opacity: 1;
+}
+
+.hash-file-upload::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7, #6366f1);
+    background-size: 300% 300%;
+    border-radius: 22px;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+.hash-file-upload:hover::after {
+    opacity: 0.15;
+    animation: hashBorderGlow 3s ease infinite;
+}
+
+@keyframes hashBorderGlow {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
 }
 
 .hash-file-upload:hover {
-    background: rgba(99, 102, 241, 0.05);
+    background: linear-gradient(145deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.05));
     border-color: #6366f1;
-    transform: translateY(-3px);
+    transform: translateY(-5px);
+    box-shadow: 0 18px 40px rgba(99, 102, 241, 0.12);
 }
 
 .hash-file-upload:active {
-    transform: scale(0.98);
+    transform: scale(0.985) translateY(-3px);
 }
 
 .hash-file-upload.dragover {
-    background: rgba(99, 102, 241, 0.1);
+    background: linear-gradient(145deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.12));
     border-color: #6366f1;
     border-style: solid;
+    transform: scale(1.02);
+    box-shadow: 
+        0 0 0 4px rgba(99, 102, 241, 0.15),
+        0 20px 50px rgba(99, 102, 241, 0.18);
 }
 
 .hash-file-upload i {
-    font-size: 2rem;
+    font-size: 2.8rem;
     color: #94a3b8;
-    transition: color 0.3s ease;
+    transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .hash-file-upload:hover i {
     color: #6366f1;
+    transform: translateY(-8px) scale(1.15);
+    filter: drop-shadow(0 8px 16px rgba(99, 102, 241, 0.25));
+}
+
+.hash-file-upload span {
+    font-size: 14px;
+    transition: all 0.3s ease;
+    text-align: center;
+}
+
+.hash-file-upload span b {
+    color: #6366f1;
+    font-weight: 600;
+    position: relative;
+}
+
+.hash-file-upload span b::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #6366f1, #a855f7);
+    transition: width 0.3s ease;
+}
+
+.hash-file-upload:hover span b::after {
+    width: 100%;
 }
 
 .hash-file-info {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 13px;
+    gap: 14px;
+    font-size: 14px;
     color: #475569;
+    padding: 10px 18px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.08));
+    border-radius: 14px;
+    border: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+.hash-file-info i {
+    font-size: 1.3rem;
+    color: #6366f1;
 }
 
 .hash-file-info .file-name {
     font-weight: 600;
     color: #1e293b;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .hash-file-info .file-size {
-    color: #94a3b8;
+    color: #64748b;
+    font-size: 12px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
 }
 
 .hash-clear-file {
-    background: none;
-    border: none;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.15);
     color: #ef4444;
     cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
-    transition: all 0.2s ease;
+    padding: 8px 14px;
+    border-radius: 10px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
 }
 
 .hash-clear-file:hover {
-    background: rgba(239, 68, 68, 0.1);
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.3);
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+}
+
+.hash-clear-file:active {
+    transform: scale(0.95);
 }
 
 /* 进度条 */
 .hash-progress-container {
     width: 100%;
-    height: 6px;
-    background: rgba(203, 213, 225, 0.3);
-    border-radius: 10px;
+    height: 10px;
+    background: rgba(203, 213, 225, 0.25);
+    border-radius: 12px;
     overflow: hidden;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: all 0.4s ease;
+    transform: scaleY(0);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .hash-progress-container.active {
     opacity: 1;
+    transform: scaleY(1);
 }
 
 .hash-progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #6366f1, #8b5cf6);
-    border-radius: 10px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7, #ec4899);
+    background-size: 300% 100%;
+    border-radius: 12px;
     width: 0%;
     transition: width 0.3s ease;
     position: relative;
     overflow: hidden;
+    animation: hashGradientMove 2.5s linear infinite;
+}
+
+@keyframes hashGradientMove {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 300% 50%; }
 }
 
 .hash-progress-bar::after {
@@ -224,8 +464,8 @@
     left: 0;
     bottom: 0;
     right: 0;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
-    animation: hashShimmer 1.5s infinite;
+    background: linear-gradient(90deg, transparent 25%, rgba(255, 255, 255, 0.7) 50%, transparent 75%);
+    animation: hashShimmer 1.3s infinite;
 }
 
 @keyframes hashShimmer {
@@ -235,79 +475,165 @@
 
 /* 结果区域 */
 .hash-results-container {
-    animation: hashFadeInUp 0.6s ease 0.4s both;
+    animation: hashFadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.45s both;
 }
 
 .hash-section-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    color: #94a3b8;
-    margin-bottom: 15px;
-    display: block;
+    color: #6366f1;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1.2px;
+}
+
+.hash-section-label::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+.hash-section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.35), transparent);
 }
 
 .hash-result-pill {
     display: flex;
     align-items: center;
-    background: white;
-    padding: 12px 20px;
-    border-radius: 12px;
-    margin-bottom: 10px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
-    transition: all 0.3s ease;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.75));
+    padding: 16px 22px;
+    border-radius: 16px;
+    margin-bottom: 14px;
+    box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     cursor: default;
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-result-pill::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    background: linear-gradient(180deg, #6366f1, #8b5cf6, #a855f7);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hash-result-pill:hover::before {
+    width: 5px;
 }
 
 .hash-result-pill:hover {
-    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
-    transform: translateX(5px);
+    box-shadow: 
+        0 12px 30px rgba(99, 102, 241, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    transform: translateX(10px);
     border-color: rgba(99, 102, 241, 0.2);
 }
 
+.hash-result-pill:nth-child(1) { animation: hashPillSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both; }
+.hash-result-pill:nth-child(2) { animation: hashPillSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.18s both; }
+.hash-result-pill:nth-child(3) { animation: hashPillSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.26s both; }
+.hash-result-pill:nth-child(4) { animation: hashPillSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.34s both; }
+.hash-result-pill:nth-child(5) { animation: hashPillSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.42s both; }
+
+@keyframes hashPillSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
 .hash-algo-tag {
-    background: #eef2ff;
-    color: #6366f1;
-    padding: 4px 10px;
-    border-radius: 6px;
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    color: #4f46e5;
+    padding: 7px 14px;
+    border-radius: 10px;
     font-size: 11px;
     font-weight: 700;
-    margin-right: 15px;
-    min-width: 65px;
+    margin-right: 18px;
+    min-width: 75px;
     text-align: center;
     text-transform: uppercase;
+    letter-spacing: 0.6px;
+    box-shadow: 
+        0 2px 6px rgba(99, 102, 241, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(99, 102, 241, 0.1);
 }
 
 .hash-string {
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
-    font-size: 13px;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12.5px;
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     color: #334155;
     user-select: all;
+    letter-spacing: 0.4px;
+    padding-left: 10px;
 }
 
 .hash-copy-btn {
     border: none;
-    background: none;
+    background: rgba(99, 102, 241, 0.08);
     cursor: pointer;
     color: #6366f1;
-    transition: all 0.3s ease;
-    padding: 5px 10px;
-    border-radius: 6px;
-    font-size: 13px;
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 7px;
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-copy-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    opacity: 0;
+    transition: opacity 0.3s ease;
 }
 
 .hash-copy-btn:hover {
-    background: rgba(99, 102, 241, 0.1);
-    transform: scale(1.05);
+    color: white;
+    transform: scale(1.08);
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.28);
+}
+
+.hash-copy-btn:hover::before {
+    opacity: 1;
+}
+
+.hash-copy-btn:hover span,
+.hash-copy-btn:hover i {
+    position: relative;
+    z-index: 1;
 }
 
 .hash-copy-btn:active {
@@ -315,43 +641,88 @@
 }
 
 .hash-copy-btn.copied {
-    color: #10b981;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.08));
+    color: #059669;
+}
+
+.hash-copy-btn.copied::before {
+    opacity: 0;
 }
 
 /* 空状态 */
 .hash-empty-results {
     text-align: center;
-    padding: 40px 20px;
+    padding: 55px 25px;
     color: #94a3b8;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.15));
+    border-radius: 18px;
+    border: 1px dashed rgba(148, 163, 184, 0.35);
+    position: relative;
+    overflow: hidden;
+}
+
+.hash-empty-results::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(99, 102, 241, 0.04) 0%, transparent 70%);
 }
 
 .hash-empty-results i {
-    font-size: 3rem;
-    margin-bottom: 15px;
-    opacity: 0.5;
+    font-size: 4rem;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, #94a3b8, #cbd5e1, #94a3b8);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: hashGradientFlow 4s ease infinite;
 }
 
 .hash-empty-results p {
     margin: 0;
     font-size: 14px;
+    color: #64748b;
+    position: relative;
 }
 
 /* 右侧配置面板 */
 .hash-config-panel {
-    background: rgba(255, 255, 255, 0.3);
-    border-left: 1px solid rgba(255, 255, 255, 0.4);
-    padding: 40px 25px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.35));
+    border-left: 1px solid rgba(255, 255, 255, 0.55);
+    padding: 45px 32px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    animation: hashFadeInRight 0.6s ease 0.3s both;
+    gap: 10px;
+    animation: hashFadeInRight 0.65s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both;
     overflow-y: auto;
+    position: relative;
+    z-index: 1;
+}
+
+.hash-config-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100px;
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.03), transparent);
+    pointer-events: none;
+}
+
+.hash-config-panel::-webkit-scrollbar {
+    width: 5px;
+}
+
+.hash-config-panel::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.18);
+    border-radius: 999px;
 }
 
 @keyframes hashFadeInRight {
     from {
         opacity: 0;
-        transform: translateX(20px);
+        transform: translateX(30px);
     }
     to {
         opacity: 1;
@@ -364,69 +735,139 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid rgba(203, 213, 225, 0.3);
-    transition: all 0.3s ease;
+    padding: 18px 16px;
+    border-radius: 14px;
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    background: transparent;
+    position: relative;
+}
+
+.hash-switch-group::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 16px;
+    right: 16px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(203, 213, 225, 0.3), transparent);
+}
+
+.hash-switch-group:last-of-type::after {
+    display: none;
 }
 
 .hash-switch-group:hover {
+    background: rgba(99, 102, 241, 0.06);
     transform: translateX(5px);
 }
 
 .hash-switch-group span {
     font-size: 14px;
-    color: #475569;
-    font-weight: 500;
+    color: #334155;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: color 0.3s ease;
+}
+
+.hash-switch-group span::before {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.hash-switch-group:has(.hash-switch.active) span {
+    color: #4f46e5;
+}
+
+.hash-switch-group:has(.hash-switch.active) span::before {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 
+        0 0 12px rgba(99, 102, 241, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 /* 自定义开关样式 */
 .hash-switch {
     position: relative;
-    width: 44px;
-    height: 24px;
-    background: #cbd5e1;
-    border-radius: 12px;
+    width: 52px;
+    height: 28px;
+    background: linear-gradient(145deg, #e2e8f0, #cbd5e1);
+    border-radius: 14px;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 
+        inset 0 2px 5px rgba(0, 0, 0, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .hash-switch.active {
-    background: #6366f1;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+    box-shadow: 
+        inset 0 2px 5px rgba(0, 0, 0, 0.1),
+        0 5px 16px rgba(99, 102, 241, 0.35);
 }
 
 .hash-switch::after {
     content: '';
     position: absolute;
-    top: 2px;
-    left: 2px;
+    top: 4px;
+    left: 4px;
     width: 20px;
     height: 20px;
-    background: white;
+    background: linear-gradient(145deg, #ffffff, #f8fafc);
     border-radius: 50%;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 
+        0 3px 8px rgba(0, 0, 0, 0.12),
+        0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .hash-switch.active::after {
-    left: 22px;
+    left: 28px;
+    box-shadow: 
+        0 3px 10px rgba(0, 0, 0, 0.18),
+        0 6px 16px rgba(99, 102, 241, 0.22);
+}
+
+.hash-switch:hover::after {
+    transform: scale(1.12);
+}
+
+.hash-switch:active::after {
+    transform: scale(0.9);
 }
 
 /* 计算按钮 */
 .hash-btn-calculate {
     width: 100%;
-    background: #6366f1;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+    background-size: 200% 200%;
     color: white;
     border: none;
-    padding: 14px;
-    border-radius: 12px;
-    font-weight: 600;
-    font-size: 14px;
+    padding: 18px 22px;
+    border-radius: 16px;
+    font-weight: 700;
+    font-size: 14.5px;
     cursor: pointer;
-    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
-    transition: all 0.3s ease;
+    box-shadow: 
+        0 12px 35px rgba(99, 102, 241, 0.32),
+        0 5px 12px rgba(99, 102, 241, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     overflow: hidden;
-    margin-top: auto;
+    margin-top: 25px;
+    letter-spacing: 0.6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
 }
 
 .hash-btn-calculate::before {
@@ -437,72 +878,143 @@
     width: 0;
     height: 0;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.25);
     transform: translate(-50%, -50%);
-    transition: width 0.6s ease, height 0.6s ease;
+    transition: width 0.65s ease, height 0.65s ease;
 }
 
-.hash-btn-calculate:hover::before {
-    width: 300px;
-    height: 300px;
+.hash-btn-calculate::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent 45%, rgba(255, 255, 255, 0.12) 50%, transparent 55%);
+    transform: translateX(-100%);
+    transition: transform 0.8s ease;
 }
 
 .hash-btn-calculate:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 15px 25px rgba(99, 102, 241, 0.3);
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 
+        0 18px 45px rgba(99, 102, 241, 0.4),
+        0 8px 18px rgba(99, 102, 241, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    background-position: 100% 0;
+}
+
+.hash-btn-calculate:hover::before {
+    width: 450px;
+    height: 450px;
+}
+
+.hash-btn-calculate:hover::after {
+    transform: translateX(100%);
 }
 
 .hash-btn-calculate:active {
-    transform: translateY(0);
+    transform: translateY(-2px) scale(0.98);
+    box-shadow: 
+        0 10px 25px rgba(99, 102, 241, 0.32),
+        0 5px 12px rgba(99, 102, 241, 0.2);
 }
 
 .hash-btn-calculate:disabled {
-    background: #94a3b8;
+    background: linear-gradient(135deg, #94a3b8, #64748b);
     cursor: not-allowed;
     box-shadow: none;
+    opacity: 0.7;
 }
 
 .hash-btn-calculate:disabled:hover {
     transform: none;
 }
 
+.hash-btn-calculate:disabled::before,
+.hash-btn-calculate:disabled::after {
+    display: none;
+}
+
+.hash-btn-calculate i {
+    font-size: 18px;
+    transition: transform 0.3s ease;
+}
+
+.hash-btn-calculate:hover i {
+    transform: rotate(180deg);
+}
+
 /* 安全提示 */
 .hash-security-tip {
-    padding: 15px;
-    border-radius: 12px;
-    background: rgba(99, 102, 241, 0.05);
+    padding: 18px;
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.04));
     font-size: 12px;
-    line-height: 1.6;
+    line-height: 1.65;
     color: #6366f1;
-    border: 1px solid rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+    position: relative;
+    overflow: visible;
+    margin-top: 10px;
+    flex-shrink: 0;
+}
+
+.hash-security-tip::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7);
+    background-size: 200% auto;
+    animation: hashGradientFlow 3s ease infinite;
 }
 
 .hash-security-tip b {
-    display: block;
-    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #4f46e5;
+}
+
+.hash-security-tip b i {
+    font-size: 16px;
 }
 
 /* 校验区域 */
 .hash-verify-section {
-    margin-top: 10px;
+    margin-top: 18px;
+    animation: hashFadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.55s both;
 }
 
 .hash-verify-input {
     width: 100%;
-    padding: 12px 14px;
-    border: 1px solid rgba(203, 213, 225, 0.5);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.5);
+    padding: 16px 18px;
+    border: 2px solid rgba(203, 213, 225, 0.35);
+    border-radius: 14px;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.45));
     font-size: 13px;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
     outline: none;
-    transition: all 0.3s ease;
-    color: var(--color-text-primary);
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    color: #1e293b;
+}
+
+.hash-verify-input:hover {
+    border-color: rgba(99, 102, 241, 0.35);
+    background: rgba(255, 255, 255, 0.75);
 }
 
 .hash-verify-input:focus {
     border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    box-shadow: 
+        0 0 0 4px rgba(99, 102, 241, 0.1),
+        0 6px 18px rgba(99, 102, 241, 0.12);
+    background: rgba(255, 255, 255, 0.9);
 }
 
 .hash-verify-input::placeholder {
@@ -511,63 +1023,235 @@
 }
 
 .hash-verify-result {
-    margin-top: 10px;
-    padding: 10px 14px;
-    border-radius: 8px;
+    margin-top: 14px;
+    padding: 14px 18px;
+    border-radius: 12px;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     display: none;
+    align-items: center;
+    gap: 10px;
+    animation: hashVerifyPop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes hashVerifyPop {
+    0% { opacity: 0; transform: scale(0.9) translateY(5px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.hash-verify-result i {
+    font-size: 18px;
 }
 
 .hash-verify-result.match {
-    display: block;
-    background: rgba(16, 185, 129, 0.1);
+    display: flex;
+    background: linear-gradient(145deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.08));
     color: #059669;
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
 }
 
 .hash-verify-result.mismatch {
-    display: block;
-    background: rgba(239, 68, 68, 0.1);
+    display: flex;
+    background: linear-gradient(145deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.08));
     color: #dc2626;
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
 }
 
-/* 响应式 */
+/* 加载状态按钮动画 */
+.hash-btn-calculate.loading {
+    pointer-events: none;
+}
+
+.hash-btn-calculate.loading i {
+    animation: hashSpinIcon 1s linear infinite;
+}
+
+@keyframes hashSpinIcon {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 响应式设计 */
+@media (max-width: 1100px) {
+    .hash-glass-container {
+        grid-template-columns: 1fr 300px;
+    }
+}
+
 @media (max-width: 992px) {
     .hash-glass-container {
         grid-template-columns: 1fr;
         grid-template-rows: 1fr auto;
     }
     
+    .hash-glass-container::before,
+    .hash-glass-container::after {
+        display: none;
+    }
+    
     .hash-config-panel {
         border-left: none;
-        border-top: 1px solid rgba(255, 255, 255, 0.4);
-        padding: 25px;
+        border-top: 1px solid rgba(255, 255, 255, 0.55);
+        padding: 32px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 18px;
+    }
+    
+    .hash-config-panel::before {
+        display: none;
+    }
+    
+    .hash-config-panel > .hash-section-label {
+        width: 100%;
+    }
+    
+    .hash-switch-group {
+        flex: 1;
+        min-width: 130px;
+    }
+    
+    .hash-switch-group::after {
+        display: none;
+    }
+    
+    .hash-btn-calculate {
+        flex: 100%;
+        margin-top: 12px;
+    }
+    
+    .hash-security-tip {
+        flex: 100%;
     }
 }
 
 @media (max-width: 768px) {
+    .view-container.hash-tool-view {
+        background: linear-gradient(180deg, #e0e7ff 0%, #f5f3ff 50%, #fce7f3 100%);
+    }
+    
     .hash-glass-container {
         margin: var(--spacing-md);
-        border-radius: 16px;
+        border-radius: 22px;
     }
     
     .hash-main-panel {
-        padding: 25px;
+        padding: 30px;
+        gap: 22px;
     }
     
     .hash-header-title h1 {
-        font-size: 20px;
+        font-size: 23px;
+    }
+    
+    .hash-header-title p {
+        font-size: 13.5px;
+        margin-top: 16px;
     }
     
     .hash-result-pill {
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 14px;
+        padding: 16px 18px;
+    }
+    
+    .hash-algo-tag {
+        margin-right: 0;
     }
     
     .hash-string {
         width: 100%;
-        font-size: 11px;
+        font-size: 11.5px;
+        order: 3;
+        padding-left: 0;
+    }
+    
+    .hash-copy-btn {
+        margin-left: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .hash-main-panel {
+        padding: 22px;
+    }
+    
+    .hash-config-panel {
+        padding: 22px;
+    }
+    
+    .hash-textarea {
+        height: 100px;
+        font-size: 14px;
+    }
+    
+    .hash-file-upload {
+        min-height: 110px;
+        padding: 22px;
+    }
+    
+    .hash-file-upload i {
+        font-size: 2.2rem;
+    }
+    
+    .hash-btn-calculate {
+        padding: 16px 20px;
+        font-size: 14px;
+    }
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+    .view-container.hash-tool-view {
+        background: 
+            radial-gradient(ellipse at top left, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+            radial-gradient(ellipse at bottom right, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
+            linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1f2937 100%);
+    }
+    
+    .hash-glass-container {
+        background: rgba(30, 41, 59, 0.75);
+        border-color: rgba(51, 65, 85, 0.5);
+    }
+    
+    .hash-content-card {
+        background: linear-gradient(145deg, rgba(51, 65, 85, 0.6), rgba(30, 41, 59, 0.4));
+        border-color: rgba(71, 85, 105, 0.4);
+    }
+    
+    .hash-textarea,
+    .hash-string {
+        color: #e2e8f0;
+    }
+    
+    .hash-textarea::placeholder {
+        color: #64748b;
+    }
+    
+    .hash-header-title h1 {
+        background: linear-gradient(135deg, #e2e8f0 0%, #818cf8 50%, #a78bfa 100%);
+        -webkit-background-clip: text;
+    }
+    
+    .hash-config-panel {
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.5), rgba(30, 41, 59, 0.3));
+        border-left-color: rgba(51, 65, 85, 0.5);
+    }
+    
+    .hash-switch-group span {
+        color: #cbd5e1;
+    }
+    
+    .hash-result-pill {
+        background: linear-gradient(145deg, rgba(51, 65, 85, 0.8), rgba(30, 41, 59, 0.6));
+        border-color: rgba(71, 85, 105, 0.4);
+    }
+    
+    .hash-verify-input {
+        background: rgba(30, 41, 59, 0.6);
+        border-color: rgba(71, 85, 105, 0.4);
+        color: #e2e8f0;
     }
 }
