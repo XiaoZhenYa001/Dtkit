@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>桌面整理 - UI 原型图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 模拟桌面 */
+        .desktop {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            padding: 20px;
+        }
+
+        .desktop-icons {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, 80px);
+            gap: 20px;
+        }
+
+        .desktop-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .desktop-icon .icon {
+            font-size: 40px;
+        }
+
+        .desktop-icon .name {
+            color: white;
+            font-size: 12px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            text-align: center;
+            max-width: 70px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* 热区指示器 */
+        .hotzone {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 120px;
+            height: 60px;
+            background: rgba(255, 100, 100, 0.3);
+            border: 2px dashed rgba(255, 100, 100, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .hotzone:hover {
+            background: rgba(255, 100, 100, 0.5);
+        }
+
+        .hotzone-label {
+            text-align: center;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        /* 侧边栏面板 */
+        .sidebar-panel {
+            position: fixed;
+            top: 10px;
+            right: 20px;
+            width: 550px;
+            height: 450px;
+            background: rgba(30, 30, 35, 0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 999;
+            transform: translateY(-20px);
+            opacity: 0;
+            animation: slideDown 0.3s ease forwards;
+            resize: both;
+            min-width: 400px;
+            min-height: 350px;
+            max-width: 45vw;
+            max-height: 60vh;
+        }
+
+        @keyframes slideDown {
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* 搜索框 */
+        .search-container {
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .search-box {
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 10px 14px;
+            transition: all 0.2s ease;
+        }
+
+        .search-box:focus-within {
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.3);
+        }
+
+        .search-icon {
+            color: rgba(255, 255, 255, 0.5);
+            margin-right: 10px;
+            font-size: 16px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: none;
+            border: none;
+            outline: none;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* 分类列表 */
+        .category-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .category-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .category-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .category-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
+        .category-item {
+            margin-bottom: 4px;
+        }
+
+        .category-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .category-header:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .category-icon {
+            font-size: 18px;
+            margin-right: 10px;
+        }
+
+        .category-name {
+            flex: 1;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .category-count {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            margin-right: 8px;
+        }
+
+        .category-arrow {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 12px;
+            transition: transform 0.2s ease;
+        }
+
+        .category-item.expanded .category-arrow {
+            transform: rotate(90deg);
+        }
+
+        .category-files {
+            display: none;
+            padding: 4px 0 4px 20px;
+        }
+
+        .category-item.expanded .category-files {
+            display: block;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .file-icon {
+            font-size: 16px;
+            margin-right: 10px;
+        }
+
+        .file-name {
+            flex: 1;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 11px;
+        }
+
+        /* 分割线 */
+        .divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+            margin: 8px 12px;
+        }
+
+        /* 整理建议 */
+        .suggestion-section {
+            padding: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .suggestion-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(74, 158, 255, 0.15);
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .suggestion-badge {
+            background: #4a9eff;
+            color: white;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: auto;
+        }
+
+        /* 右键菜单 */
+        .context-menu {
+            position: fixed;
+            top: 200px;
+            left: 400px;
+            background: rgba(40, 40, 45, 0.98);
+            backdrop-filter: blur(20px);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+            padding: 6px;
+            min-width: 160px;
+            z-index: 1001;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .menu-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .menu-icon {
+            margin-right: 10px;
+            font-size: 14px;
+        }
+
+        .menu-text {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+        }
+
+        /* 命令提示 */
+        .command-hint {
+            padding: 12px 16px;
+            background: rgba(74, 158, 255, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .hint-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 11px;
+        }
+
+        .hint-text code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 0 2px;
+        }
+
+        /* 状态栏 */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .status-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 11px;
+        }
+
+        .status-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .status-btn {
+            color: rgba(255, 255, 255, 0.6);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+        }
+
+        .status-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        /* 拖拽指示器 */
+        .resize-handle {
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            width: 16px;
+            height: 16px;
+            cursor: se-resize;
+            opacity: 0.4;
+        }
+
+        .resize-handle::before {
+            content: '⋮⋮';
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 10px;
+            transform: rotate(-45deg);
+            display: block;
+        }
+
+        /* 说明标签 */
+        .info-label {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.8;
+            max-width: 350px;
+        }
+
+        .info-label h3 {
+            margin-bottom: 10px;
+            color: #4a9eff;
+        }
+
+        .info-label ul {
+            padding-left: 20px;
+        }
+
+        /* 文件夹一级预览 */
+        .folder-preview {
+            margin-left: 20px;
+            padding: 8px 0;
+            border-left: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .folder-preview .file-item {
+            padding-left: 16px;
+        }
+
+        .folder-preview .file-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <!-- 模拟桌面图标 -->
+    <div class="desktop">
+        <div class="desktop-icons">
+            <div class="desktop-icon">
+                <span class="icon">📄</span>
+                <span class="name">工作报告.docx</span>
+            </div>
+            <div class="desktop-icon">
+                <span class="icon">🖼️</span>
+                <span class="name">壁纸.jpg</span>
+            </div>
+            <div class="desktop-icon">
+                <span class="icon">📂</span>
+                <span class="name">项目文件</span>
+            </div>
+            <div class="desktop-icon">
+                <span class="icon">💻</span>
+                <span class="name">Chrome</span>
+            </div>
+            <div class="desktop-icon">
+                <span class="icon">📦</span>
+                <span class="name">backup.zip</span>
+            </div>
+            <div class="desktop-icon">
+                <span class="icon">🎬</span>
+                <span class="name">教程视频.mp4</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 热区指示器 -->
+    <div class="hotzone">
+        <div class="hotzone-label">
+            热区<br>120×60px
+        </div>
+    </div>
+
+    <!-- 侧边栏面板 -->
+    <div class="sidebar-panel">
+        <!-- 搜索框 -->
+        <div class="search-container">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="search-input" placeholder="搜索文件或输入命令...">
+            </div>
+        </div>
+
+        <!-- 分类列表 -->
+        <div class="category-list">
+            <!-- 最近使用 -->
+            <div class="category-item">
+                <div class="category-header">
+                    <span class="category-icon">⏱️</span>
+                    <span class="category-name">最近使用</span>
+                    <span class="category-count">5</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+            </div>
+
+            <!-- 文档 - 展开状态 -->
+            <div class="category-item expanded">
+                <div class="category-header">
+                    <span class="category-icon">📄</span>
+                    <span class="category-name">文档</span>
+                    <span class="category-count">12</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+                <div class="category-files">
+                    <div class="file-item">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name">工作报告.docx</span>
+                        <span class="file-size">256 KB</span>
+                    </div>
+                    <div class="file-item">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name">会议记录.pdf</span>
+                        <span class="file-size">1.2 MB</span>
+                    </div>
+                    <div class="file-item">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name">笔记.txt</span>
+                        <span class="file-size">4 KB</span>
+                    </div>
+                    <div class="file-item">
+                        <span class="file-icon">📄</span>
+                        <span class="file-name">README.md</span>
+                        <span class="file-size">8 KB</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图片 -->
+            <div class="category-item">
+                <div class="category-header">
+                    <span class="category-icon">🖼️</span>
+                    <span class="category-name">图片</span>
+                    <span class="category-count">8</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+            </div>
+
+            <!-- 视频 -->
+            <div class="category-item">
+                <div class="category-header">
+                    <span class="category-icon">🎬</span>
+                    <span class="category-name">视频</span>
+                    <span class="category-count">3</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+            </div>
+
+            <!-- 压缩包 -->
+            <div class="category-item">
+                <div class="category-header">
+                    <span class="category-icon">📦</span>
+                    <span class="category-name">压缩包</span>
+                    <span class="category-count">5</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+            </div>
+
+            <!-- 程序 -->
+            <div class="category-item">
+                <div class="category-header">
+                    <span class="category-icon">💻</span>
+                    <span class="category-name">程序</span>
+                    <span class="category-count">15</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+            </div>
+
+            <!-- 文件夹 - 带一级预览 -->
+            <div class="category-item expanded">
+                <div class="category-header">
+                    <span class="category-icon">📂</span>
+                    <span class="category-name">文件夹</span>
+                    <span class="category-count">7</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+                <div class="category-files">
+                    <div class="file-item">
+                        <span class="file-icon">📂</span>
+                        <span class="file-name">项目文件</span>
+                        <span class="file-size">→</span>
+                    </div>
+                    <!-- 一级预览 -->
+                    <div class="folder-preview">
+                        <div class="file-item">
+                            <span class="file-icon">📄</span>
+                            <span class="file-name">package.json</span>
+                        </div>
+                        <div class="file-item">
+                            <span class="file-icon">📁</span>
+                            <span class="file-name">src</span>
+                        </div>
+                        <div class="file-item">
+                            <span class="file-icon">📄</span>
+                            <span class="file-name">README.md</span>
+                        </div>
+                    </div>
+                    <div class="file-item">
+                        <span class="file-icon">📂</span>
+                        <span class="file-name">工作资料</span>
+                        <span class="file-size">→</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- 整理建议 -->
+            <div class="suggestion-section">
+                <div class="suggestion-header">
+                    <span class="category-icon">💡</span>
+                    <span class="category-name">整理建议</span>
+                    <span class="suggestion-badge">3 条</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 命令提示 -->
+        <div class="command-hint">
+            <span class="hint-text">
+                命令: <code>/d</code>文档 <code>/p</code>图片 <code>/v</code>视频 <code>/f</code>文件夹 <code>/a</code>程序
+            </span>
+        </div>
+
+        <!-- 状态栏 -->
+        <div class="status-bar">
+            <span class="status-text">共 50 个项目 · 上次扫描: 刚刚</span>
+            <div class="status-actions">
+                <button class="status-btn" title="刷新">🔄</button>
+                <button class="status-btn" title="设置">⚙️</button>
+            </div>
+        </div>
+
+        <div class="resize-handle"></div>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div class="context-menu">
+        <div class="menu-item">
+            <span class="menu-icon">📂</span>
+            <span class="menu-text">打开</span>
+        </div>
+        <div class="menu-item">
+            <span class="menu-icon">📍</span>
+            <span class="menu-text">定位到文件</span>
+        </div>
+        <div class="menu-item">
+            <span class="menu-icon">📋</span>
+            <span class="menu-text">复制</span>
+        </div>
+        <div class="menu-item">
+            <span class="menu-icon">✂️</span>
+            <span class="menu-text">剪切</span>
+        </div>
+        <div class="menu-item">
+            <span class="menu-icon">✏️</span>
+            <span class="menu-text">重命名</span>
+        </div>
+    </div>
+
+    <!-- 说明标签 -->
+    <div class="info-label">
+        <h3>🎨 桌面整理 - UI 原型图</h3>
+        <ul>
+            <li>红色虚线框：热区触发区域</li>
+            <li>右侧面板：侧边栏（可拖拽调整大小）</li>
+            <li>点击分类头部可展开/折叠</li>
+            <li>暗色毛玻璃效果</li>
+            <li>支持命令搜索模式</li>
+        </ul>
+    </div>
+
+    <script>
+        // 简单的交互演示
+        document.querySelectorAll('.category-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const item = header.parentElement;
+                item.classList.toggle('expanded');
+            });
+        });
+
+        // 模拟搜索命令提示
+        const searchInput = document.querySelector('.search-input');
+        searchInput.addEventListener('input', (e) => {
+            const value = e.target.value;
+            if (value.startsWith('/')) {
+                document.querySelector('.command-hint').style.background = 'rgba(74, 158, 255, 0.2)';
+            } else {
+                document.querySelector('.command-hint').style.background = 'rgba(74, 158, 255, 0.1)';
+            }
+        });
+    </script>
+</body>
+</html>
