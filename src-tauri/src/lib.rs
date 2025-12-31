@@ -570,7 +570,7 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     // 获取屏幕尺寸，计算窗口位置（右侧）
     let (screen_width, _) = get_screen_size();
     let panel_width = 550;
-    let panel_x = screen_width - panel_width - 20;  // 距右边缘 20px
+    let panel_x = screen_width - panel_width - 75;  // 距右边缘 75px
     let panel_y = 10;
     
     let app_handle = app.clone();

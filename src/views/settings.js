@@ -262,6 +262,55 @@ export function initSettings() {
 // ============================================
 // 桌面整理设置
 // ============================================
+
+/**
+ * 显示确认对话框
+ * @param {string} title - 对话框标题
+ * @param {string} message - 对话框消息
+ * @returns {Promise<boolean>} - 用户确认返回 true，取消返回 false
+ */
+function showConfirmDialog(title, message) {
+    return new Promise((resolve) => {
+        const dialog = document.getElementById('desktopOrganizerConfirmDialog');
+        const titleEl = document.getElementById('desktopOrganizerDialogTitle');
+        const messageEl = document.getElementById('desktopOrganizerDialogMessage');
+        const confirmBtn = document.getElementById('confirmDesktopOrganizer');
+        const cancelBtn = document.getElementById('cancelDesktopOrganizer');
+        const closeBtn = document.getElementById('closeDesktopOrganizerDialog');
+        
+        if (!dialog) {
+            // 降级到 confirm
+            resolve(confirm(message));
+            return;
+        }
+        
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        dialog.style.display = 'flex';
+        
+        const cleanup = () => {
+            dialog.style.display = 'none';
+            confirmBtn.removeEventListener('click', onConfirm);
+            cancelBtn.removeEventListener('click', onCancel);
+            closeBtn.removeEventListener('click', onCancel);
+        };
+        
+        const onConfirm = () => {
+            cleanup();
+            resolve(true);
+        };
+        
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+        
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+        closeBtn.addEventListener('click', onCancel);
+    });
+}
+
 async function initDesktopOrganizerSettings() {
     const mainToggle = document.getElementById('desktopOrganizerToggle');
     const autoAnalyzeToggle = document.getElementById('desktopAutoAnalyzeToggle');
@@ -304,21 +353,20 @@ async function initDesktopOrganizerSettings() {
         }
     }
     
-    // 主开关事件 - 先弹窗确认，再改变状态
-    mainToggle.addEventListener('click', async (e) => {
-        // 阻止默认行为，不让开关立即切换
-        e.preventDefault();
+    // 主开关事件 - 先弹窗确认，取消则恢复状态
+    mainToggle.addEventListener('change', async (e) => {
+        const willEnable = mainToggle.checked; // 当前的状态（已经切换了）
         
-        const willEnable = !mainToggle.checked; // 点击后的目标状态
-        
-        // 显示确认弹窗
+        // 显示自定义确认弹窗
+        const title = willEnable ? '开启桌面整理' : '关闭桌面整理';
         const message = willEnable 
-            ? '开启桌面整理功能后，鼠标移至屏幕右上角热区将触发侧边栏。\n\n确定要开启吗？'
-            : '关闭桌面整理功能后，热区触发将不再可用。\n\n确定要关闭吗？';
+            ? '开启后，鼠标移至屏幕右上角热区将触发侧边栏。确定要开启吗？'
+            : '关闭后，热区触发将不再可用。确定要关闭吗？';
         
-        if (confirm(message)) {
-            // 用户确认，更新开关状态
-            mainToggle.checked = willEnable;
+        const confirmed = await showConfirmDialog(title, message);
+        
+        if (confirmed) {
+            // 用户确认，保存设置
             settings.enabled = willEnable;
             localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
             
@@ -342,26 +390,31 @@ async function initDesktopOrganizerSettings() {
                     showToast('操作失败: ' + error, 'error');
                 }
             }
+        } else {
+            // 用户取消，恢复开关状态
+            mainToggle.checked = !willEnable;
         }
-        // 如果用户取消，开关状态保持不变（因为我们阻止了默认行为）
     });
     
-    // 自动分析开关事件 - 先弹窗确认，再改变状态
+    // 自动分析开关事件 - 先弹窗确认，取消则恢复状态
     if (autoAnalyzeToggle) {
-        autoAnalyzeToggle.addEventListener('click', (e) => {
-            e.preventDefault();
+        autoAnalyzeToggle.addEventListener('change', async (e) => {
+            const willEnable = autoAnalyzeToggle.checked;
             
-            const willEnable = !autoAnalyzeToggle.checked;
-            
+            const title = willEnable ? '开启自动分析' : '关闭自动分析';
             const message = willEnable 
-                ? '开启自动分析后，应用将自动扫描桌面文件并提供整理建议。\n\n确定要开启吗？'
+                ? '开启后，应用将自动扫描桌面文件并提供整理建议。确定要开启吗？'
                 : '确定要关闭自动分析吗？';
             
-            if (confirm(message)) {
-                autoAnalyzeToggle.checked = willEnable;
+            const confirmed = await showConfirmDialog(title, message);
+            
+            if (confirmed) {
                 settings.autoAnalyze = willEnable;
                 localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
                 showToast(willEnable ? '自动分析已开启' : '自动分析已关闭');
+            } else {
+                // 用户取消，恢复开关状态
+                autoAnalyzeToggle.checked = !willEnable;
             }
         });
     }

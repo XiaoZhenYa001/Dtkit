@@ -141,7 +141,7 @@ impl HotZoneMonitor {
             // 侧边栏位置在右侧（与热区位置一致）
             let panel_width = 550;
             let panel_height = 450;
-            let panel_left = screen_width - panel_width - 20;  // 距右边缘 20px
+            let panel_left = screen_width - panel_width - 75;  // 距右边缘 75px
             let panel_top = 10;
             let panel_rect = (
                 panel_left,
@@ -186,8 +186,8 @@ impl HotZoneMonitor {
                     }
                 }
                 
-                // 降低检测频率：50ms（20fps），减少 CPU 占用
-                thread::sleep(Duration::from_millis(50));
+                // 降低检测频率：100ms（10fps），减少 CPU 占用
+                thread::sleep(Duration::from_millis(100));
             }
             
             // 线程结束时隐藏面板

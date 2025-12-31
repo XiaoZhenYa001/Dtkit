@@ -778,6 +778,11 @@
     animation: modalSlideUp 0.3s ease-out;
 }
 
+/* 小尺寸对话框 */
+.modal-dialog--small {
+    max-width: 420px;
+}
+
 @keyframes modalFadeIn {
     from {
         opacity: 0;
