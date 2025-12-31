@@ -262,7 +262,7 @@ export function initSettings() {
 // ============================================
 // 桌面整理设置
 // ============================================
-function initDesktopOrganizerSettings() {
+async function initDesktopOrganizerSettings() {
     const mainToggle = document.getElementById('desktopOrganizerToggle');
     const autoAnalyzeToggle = document.getElementById('desktopAutoAnalyzeToggle');
     const subSettings = document.getElementById('desktopOrganizerSubSettings');
@@ -284,7 +284,7 @@ function initDesktopOrganizerSettings() {
         }
     }
     
-    // 初始化开关状态
+    // 初始化开关状态（不触发事件）
     mainToggle.checked = settings.enabled;
     if (autoAnalyzeToggle) {
         autoAnalyzeToggle.checked = settings.autoAnalyze;
@@ -295,47 +295,74 @@ function initDesktopOrganizerSettings() {
         subSettings.style.display = settings.enabled ? 'block' : 'none';
     }
     
-    // 主开关事件
-    mainToggle.addEventListener('change', () => {
-        const enabled = mainToggle.checked;
+    // 如果已启用，启动热区监听
+    if (settings.enabled && window.__TAURI__) {
+        try {
+            await window.__TAURI__.core.invoke('start_hotzone_monitor');
+        } catch (e) {
+            console.error('启动热区监听失败:', e);
+        }
+    }
+    
+    // 主开关事件 - 先弹窗确认，再改变状态
+    mainToggle.addEventListener('click', async (e) => {
+        // 阻止默认行为，不让开关立即切换
+        e.preventDefault();
+        
+        const willEnable = !mainToggle.checked; // 点击后的目标状态
         
         // 显示确认弹窗
-        const message = enabled 
-            ? '开启桌面整理功能后，鼠标移至屏幕右上角热区将触发侧边栏。\n\n确定要开启吗？（需要重启应用生效）'
-            : '关闭桌面整理功能后，热区触发将不再可用。\n\n确定要关闭吗？（需要重启应用生效）';
+        const message = willEnable 
+            ? '开启桌面整理功能后，鼠标移至屏幕右上角热区将触发侧边栏。\n\n确定要开启吗？'
+            : '关闭桌面整理功能后，热区触发将不再可用。\n\n确定要关闭吗？';
         
         if (confirm(message)) {
-            settings.enabled = enabled;
+            // 用户确认，更新开关状态
+            mainToggle.checked = willEnable;
+            settings.enabled = willEnable;
             localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
             
             // 显示/隐藏子设置
             if (subSettings) {
-                subSettings.style.display = enabled ? 'block' : 'none';
+                subSettings.style.display = willEnable ? 'block' : 'none';
             }
             
-            showToast(enabled ? '桌面整理已开启，重启后生效' : '桌面整理已关闭，重启后生效');
-        } else {
-            // 恢复开关状态
-            mainToggle.checked = !enabled;
-        }
-    });
-    
-    // 自动分析开关事件
-    if (autoAnalyzeToggle) {
-        autoAnalyzeToggle.addEventListener('change', () => {
-            const autoAnalyze = autoAnalyzeToggle.checked;
-            
-            if (autoAnalyze) {
-                const confirmed = confirm('开启自动分析后，应用将自动扫描桌面文件并提供整理建议。\n\n确定要开启吗？');
-                if (!confirmed) {
-                    autoAnalyzeToggle.checked = false;
-                    return;
+            // 调用 Tauri 命令启动/停止热区监听
+            if (window.__TAURI__) {
+                try {
+                    if (willEnable) {
+                        await window.__TAURI__.core.invoke('start_hotzone_monitor');
+                        showToast('桌面整理已开启');
+                    } else {
+                        await window.__TAURI__.core.invoke('stop_hotzone');
+                        showToast('桌面整理已关闭');
+                    }
+                } catch (error) {
+                    console.error('热区监听操作失败:', error);
+                    showToast('操作失败: ' + error, 'error');
                 }
             }
+        }
+        // 如果用户取消，开关状态保持不变（因为我们阻止了默认行为）
+    });
+    
+    // 自动分析开关事件 - 先弹窗确认，再改变状态
+    if (autoAnalyzeToggle) {
+        autoAnalyzeToggle.addEventListener('click', (e) => {
+            e.preventDefault();
             
-            settings.autoAnalyze = autoAnalyze;
-            localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
-            showToast(autoAnalyze ? '自动分析已开启' : '自动分析已关闭');
+            const willEnable = !autoAnalyzeToggle.checked;
+            
+            const message = willEnable 
+                ? '开启自动分析后，应用将自动扫描桌面文件并提供整理建议。\n\n确定要开启吗？'
+                : '确定要关闭自动分析吗？';
+            
+            if (confirm(message)) {
+                autoAnalyzeToggle.checked = willEnable;
+                settings.autoAnalyze = willEnable;
+                localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
+                showToast(willEnable ? '自动分析已开启' : '自动分析已关闭');
+            }
         });
     }
 }

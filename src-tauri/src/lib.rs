@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 // 桌面整理模块
 mod desktop;
 use desktop::commands::*;
-use desktop::hotzone::{HotZoneConfig, HotZoneMonitor};
+use desktop::hotzone::{HotZoneConfig, HotZoneMonitor, stop_hotzone_monitor, is_hotzone_running};
 
 // 哈希计算相关
 use md5::Md5;
@@ -556,13 +556,29 @@ fn open_file(path: String) -> Result<(), String> {
 // 桌面整理热区监听启动命令
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
+    use desktop::hotzone::get_screen_size;
+    use tauri::PhysicalPosition;
+    
+    // 如果已经在运行，不要重复启动
+    if is_hotzone_running() {
+        return Ok(());
+    }
+    
     let config = HotZoneConfig::default();
     let monitor = HotZoneMonitor::new(config);
+    
+    // 获取屏幕尺寸，计算窗口位置（右侧）
+    let (screen_width, _) = get_screen_size();
+    let panel_width = 550;
+    let panel_x = screen_width - panel_width - 20;  // 距右边缘 20px
+    let panel_y = 10;
     
     let app_handle = app.clone();
     monitor.start(move |show| {
         if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
             if show {
+                // 动态设置窗口位置到屏幕右侧
+                let _ = window.set_position(PhysicalPosition::new(panel_x, panel_y));
                 let _ = window.show();
                 let _ = window.set_focus();
             } else {
@@ -572,6 +588,19 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     });
     
     Ok(())
+}
+
+// 停止桌面整理热区监听
+#[tauri::command]
+fn stop_hotzone() -> Result<(), String> {
+    stop_hotzone_monitor();
+    Ok(())
+}
+
+// 检查热区监听状态
+#[tauri::command]
+fn get_hotzone_status() -> bool {
+    is_hotzone_running()
 }
 
 // 显示/隐藏桌面整理窗口
@@ -596,38 +625,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // 检查是否启用桌面整理功能
-            // TODO: 从配置文件读取
-            let desktop_organizer_enabled = true;
-            
-            if desktop_organizer_enabled {
-                // 启动热区监听
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    // 延迟启动，等待窗口初始化
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    
-                    let config = HotZoneConfig::default();
-                    let monitor = HotZoneMonitor::new(config);
-                    
-                    monitor.start(move |show| {
-                        if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
-                            if show {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            } else {
-                                let _ = window.hide();
-                            }
-                        }
-                    });
-                    
-                    // 保持线程运行
-                    loop {
-                        std::thread::sleep(std::time::Duration::from_secs(60));
-                    }
-                });
-            }
-            
+            // 注意：热区监听现在通过前端调用 start_hotzone_monitor 命令启动
+            // 不再在启动时自动启动，由用户设置控制
+            // 这样可以避免不必要的资源消耗
+            let _ = app; // 消除未使用警告
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -651,6 +652,8 @@ pub fn run() {
             desktop_get_file_path,
             desktop_get_path,
             start_hotzone_monitor,
+            stop_hotzone,
+            get_hotzone_status,
             toggle_desktop_organizer
         ])
         .run(tauri::generate_context!())
