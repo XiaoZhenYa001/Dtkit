@@ -6,8 +6,13 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use futures_util::StreamExt;
+
+// 桌面整理模块
+mod desktop;
+use desktop::commands::*;
+use desktop::hotzone::{HotZoneConfig, HotZoneMonitor};
 
 // 哈希计算相关
 use md5::Md5;
@@ -548,6 +553,41 @@ fn open_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// 桌面整理热区监听启动命令
+#[tauri::command]
+fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
+    let config = HotZoneConfig::default();
+    let monitor = HotZoneMonitor::new(config);
+    
+    let app_handle = app.clone();
+    monitor.start(move |show| {
+        if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
+            if show {
+                let _ = window.show();
+                let _ = window.set_focus();
+            } else {
+                let _ = window.hide();
+            }
+        }
+    });
+    
+    Ok(())
+}
+
+// 显示/隐藏桌面整理窗口
+#[tauri::command]
+fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("desktop-organizer") {
+        if show {
+            window.show().map_err(|e| e.to_string())?;
+            window.set_focus().map_err(|e| e.to_string())?;
+        } else {
+            window.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -555,6 +595,41 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // 检查是否启用桌面整理功能
+            // TODO: 从配置文件读取
+            let desktop_organizer_enabled = true;
+            
+            if desktop_organizer_enabled {
+                // 启动热区监听
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // 延迟启动，等待窗口初始化
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    
+                    let config = HotZoneConfig::default();
+                    let monitor = HotZoneMonitor::new(config);
+                    
+                    monitor.start(move |show| {
+                        if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
+                            if show {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            } else {
+                                let _ = window.hide();
+                            }
+                        }
+                    });
+                    
+                    // 保持线程运行
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(60));
+                    }
+                });
+            }
+            
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             write_binary_file,
@@ -566,7 +641,17 @@ pub fn run() {
             cancel_download,
             remove_download_record,
             open_file_location,
-            open_file
+            open_file,
+            // 桌面整理命令
+            desktop_scan,
+            desktop_search,
+            desktop_open_file,
+            desktop_locate_file,
+            desktop_rename_file,
+            desktop_get_file_path,
+            desktop_get_path,
+            start_hotzone_monitor,
+            toggle_desktop_organizer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

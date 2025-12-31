@@ -255,7 +255,89 @@ window.shortcutManager = shortcutManager;
 export function initSettings() {
     initDownloadPathSettings();
     initMirrorSourceSettings();
+    initDesktopOrganizerSettings();
     shortcutManager.init();
+}
+
+// ============================================
+// 桌面整理设置
+// ============================================
+function initDesktopOrganizerSettings() {
+    const mainToggle = document.getElementById('desktopOrganizerToggle');
+    const autoAnalyzeToggle = document.getElementById('desktopAutoAnalyzeToggle');
+    const subSettings = document.getElementById('desktopOrganizerSubSettings');
+    
+    if (!mainToggle) return;
+    
+    // 从本地存储加载设置
+    const savedSettings = localStorage.getItem('dtkit_desktop_organizer');
+    let settings = {
+        enabled: false,
+        autoAnalyze: false
+    };
+    
+    if (savedSettings) {
+        try {
+            settings = JSON.parse(savedSettings);
+        } catch (e) {
+            console.error('加载桌面整理设置失败:', e);
+        }
+    }
+    
+    // 初始化开关状态
+    mainToggle.checked = settings.enabled;
+    if (autoAnalyzeToggle) {
+        autoAnalyzeToggle.checked = settings.autoAnalyze;
+    }
+    
+    // 显示/隐藏子设置
+    if (subSettings) {
+        subSettings.style.display = settings.enabled ? 'block' : 'none';
+    }
+    
+    // 主开关事件
+    mainToggle.addEventListener('change', () => {
+        const enabled = mainToggle.checked;
+        
+        // 显示确认弹窗
+        const message = enabled 
+            ? '开启桌面整理功能后，鼠标移至屏幕右上角热区将触发侧边栏。\n\n确定要开启吗？（需要重启应用生效）'
+            : '关闭桌面整理功能后，热区触发将不再可用。\n\n确定要关闭吗？（需要重启应用生效）';
+        
+        if (confirm(message)) {
+            settings.enabled = enabled;
+            localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
+            
+            // 显示/隐藏子设置
+            if (subSettings) {
+                subSettings.style.display = enabled ? 'block' : 'none';
+            }
+            
+            showToast(enabled ? '桌面整理已开启，重启后生效' : '桌面整理已关闭，重启后生效');
+        } else {
+            // 恢复开关状态
+            mainToggle.checked = !enabled;
+        }
+    });
+    
+    // 自动分析开关事件
+    if (autoAnalyzeToggle) {
+        autoAnalyzeToggle.addEventListener('change', () => {
+            const autoAnalyze = autoAnalyzeToggle.checked;
+            
+            if (autoAnalyze) {
+                const confirmed = confirm('开启自动分析后，应用将自动扫描桌面文件并提供整理建议。\n\n确定要开启吗？');
+                if (!confirmed) {
+                    autoAnalyzeToggle.checked = false;
+                    return;
+                }
+            }
+            
+            settings.autoAnalyze = autoAnalyze;
+            localStorage.setItem('dtkit_desktop_organizer', JSON.stringify(settings));
+            showToast(autoAnalyze ? '自动分析已开启' : '自动分析已关闭');
+        });
+    }
 }
 
 // ============================================

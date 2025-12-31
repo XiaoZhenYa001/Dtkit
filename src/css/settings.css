@@ -951,3 +951,46 @@
 .modal-btn--primary:active {
     transform: translateY(1px);
 }
+
+/* ============================================
+   桌面整理设置特殊样式
+   ============================================ */
+
+.settings-toggle-label-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.settings-toggle-desc {
+    font-size: 0.75rem;
+    color: var(--color-text-tertiary);
+}
+
+.settings-sub-item {
+    margin-left: 1.5rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--color-border-light);
+    margin-top: 0.75rem;
+}
+
+.settings-sub-item .settings-toggle-item.sub-item {
+    padding: 0.75rem 0;
+}
+
+.settings-info-text {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+}
+
+.settings-info-text i {
+    color: var(--color-primary);
+    font-size: 1rem;
+}

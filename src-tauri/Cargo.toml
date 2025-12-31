@@ -34,4 +34,9 @@ md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
 hex = "0.4"
+dirs = "5"
+opener = "0.7"
+notify = "6"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }
