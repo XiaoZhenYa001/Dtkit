@@ -155,14 +155,18 @@ impl HotZoneMonitor {
             
             // 面板检测区域（使用逻辑像素，因为鼠标坐标也会被 DPI 缩放影响）
             // GetCursorPos 返回的坐标与 GetSystemMetrics 使用相同的坐标系
-            let panel_width = 600;   // 稍微大于实际窗口宽度
-            let panel_height = 500;  // 稍微大于实际窗口高度
-            let panel_left = primary_width - panel_width;
+            // 注意：panel_rect 需要足够大以包含窗口可能的最大尺寸
+            // 用户可以拖拽调整窗口大小，所以这里使用较大的检测区域
+            // 左边和底部额外增加 50px 边距，以覆盖 resize-handle 区域
+            let panel_width = 800;   // 比实际窗口更宽，覆盖可能的调整大小
+            let panel_height = 700;  // 比实际窗口更高，覆盖可能的调整大小
+            let edge_margin = 50;    // 边缘额外边距，覆盖 resize-handle
+            let panel_left = primary_width - panel_width - edge_margin;
             let panel_top = 0;
             let panel_rect = (
                 panel_left,
                 panel_top,
-                primary_width,
+                primary_width + edge_margin, // 右边也加边距
                 (panel_top + panel_height).min(primary_height),
             );
             

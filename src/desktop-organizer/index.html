@@ -12,7 +12,8 @@
         <div class="search-container">
             <div class="search-box">
                 <span class="search-icon">🔍</span>
-                <input type="text" class="search-input" id="searchInput" placeholder="搜索文件或输入命令...">
+                <input type="text" class="search-input" id="searchInput" placeholder="搜索文件或输入 / 命令...">
+                <span class="search-shortcut">Ctrl+F</span>
                 <span class="search-clear" id="searchClear" style="display: none;">✕</span>
             </div>
             <div class="command-hint" id="commandHint">
@@ -57,24 +58,29 @@
         <div class="menu-item" data-action="open">
             <span class="menu-icon">📂</span>
             <span class="menu-text">打开</span>
+            <span class="menu-shortcut">Enter</span>
         </div>
         <div class="menu-item" data-action="locate">
             <span class="menu-icon">📍</span>
             <span class="menu-text">定位到文件</span>
+            <span class="menu-shortcut">Ctrl+L</span>
         </div>
         <div class="menu-divider"></div>
         <div class="menu-item" data-action="copy">
             <span class="menu-icon">📋</span>
-            <span class="menu-text">复制</span>
+            <span class="menu-text">复制路径</span>
+            <span class="menu-shortcut">Ctrl+C</span>
         </div>
         <div class="menu-item" data-action="cut">
             <span class="menu-icon">✂️</span>
             <span class="menu-text">剪切</span>
+            <span class="menu-shortcut">Ctrl+X</span>
         </div>
         <div class="menu-divider"></div>
         <div class="menu-item" data-action="rename">
             <span class="menu-icon">✏️</span>
             <span class="menu-text">重命名</span>
+            <span class="menu-shortcut">F2</span>
         </div>
     </div>
 

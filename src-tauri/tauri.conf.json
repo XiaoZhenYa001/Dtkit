@@ -29,6 +29,7 @@
         "visible": false,
         "skipTaskbar": true,
         "center": false,
+        "shadow": false,
         "x": 1350,
         "y": 10
       }

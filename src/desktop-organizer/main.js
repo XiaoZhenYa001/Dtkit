@@ -300,8 +300,100 @@ async function copyToClipboard(text) {
 }
 
 // ============================================
+// 键盘快捷键
+// ============================================
+document.addEventListener('keydown', async (e) => {
+    // 如果重命名对话框打开，不处理快捷键（除了在输入框内的处理）
+    if (elements.renameDialog.style.display !== 'none') {
+        return;
+    }
+    
+    // 如果焦点在搜索框，不处理文件操作快捷键
+    if (document.activeElement === elements.searchInput) {
+        // ESC 清空搜索
+        if (e.key === 'Escape') {
+            elements.searchInput.value = '';
+            elements.searchInput.dispatchEvent(new Event('input'));
+        }
+        return;
+    }
+    
+    // 获取当前选中的文件
+    const selectedItem = document.querySelector('.file-item.selected');
+    
+    if (selectedItem && state.selectedFile) {
+        const { path, name } = state.selectedFile;
+        
+        // Enter - 打开文件
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            await openFile(path);
+        }
+        // F2 - 重命名
+        else if (e.key === 'F2') {
+            e.preventDefault();
+            showRenameDialog(path, name);
+        }
+        // Ctrl+C - 复制路径
+        else if (e.ctrlKey && e.key === 'c') {
+            e.preventDefault();
+            await copyToClipboard(path);
+        }
+        // Ctrl+L - 定位文件
+        else if (e.ctrlKey && e.key === 'l') {
+            e.preventDefault();
+            await locateFile(path);
+        }
+    }
+    
+    // ESC - 关闭右键菜单
+    if (e.key === 'Escape') {
+        hideContextMenu();
+    }
+    
+    // Ctrl+F 或 / - 聚焦搜索框
+    if ((e.ctrlKey && e.key === 'f') || (e.key === '/' && !e.ctrlKey && !e.altKey)) {
+        e.preventDefault();
+        elements.searchInput.focus();
+        elements.searchInput.select();
+    }
+    
+    // F5 - 刷新
+    if (e.key === 'F5') {
+        e.preventDefault();
+        loadDesktopFiles();
+    }
+});
+
+// ============================================
 // 事件处理
 // ============================================
+
+// 文件选中状态
+function selectFileItem(fileItem) {
+    // 移除之前的选中状态
+    document.querySelectorAll('.file-item.selected').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    if (fileItem) {
+        fileItem.classList.add('selected');
+        state.selectedFile = {
+            path: fileItem.dataset.path,
+            name: fileItem.dataset.name,
+        };
+    } else {
+        state.selectedFile = null;
+    }
+}
+
+// 单击选中文件
+elements.categoryList.addEventListener('click', (e) => {
+    const fileItem = e.target.closest('.file-item');
+    if (fileItem && !e.target.closest('.folder-children')) {
+        selectFileItem(fileItem);
+    }
+});
 
 // 分类展开/折叠
 elements.categoryList.addEventListener('click', (e) => {
@@ -372,7 +464,12 @@ function showContextMenu(e, fileItem) {
 }
 
 function hideContextMenu() {
-    elements.contextMenu.style.display = 'none';
+    if (elements.contextMenu.style.display === 'none') return;
+    elements.contextMenu.classList.add('closing');
+    setTimeout(() => {
+        elements.contextMenu.style.display = 'none';
+        elements.contextMenu.classList.remove('closing');
+    }, 150);
 }
 
 elements.categoryList.addEventListener('contextmenu', (e) => {
@@ -426,15 +523,31 @@ elements.contextMenu.addEventListener('click', async (e) => {
 // 重命名对话框
 function showRenameDialog(path, name) {
     elements.renameDialog.style.display = 'flex';
+    elements.renameDialog.classList.remove('closing');
     elements.renameInput.value = name;
-    elements.renameInput.focus();
-    elements.renameInput.select();
+    
+    // 延迟focus以确保动画流畅
+    requestAnimationFrame(() => {
+        elements.renameInput.focus();
+        // 选中文件名但不包括扩展名
+        const dotIndex = name.lastIndexOf('.');
+        if (dotIndex > 0) {
+            elements.renameInput.setSelectionRange(0, dotIndex);
+        } else {
+            elements.renameInput.select();
+        }
+    });
     
     state.selectedFile = { path, name };
 }
 
 function hideRenameDialog() {
-    elements.renameDialog.style.display = 'none';
+    if (elements.renameDialog.style.display === 'none') return;
+    elements.renameDialog.classList.add('closing');
+    setTimeout(() => {
+        elements.renameDialog.style.display = 'none';
+        elements.renameDialog.classList.remove('closing');
+    }, 250);
 }
 
 elements.renameCancelBtn.addEventListener('click', hideRenameDialog);
