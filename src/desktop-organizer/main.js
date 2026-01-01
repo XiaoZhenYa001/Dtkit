@@ -500,6 +500,20 @@ elements.refreshBtn.addEventListener('click', () => {
 // ============================================
 // 拖拽调整大小
 // ============================================
+
+// 监听窗口显示/隐藏事件，隐藏时关闭右键菜单
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        hideContextMenu();
+        hideRenameDialog();
+    }
+});
+
+// 窗口失去焦点时关闭右键菜单
+window.addEventListener('blur', () => {
+    hideContextMenu();
+});
+
 let isResizing = false;
 let resizeDirection = '';
 let startX, startY, startWidth, startHeight, startLeft;

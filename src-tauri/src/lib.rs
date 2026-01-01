@@ -556,7 +556,6 @@ fn open_file(path: String) -> Result<(), String> {
 // 桌面整理热区监听启动命令
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
-    use desktop::hotzone::get_screen_size;
     use tauri::PhysicalPosition;
     
     // 如果已经在运行，不要重复启动
@@ -567,18 +566,29 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     let config = HotZoneConfig::default();
     let monitor = HotZoneMonitor::new(config);
     
-    // 获取屏幕尺寸，计算窗口位置（右侧）
-    let (screen_width, _) = get_screen_size();
-    let panel_width = 550;
-    let panel_x = screen_width - panel_width - 75;  // 距右边缘 75px
-    let panel_y = 10;
-    
     let app_handle = app.clone();
     monitor.start(move |show| {
         if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
             if show {
-                // 动态设置窗口位置到屏幕右侧
-                let _ = window.set_position(PhysicalPosition::new(panel_x, panel_y));
+                // 优先使用主显示器，如果失败则使用当前显示器
+                let monitor_info = window.primary_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| window.current_monitor().ok().flatten());
+                
+                if let Some(monitor) = monitor_info {
+                    let monitor_size = monitor.size();
+                    let monitor_pos = monitor.position();
+                    let screen_width = monitor_size.width as i32;
+                    let panel_width = 550;
+                    let margin_right = 10;
+                    
+                    // 计算物理像素位置
+                    let panel_x = monitor_pos.x + screen_width - panel_width - margin_right;
+                    let panel_y = monitor_pos.y + 10;
+                    
+                    let _ = window.set_position(PhysicalPosition::new(panel_x, panel_y));
+                }
                 let _ = window.show();
                 let _ = window.set_focus();
             } else {
@@ -630,6 +640,28 @@ pub fn run() {
             // 这样可以避免不必要的资源消耗
             let _ = app; // 消除未使用警告
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 当主窗口关闭时，停止热区监听并退出程序
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if window.label() == "main" {
+                    // 停止热区监听线程
+                    stop_hotzone_monitor();
+                    
+                    // 关闭所有其他窗口
+                    let app = window.app_handle();
+                    // 关闭桌面整理窗口
+                    if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
+                        let _ = organizer_window.close();
+                    }
+                    
+                    // 给线程和窗口一点时间清理
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    
+                    // 强制退出整个进程，确保所有子进程都被终止
+                    std::process::exit(0);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             greet,

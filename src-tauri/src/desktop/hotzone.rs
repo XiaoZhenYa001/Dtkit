@@ -12,11 +12,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::POINT;
-#[cfg(target_os = "windows")]
-use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, GetDeviceCaps, HORZRES, VERTRES};
 
 // 全局停止标志
 lazy_static::lazy_static! {
@@ -64,15 +62,30 @@ pub fn is_in_panel(mouse_x: i32, mouse_y: i32, panel_rect: (i32, i32, i32, i32))
     mouse_x >= left && mouse_x <= right && mouse_y >= top && mouse_y <= bottom
 }
 
-/// 获取屏幕尺寸（修复内存泄漏）
+/// 获取屏幕尺寸（使用虚拟屏幕尺寸，支持多显示器）
 #[cfg(target_os = "windows")]
 pub fn get_screen_size() -> (i32, i32) {
     unsafe {
-        let hdc = GetDC(None);
-        let width = GetDeviceCaps(hdc, HORZRES);
-        let height = GetDeviceCaps(hdc, VERTRES);
-        // 重要：释放 DC，防止内存泄漏
-        let _ = ReleaseDC(None, hdc);
+        // SM_CXVIRTUALSCREEN/SM_CYVIRTUALSCREEN 返回虚拟屏幕尺寸（所有显示器的合并区域）
+        // 这对于鼠标位置检测更准确
+        let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        // 如果虚拟屏幕尺寸无效，回退到主屏幕尺寸
+        if width <= 0 || height <= 0 {
+            let width = GetSystemMetrics(SM_CXSCREEN);
+            let height = GetSystemMetrics(SM_CYSCREEN);
+            return (width, height);
+        }
+        (width, height)
+    }
+}
+
+/// 获取主屏幕尺寸
+#[cfg(target_os = "windows")]
+pub fn get_primary_screen_size() -> (i32, i32) {
+    unsafe {
+        let width = GetSystemMetrics(SM_CXSCREEN);
+        let height = GetSystemMetrics(SM_CYSCREEN);
         (width, height)
     }
 }
@@ -135,25 +148,27 @@ impl HotZoneMonitor {
             let mut is_panel_visible = false;
             let mut left_panel_since: Option<Instant> = None;
             
-            // 获取屏幕尺寸（只获取一次，减少资源消耗）
-            let (screen_width, _screen_height) = get_screen_size();
+            // 获取主屏幕尺寸（用于热区和面板检测）
+            // 注意：鼠标坐标是相对于主屏幕的，所以这里用主屏幕尺寸
+            let (primary_width, primary_height) = get_primary_screen_size();
             
-            // 侧边栏位置在右侧（与热区位置一致）
-            let panel_width = 550;
-            let panel_height = 450;
-            let panel_left = screen_width - panel_width - 75;  // 距右边缘 75px
-            let panel_top = 10;
+            // 面板检测区域：覆盖屏幕右侧区域
+            // 使用更宽松的范围来确保鼠标在面板上时不会误判
+            let panel_width = 650;   // 比实际窗口宽
+            let panel_height = 600;  // 比实际窗口高，确保状态栏在范围内
+            let panel_left = primary_width - panel_width;
+            let panel_top = 0;
             let panel_rect = (
                 panel_left,
                 panel_top,
-                panel_left + panel_width,
-                panel_top + panel_height,
+                primary_width,  // 右边界是屏幕右边缘
+                (panel_top + panel_height).min(primary_height),
             );
             
             while HOTZONE_RUNNING.load(Ordering::SeqCst) {
                 let (mouse_x, mouse_y) = get_mouse_position();
                 
-                let in_hotzone = is_in_hotzone(mouse_x, mouse_y, screen_width, &config);
+                let in_hotzone = is_in_hotzone(mouse_x, mouse_y, primary_width, &config);
                 let in_panel = is_in_panel(mouse_x, mouse_y, panel_rect);
                 
                 if !is_panel_visible {
@@ -186,8 +201,8 @@ impl HotZoneMonitor {
                     }
                 }
                 
-                // 降低检测频率：100ms（10fps），减少 CPU 占用
-                thread::sleep(Duration::from_millis(100));
+                // 降低检测频率：200ms（5fps），减少 CPU 占用
+                thread::sleep(Duration::from_millis(200));
             }
             
             // 线程结束时隐藏面板
