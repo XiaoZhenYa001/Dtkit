@@ -4,6 +4,7 @@
  */
 
 const { invoke } = window.__TAURI__.core;
+const { getCurrentWindow } = window.__TAURI__.window;
 
 // ============================================
 // 分类配置
@@ -516,54 +517,110 @@ window.addEventListener('blur', () => {
 
 let isResizing = false;
 let resizeDirection = '';
-let startX, startY, startWidth, startHeight, startLeft;
+let startX, startY, startWidth, startHeight, startWindowX, startWindowY;
+let resizeEndTimeout = null;
+const appWindow = getCurrentWindow();
+
+// 通知 Rust 端用户正在交互（拖动中）
+async function notifyUserInteracting(interacting) {
+    try {
+        window.__userInteracting = interacting;
+    } catch (e) {
+        // ignore
+    }
+}
+
+// 获取当前窗口尺寸和位置
+async function getWindowInfo() {
+    const size = await appWindow.innerSize();
+    const position = await appWindow.innerPosition();
+    return { 
+        width: size.width, 
+        height: size.height,
+        x: position.x,
+        y: position.y
+    };
+}
 
 document.querySelectorAll('.resize-handle').forEach(handle => {
-    handle.addEventListener('mousedown', (e) => {
+    handle.addEventListener('mousedown', async (e) => {
         isResizing = true;
         resizeDirection = handle.dataset.direction;
-        startX = e.clientX;
-        startY = e.clientY;
-        startWidth = elements.panel.offsetWidth;
-        startHeight = elements.panel.offsetHeight;
-        startLeft = elements.panel.offsetLeft;
+        startX = e.screenX;
+        startY = e.screenY;
         
-        document.body.style.cursor = handle.style.cursor;
+        // 获取当前窗口尺寸和位置
+        const info = await getWindowInfo();
+        startWidth = info.width;
+        startHeight = info.height;
+        startWindowX = info.x;
+        startWindowY = info.y;
+        
+        document.body.style.cursor = getComputedStyle(handle).cursor;
         e.preventDefault();
+        e.stopPropagation();
+        
+        // 清除之前的超时
+        if (resizeEndTimeout) {
+            clearTimeout(resizeEndTimeout);
+            resizeEndTimeout = null;
+        }
+        notifyUserInteracting(true);
     });
 });
 
-document.addEventListener('mousemove', (e) => {
+document.addEventListener('mousemove', async (e) => {
     if (!isResizing) return;
     
-    const deltaX = e.clientX - startX;
-    const deltaY = e.clientY - startY;
+    const deltaX = e.screenX - startX;
+    const deltaY = e.screenY - startY;
     
     let newWidth = startWidth;
     let newHeight = startHeight;
-    let newRight = parseInt(getComputedStyle(elements.panel).right);
+    let newX = startWindowX;
+    let newY = startWindowY;
     
-    // 计算最大尺寸
-    const maxWidth = window.innerWidth * 0.45;
-    const maxHeight = window.innerHeight * 0.6;
+    // 最小尺寸
+    const minWidth = 400;
+    const minHeight = 300;
     
     switch (resizeDirection) {
-        case 'br': // 右下角
-            newWidth = Math.min(maxWidth, Math.max(400, startWidth + deltaX));
-            newHeight = Math.min(maxHeight, Math.max(300, startHeight + deltaY));
+        case 'r': // 右边
+            newWidth = Math.max(minWidth, startWidth + deltaX);
             break;
-        case 'bl': // 左下角
-            newWidth = Math.min(maxWidth, Math.max(400, startWidth - deltaX));
-            newHeight = Math.min(maxHeight, Math.max(300, startHeight + deltaY));
-            // 调整右边距以保持右侧位置不变
+        case 'l': // 左边
+            newWidth = Math.max(minWidth, startWidth - deltaX);
+            newX = startWindowX + deltaX;
+            if (newWidth === minWidth) {
+                newX = startWindowX + (startWidth - minWidth);
+            }
             break;
         case 'b': // 底部
-            newHeight = Math.min(maxHeight, Math.max(300, startHeight + deltaY));
+            newHeight = Math.max(minHeight, startHeight + deltaY);
+            break;
+        case 'br': // 右下角
+            newWidth = Math.max(minWidth, startWidth + deltaX);
+            newHeight = Math.max(minHeight, startHeight + deltaY);
+            break;
+        case 'bl': // 左下角
+            newWidth = Math.max(minWidth, startWidth - deltaX);
+            newHeight = Math.max(minHeight, startHeight + deltaY);
+            newX = startWindowX + deltaX;
+            if (newWidth === minWidth) {
+                newX = startWindowX + (startWidth - minWidth);
+            }
             break;
     }
     
-    elements.panel.style.width = `${newWidth}px`;
-    elements.panel.style.height = `${newHeight}px`;
+    // 使用 Tauri API 调整窗口
+    try {
+        if (resizeDirection === 'l' || resizeDirection === 'bl') {
+            await appWindow.setPosition({ type: 'Physical', x: Math.round(newX), y: Math.round(newY) });
+        }
+        await appWindow.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) });
+    } catch (err) {
+        console.error('调整窗口失败:', err);
+    }
 });
 
 document.addEventListener('mouseup', () => {
@@ -573,19 +630,27 @@ document.addEventListener('mouseup', () => {
         
         // 保存用户偏好
         saveUserPreferences();
+        
+        // 延迟 500ms 后才允许收缩
+        resizeEndTimeout = setTimeout(() => {
+            notifyUserInteracting(false);
+            resizeEndTimeout = null;
+        }, 500);
     }
 });
 
 // ============================================
 // 用户偏好
 // ============================================
-function loadUserPreferences() {
+async function loadUserPreferences() {
     try {
         const prefs = localStorage.getItem('desktopOrganizerPrefs');
         if (prefs) {
             const { width, height, expandedCategories } = JSON.parse(prefs);
-            if (width) elements.panel.style.width = `${width}px`;
-            if (height) elements.panel.style.height = `${height}px`;
+            // 使用 Tauri API 设置窗口尺寸
+            if (width && height) {
+                await appWindow.setSize({ type: 'Physical', width, height });
+            }
             if (expandedCategories) {
                 state.expandedCategories = new Set(expandedCategories);
             }
@@ -595,11 +660,12 @@ function loadUserPreferences() {
     }
 }
 
-function saveUserPreferences() {
+async function saveUserPreferences() {
     try {
+        const size = await appWindow.innerSize();
         const prefs = {
-            width: elements.panel.offsetWidth,
-            height: elements.panel.offsetHeight,
+            width: size.width,
+            height: size.height,
             expandedCategories: Array.from(state.expandedCategories),
         };
         localStorage.setItem('desktopOrganizerPrefs', JSON.stringify(prefs));
@@ -612,7 +678,7 @@ function saveUserPreferences() {
 // 初始化
 // ============================================
 async function init() {
-    loadUserPreferences();
+    await loadUserPreferences();
     await loadDesktopFiles();
 }
 

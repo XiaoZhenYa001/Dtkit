@@ -557,6 +557,7 @@ fn open_file(path: String) -> Result<(), String> {
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     use tauri::PhysicalPosition;
+    use tauri::PhysicalSize;
     
     // 如果已经在运行，不要重复启动
     if is_hotzone_running() {
@@ -570,7 +571,7 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     monitor.start(move |show| {
         if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
             if show {
-                // 优先使用主显示器，如果失败则使用当前显示器
+                // 获取主显示器信息
                 let monitor_info = window.primary_monitor()
                     .ok()
                     .flatten()
@@ -579,14 +580,20 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                 if let Some(monitor) = monitor_info {
                     let monitor_size = monitor.size();
                     let monitor_pos = monitor.position();
-                    let screen_width = monitor_size.width as i32;
-                    let panel_width = 550;
-                    let margin_right = 10;
+                    let scale_factor = monitor.scale_factor();
                     
-                    // 计算物理像素位置
-                    let panel_x = monitor_pos.x + screen_width - panel_width - margin_right;
-                    let panel_y = monitor_pos.y + 10;
+                    // 窗口尺寸（物理像素）
+                    let panel_width = (550.0 * scale_factor) as u32;
+                    let panel_height = (450.0 * scale_factor) as u32;
+                    let margin_right = (10.0 * scale_factor) as i32;
+                    let margin_top = (10.0 * scale_factor) as i32;
                     
+                    // 计算物理像素位置（右上角）
+                    let panel_x = monitor_pos.x + monitor_size.width as i32 - panel_width as i32 - margin_right;
+                    let panel_y = monitor_pos.y + margin_top;
+                    
+                    // 设置窗口尺寸和位置
+                    let _ = window.set_size(PhysicalSize::new(panel_width, panel_height));
                     let _ = window.set_position(PhysicalPosition::new(panel_x, panel_y));
                 }
                 let _ = window.show();

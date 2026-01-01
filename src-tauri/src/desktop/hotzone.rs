@@ -40,7 +40,7 @@ impl Default for HotZoneConfig {
             width: 240,         // 宽 240px
             height: 5,          // 高 5px
             trigger_delay: 300,
-            hide_delay: 200,
+            hide_delay: 500,    // 隐藏延迟增加到 500ms
         }
     }
 }
@@ -148,20 +148,21 @@ impl HotZoneMonitor {
             let mut is_panel_visible = false;
             let mut left_panel_since: Option<Instant> = None;
             
-            // 获取主屏幕尺寸（用于热区和面板检测）
-            // 注意：鼠标坐标是相对于主屏幕的，所以这里用主屏幕尺寸
+            // 获取主屏幕尺寸（逻辑像素，因为 GetSystemMetrics 返回缩放后的值）
+            // 而 GetCursorPos 返回的是物理像素，所以需要注意坐标系
+            // 这里简化处理：假设在 125% DPI 下，逻辑像素 * 1.25 = 物理像素
             let (primary_width, primary_height) = get_primary_screen_size();
             
-            // 面板检测区域：覆盖屏幕右侧区域
-            // 使用更宽松的范围来确保鼠标在面板上时不会误判
-            let panel_width = 650;   // 比实际窗口宽
-            let panel_height = 600;  // 比实际窗口高，确保状态栏在范围内
+            // 面板检测区域（使用逻辑像素，因为鼠标坐标也会被 DPI 缩放影响）
+            // GetCursorPos 返回的坐标与 GetSystemMetrics 使用相同的坐标系
+            let panel_width = 600;   // 稍微大于实际窗口宽度
+            let panel_height = 500;  // 稍微大于实际窗口高度
             let panel_left = primary_width - panel_width;
             let panel_top = 0;
             let panel_rect = (
                 panel_left,
                 panel_top,
-                primary_width,  // 右边界是屏幕右边缘
+                primary_width,
                 (panel_top + panel_height).min(primary_height),
             );
             
