@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 // 桌面整理模块
 mod desktop;
 use desktop::commands::*;
-use desktop::hotzone::{HotZoneConfig, HotZoneMonitor, stop_hotzone_monitor, is_hotzone_running};
+use desktop::hotzone::{HotZoneConfig, HotZoneMonitor, stop_hotzone_monitor, is_hotzone_running, update_hotzone_pos, get_hotzone_pos};
 
 // 哈希计算相关
 use md5::Md5;
@@ -557,7 +557,6 @@ fn open_file(path: String) -> Result<(), String> {
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     use tauri::PhysicalPosition;
-    use tauri::PhysicalSize;
     
     // 如果已经在运行，不要重复启动
     if is_hotzone_running() {
@@ -578,23 +577,19 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                     .or_else(|| window.current_monitor().ok().flatten());
                 
                 if let Some(monitor) = monitor_info {
-                    let monitor_size = monitor.size();
                     let monitor_pos = monitor.position();
                     let scale_factor = monitor.scale_factor();
-                    
-                    // 窗口尺寸（物理像素）
-                    let panel_width = (550.0 * scale_factor) as u32;
-                    let panel_height = (450.0 * scale_factor) as u32;
-                    let margin_right = (10.0 * scale_factor) as i32;
                     let margin_top = (10.0 * scale_factor) as i32;
                     
-                    // 计算物理像素位置（右上角）
-                    let panel_x = monitor_pos.x + monitor_size.width as i32 - panel_width as i32 - margin_right;
-                    let panel_y = monitor_pos.y + margin_top;
+                    // 检查是否有保存的位置
+                    let (stored_x, _stored_width) = get_hotzone_pos();
                     
-                    // 设置窗口尺寸和位置
-                    let _ = window.set_size(PhysicalSize::new(panel_width, panel_height));
-                    let _ = window.set_position(PhysicalPosition::new(panel_x, panel_y));
+                    if stored_x >= 0 {
+                        // 使用保存的位置，不修改尺寸（前端会根据localStorage恢复）
+                        let panel_y = monitor_pos.y + margin_top;
+                        let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
+                    }
+                    // 如果没有保存的位置，窗口会使用上次的位置（前端loadUserPreferences处理）
                 }
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -604,6 +599,13 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
         }
     });
     
+    Ok(())
+}
+
+// 更新热区位置（从前端调用）
+#[tauri::command]
+fn update_hotzone_position(x: i32, width: i32) -> Result<(), String> {
+    update_hotzone_pos(x, width);
     Ok(())
 }
 
@@ -693,7 +695,10 @@ pub fn run() {
             start_hotzone_monitor,
             stop_hotzone,
             get_hotzone_status,
-            toggle_desktop_organizer
+            toggle_desktop_organizer,
+            update_hotzone_position,
+            get_screen_bounds,
+            set_user_interacting
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

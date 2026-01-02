@@ -84,3 +84,35 @@ pub fn desktop_get_path() -> Result<String, String> {
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| "无法获取桌面路径".to_string())
 }
+
+/// 获取屏幕边界信息
+#[tauri::command]
+pub fn get_screen_bounds() -> Result<ScreenBounds, String> {
+    use crate::desktop::hotzone::{get_primary_screen_size, get_screen_size};
+    
+    let (width, height) = get_primary_screen_size();
+    let (virtual_width, virtual_height) = get_screen_size();
+    
+    Ok(ScreenBounds {
+        width,
+        height,
+        virtual_width,
+        virtual_height,
+    })
+}
+
+/// 设置用户交互状态（拖动/调整大小时）
+#[tauri::command]
+pub fn set_user_interacting(interacting: bool) -> Result<(), String> {
+    use crate::desktop::hotzone::set_user_interacting;
+    set_user_interacting(interacting);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct ScreenBounds {
+    pub width: i32,
+    pub height: i32,
+    pub virtual_width: i32,
+    pub virtual_height: i32,
+}

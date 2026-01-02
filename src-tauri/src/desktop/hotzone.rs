@@ -19,47 +19,98 @@ use windows::Win32::Foundation::POINT;
 // 全局停止标志
 lazy_static::lazy_static! {
     pub static ref HOTZONE_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    // 用户交互标志：当用户正在拖动或调整窗口大小时，不应该隐藏窗口
+    pub static ref USER_INTERACTING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
 
 // 热区配置
 #[derive(Clone)]
 pub struct HotZoneConfig {
-    pub right_offset: i32,   // 距右边缘距离 (0px，热区紧贴右边)
     pub top_offset: i32,     // 距顶边缘距离 (0px)
-    pub width: i32,          // 热区宽度 (240px)
+    pub width: i32,          // 热区宽度 (300px)
     pub height: i32,         // 热区高度 (5px)
     pub trigger_delay: u64,  // 触发延迟 (300ms)
-    pub hide_delay: u64,     // 隐藏延迟 (200ms)
+    pub hide_delay: u64,     // 隐藏延迟 (500ms)
 }
 
 impl Default for HotZoneConfig {
     fn default() -> Self {
         Self {
-            right_offset: 0,    // 紧贴右边缘
             top_offset: 0,
-            width: 240,         // 宽 240px
-            height: 5,          // 高 5px
+            width: 500,         // 宽 300px
+            height: 10,          // 高 10px (从3px改为10px，更容易触发)
             trigger_delay: 300,
-            hide_delay: 500,    // 隐藏延迟增加到 500ms
+            hide_delay: 500,
         }
     }
 }
 
+// 全局热区位置（用于动态更新）
+lazy_static::lazy_static! {
+    pub static ref HOTZONE_X_POSITION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+    pub static ref HOTZONE_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(300);
+}
+
+/// 更新热区位置
+pub fn update_hotzone_pos(x: i32, width: i32) {
+    HOTZONE_X_POSITION.store(x, std::sync::atomic::Ordering::SeqCst);
+    HOTZONE_WIDTH.store(width, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 获取当前热区位置
+pub fn get_hotzone_pos() -> (i32, i32) {
+    (
+        HOTZONE_X_POSITION.load(std::sync::atomic::Ordering::SeqCst),
+        HOTZONE_WIDTH.load(std::sync::atomic::Ordering::SeqCst),
+    )
+}
+
 /// 检查坐标是否在热区内
 pub fn is_in_hotzone(mouse_x: i32, mouse_y: i32, screen_width: i32, config: &HotZoneConfig) -> bool {
-    let hotzone_left = screen_width - config.right_offset - config.width;
-    let hotzone_right = screen_width - config.right_offset;
+    let (stored_x, stored_width) = get_hotzone_pos();
+    
+    // 计算热区位置 - 只考虑顶部边缘的热区
+    let (hotzone_left, hotzone_width) = if stored_x >= 0 {
+        // 使用存储的位置，热区居中于窗口
+        let center_x = stored_x + stored_width / 2;
+        let hz_width = config.width;
+        (center_x - hz_width / 2, hz_width)
+    } else {
+        // 默认位置：屏幕右侧
+        (screen_width - config.width, config.width)
+    };
+    
+    let hotzone_right = hotzone_left + hotzone_width;
     let hotzone_top = config.top_offset;
     let hotzone_bottom = config.top_offset + config.height;
     
+    // 精确判断：鼠标必须在热区范围内
     mouse_x >= hotzone_left && mouse_x <= hotzone_right &&
     mouse_y >= hotzone_top && mouse_y <= hotzone_bottom
 }
 
-/// 检查坐标是否在侧边栏区域内
-pub fn is_in_panel(mouse_x: i32, mouse_y: i32, panel_rect: (i32, i32, i32, i32)) -> bool {
-    let (left, top, right, bottom) = panel_rect;
-    mouse_x >= left && mouse_x <= right && mouse_y >= top && mouse_y <= bottom
+/// 检查坐标是否在侧边栏区域内（动态计算，更宽松的判断用于保持显示）
+pub fn is_in_panel_dynamic(mouse_x: i32, mouse_y: i32, primary_width: i32, primary_height: i32) -> bool {
+    let (stored_x, stored_width) = get_hotzone_pos();
+    
+    // 面板区域参数 - 稍微扩大边界以提供更好的体验
+    let panel_height = 800;  // 覆盖面板高度
+    let edge_margin = 30;    // 边缘容错边距
+    
+    let (panel_left, panel_right) = if stored_x >= 0 {
+        // 使用存储的位置，左右各留容错边距
+        (stored_x - edge_margin, stored_x + stored_width + edge_margin)
+    } else {
+        // 默认：屏幕右侧
+        let panel_width = 800;
+        (primary_width - panel_width - edge_margin, primary_width + edge_margin)
+    };
+    
+    let panel_top = -10; // 顶部容错
+    let panel_bottom = (panel_top + panel_height).min(primary_height);
+    
+    mouse_x >= panel_left && mouse_x <= panel_right &&
+    mouse_y >= panel_top && mouse_y <= panel_bottom
 }
 
 /// 获取屏幕尺寸（使用虚拟屏幕尺寸，支持多显示器）
@@ -120,6 +171,16 @@ pub fn is_hotzone_running() -> bool {
     HOTZONE_RUNNING.load(Ordering::SeqCst)
 }
 
+/// 设置用户交互状态
+pub fn set_user_interacting(interacting: bool) {
+    USER_INTERACTING.store(interacting, Ordering::SeqCst);
+}
+
+/// 检查用户是否正在交互
+pub fn is_user_interacting() -> bool {
+    USER_INTERACTING.load(Ordering::SeqCst)
+}
+
 /// 热区监听器状态
 pub struct HotZoneMonitor {
     config: HotZoneConfig,
@@ -147,34 +208,17 @@ impl HotZoneMonitor {
             let mut in_hotzone_since: Option<Instant> = None;
             let mut is_panel_visible = false;
             let mut left_panel_since: Option<Instant> = None;
+            let mut consecutive_outside_checks = 0; // 连续在外部的检测次数
             
-            // 获取主屏幕尺寸（逻辑像素，因为 GetSystemMetrics 返回缩放后的值）
-            // 而 GetCursorPos 返回的是物理像素，所以需要注意坐标系
-            // 这里简化处理：假设在 125% DPI 下，逻辑像素 * 1.25 = 物理像素
+            // 获取主屏幕尺寸
             let (primary_width, primary_height) = get_primary_screen_size();
-            
-            // 面板检测区域（使用逻辑像素，因为鼠标坐标也会被 DPI 缩放影响）
-            // GetCursorPos 返回的坐标与 GetSystemMetrics 使用相同的坐标系
-            // 注意：panel_rect 需要足够大以包含窗口可能的最大尺寸
-            // 用户可以拖拽调整窗口大小，所以这里使用较大的检测区域
-            // 左边和底部额外增加 50px 边距，以覆盖 resize-handle 区域
-            let panel_width = 800;   // 比实际窗口更宽，覆盖可能的调整大小
-            let panel_height = 700;  // 比实际窗口更高，覆盖可能的调整大小
-            let edge_margin = 50;    // 边缘额外边距，覆盖 resize-handle
-            let panel_left = primary_width - panel_width - edge_margin;
-            let panel_top = 0;
-            let panel_rect = (
-                panel_left,
-                panel_top,
-                primary_width + edge_margin, // 右边也加边距
-                (panel_top + panel_height).min(primary_height),
-            );
             
             while HOTZONE_RUNNING.load(Ordering::SeqCst) {
                 let (mouse_x, mouse_y) = get_mouse_position();
                 
                 let in_hotzone = is_in_hotzone(mouse_x, mouse_y, primary_width, &config);
-                let in_panel = is_in_panel(mouse_x, mouse_y, panel_rect);
+                // 使用动态面板检测（根据保存的窗口位置）
+                let in_panel = is_in_panel_dynamic(mouse_x, mouse_y, primary_width, primary_height);
                 
                 if !is_panel_visible {
                     // 面板未显示时，检测热区
@@ -186,28 +230,41 @@ impl HotZoneMonitor {
                             is_panel_visible = true;
                             on_trigger(true);
                             in_hotzone_since = None;
+                            consecutive_outside_checks = 0;
                         }
                     } else {
                         in_hotzone_since = None;
                     }
                 } else {
                     // 面板已显示时，检测是否离开
-                    if !in_panel && !in_hotzone {
-                        if left_panel_since.is_none() {
+                    // 关键修复：如果用户正在交互（拖动/调整大小），不要隐藏窗口
+                    let user_interacting = is_user_interacting();
+                    
+                    if !in_panel && !in_hotzone && !user_interacting {
+                        // 增加连续检测计数，避免误触发
+                        consecutive_outside_checks += 1;
+                        
+                        if left_panel_since.is_none() && consecutive_outside_checks >= 2 {
+                            // 至少连续2次检测都在外部才开始计时
                             left_panel_since = Some(Instant::now());
-                        } else if left_panel_since.unwrap().elapsed().as_millis() >= config.hide_delay as u128 {
-                            // 触发隐藏
-                            is_panel_visible = false;
-                            on_trigger(false);
-                            left_panel_since = None;
+                        } else if let Some(since) = left_panel_since {
+                            if since.elapsed().as_millis() >= config.hide_delay as u128 {
+                                // 触发隐藏
+                                is_panel_visible = false;
+                                on_trigger(false);
+                                left_panel_since = None;
+                                consecutive_outside_checks = 0;
+                            }
                         }
                     } else {
+                        // 鼠标回到面板或热区，或者用户正在交互，重置计数器
                         left_panel_since = None;
+                        consecutive_outside_checks = 0;
                     }
                 }
                 
-                // 降低检测频率：200ms（5fps），减少 CPU 占用
-                thread::sleep(Duration::from_millis(200));
+                // 优化检测频率：100ms（10fps），在响应性和性能间取得平衡
+                thread::sleep(Duration::from_millis(100));
             }
             
             // 线程结束时隐藏面板

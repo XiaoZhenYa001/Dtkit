@@ -60,6 +60,45 @@ html, body {
     }
 }
 
+/* 拖动条 - 用于改变弹窗位置 */
+.drag-handle {
+    height: 8px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.drag-handle:hover {
+    background: linear-gradient(180deg, rgba(74, 158, 255, 0.15), transparent);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+    background: linear-gradient(180deg, rgba(74, 158, 255, 0.25), transparent);
+}
+
+.drag-indicator {
+    width: 40px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    transition: all 0.2s ease;
+}
+
+.drag-handle:hover .drag-indicator {
+    width: 60px;
+    background: rgba(74, 158, 255, 0.5);
+}
+
+.drag-handle:active .drag-indicator {
+    background: var(--accent);
+}
+
 /* 搜索区域 */
 .search-container {
     padding: 16px;
@@ -531,6 +570,11 @@ html, body {
 .resize-handle {
     position: absolute;
     z-index: 10;
+    transition: opacity 0.2s ease;
+}
+
+.resize-handle:hover {
+    background: rgba(74, 158, 255, 0.2);
 }
 
 .resize-handle-l {
@@ -571,6 +615,36 @@ html, body {
     width: 20px;
     height: 20px;
     cursor: nwse-resize;
+}
+
+/* 拖动和调整大小状态 */
+body.is-dragging,
+body.is-resizing {
+    cursor: inherit !important;
+}
+
+body.is-dragging * {
+    cursor: grabbing !important;
+}
+
+body.is-resizing .resize-handle {
+    opacity: 1;
+    background: rgba(74, 158, 255, 0.3);
+}
+
+/* 防止在拖动和调整大小时选中文本 */
+body.is-dragging *,
+body.is-resizing * {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+    pointer-events: none;
+}
+
+body.is-dragging .drag-handle,
+body.is-resizing .resize-handle {
+    pointer-events: auto;
 }
 
 /* 右键菜单 */

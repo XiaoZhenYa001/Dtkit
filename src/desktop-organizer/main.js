@@ -48,6 +48,7 @@ let state = {
 // ============================================
 const elements = {
     panel: document.getElementById('panel'),
+    dragHandle: document.getElementById('dragHandle'),
     categoryList: document.getElementById('categoryList'),
     searchInput: document.getElementById('searchInput'),
     searchClear: document.getElementById('searchClear'),
@@ -615,11 +616,31 @@ elements.refreshBtn.addEventListener('click', () => {
 // 拖拽调整大小
 // ============================================
 
-// 监听窗口显示/隐藏事件，隐藏时关闭右键菜单
-document.addEventListener('visibilitychange', () => {
+// 监听窗口显示/隐藏事件，隐藏时关闭右键菜单并清除拖动状态
+document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
         hideContextMenu();
         hideRenameDialog();
+        
+        // 立即清除拖动和resize状态，防止再次显示时保持这些状态
+        if (isDraggingPosition || isResizing) {
+            isDraggingPosition = false;
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.classList.remove('is-dragging', 'is-resizing');
+            if (elements.dragHandle) {
+                elements.dragHandle.style.cursor = '';
+            }
+            
+            // 清除超时
+            if (resizeEndTimeout) {
+                clearTimeout(resizeEndTimeout);
+                resizeEndTimeout = null;
+            }
+            
+            // 通知结束交互
+            await notifyUserInteracting(false);
+        }
     }
 });
 
@@ -633,13 +654,17 @@ let resizeDirection = '';
 let startX, startY, startWidth, startHeight, startWindowX, startWindowY;
 let resizeEndTimeout = null;
 const appWindow = getCurrentWindow();
+let screenBounds = { width: 1920, height: 1080 }; // 缓存屏幕尺寸
+let lastUpdateTime = 0; // 节流控制
 
 // 通知 Rust 端用户正在交互（拖动中）
 async function notifyUserInteracting(interacting) {
     try {
         window.__userInteracting = interacting;
+        // 通知Rust端，阻止热区在用户交互时隐藏窗口
+        await invoke('set_user_interacting', { interacting });
     } catch (e) {
-        // ignore
+        // 忽略错误，如果命令不存在就只设置本地标志
     }
 }
 
@@ -655,8 +680,49 @@ async function getWindowInfo() {
     };
 }
 
+// 获取并缓存屏幕边界信息
+async function updateScreenBounds() {
+    try {
+        const bounds = await invoke('get_screen_bounds');
+        if (bounds) {
+            screenBounds = bounds;
+        }
+    } catch (e) {
+        // 使用 DOM API 作为后备
+        screenBounds = {
+            width: window.screen.width * window.devicePixelRatio,
+            height: window.screen.height * window.devicePixelRatio
+        };
+    }
+}
+
+// 限制窗口位置在屏幕边界内
+function clampPosition(x, y, width, height) {
+    const margin = 10; // 边缘安全距离
+    return {
+        x: Math.max(margin, Math.min(screenBounds.width - width - margin, x)),
+        y: Math.max(margin, Math.min(screenBounds.height - height - margin, y))
+    };
+}
+
+// 限制窗口尺寸
+function clampSize(width, height) {
+    const minWidth = 400;
+    const minHeight = 300;
+    const maxWidth = screenBounds.width - 20;
+    const maxHeight = screenBounds.height - 20;
+    
+    return {
+        width: Math.max(minWidth, Math.min(maxWidth, width)),
+        height: Math.max(minHeight, Math.min(maxHeight, height))
+    };
+}
+
 document.querySelectorAll('.resize-handle').forEach(handle => {
     handle.addEventListener('mousedown', async (e) => {
+        // 防止与拖动冲突
+        if (isDraggingPosition) return;
+        
         isResizing = true;
         resizeDirection = handle.dataset.direction;
         startX = e.screenX;
@@ -669,7 +735,11 @@ document.querySelectorAll('.resize-handle').forEach(handle => {
         startWindowX = info.x;
         startWindowY = info.y;
         
+        // 更新屏幕边界
+        await updateScreenBounds();
+        
         document.body.style.cursor = getComputedStyle(handle).cursor;
+        document.body.classList.add('is-resizing');
         e.preventDefault();
         e.stopPropagation();
         
@@ -678,12 +748,18 @@ document.querySelectorAll('.resize-handle').forEach(handle => {
             clearTimeout(resizeEndTimeout);
             resizeEndTimeout = null;
         }
-        notifyUserInteracting(true);
+        // 立即通知正在交互，阻止热区隐藏
+        await notifyUserInteracting(true);
     });
 });
 
 document.addEventListener('mousemove', async (e) => {
     if (!isResizing) return;
+    
+    // 节流：限制更新频率为60fps
+    const now = Date.now();
+    if (now - lastUpdateTime < 16) return;
+    lastUpdateTime = now;
     
     const deltaX = e.screenX - startX;
     const deltaY = e.screenY - startY;
@@ -693,62 +769,81 @@ document.addEventListener('mousemove', async (e) => {
     let newX = startWindowX;
     let newY = startWindowY;
     
-    // 最小尺寸
-    const minWidth = 400;
-    const minHeight = 300;
-    
+    // 根据拖动方向计算新尺寸和位置
     switch (resizeDirection) {
         case 'r': // 右边
-            newWidth = Math.max(minWidth, startWidth + deltaX);
+            newWidth = startWidth + deltaX;
             break;
         case 'l': // 左边
-            newWidth = Math.max(minWidth, startWidth - deltaX);
+            const widthChange = startWidth - deltaX;
+            newWidth = widthChange;
             newX = startWindowX + deltaX;
-            if (newWidth === minWidth) {
-                newX = startWindowX + (startWidth - minWidth);
-            }
             break;
         case 'b': // 底部
-            newHeight = Math.max(minHeight, startHeight + deltaY);
+            newHeight = startHeight + deltaY;
             break;
         case 'br': // 右下角
-            newWidth = Math.max(minWidth, startWidth + deltaX);
-            newHeight = Math.max(minHeight, startHeight + deltaY);
+            newWidth = startWidth + deltaX;
+            newHeight = startHeight + deltaY;
             break;
         case 'bl': // 左下角
-            newWidth = Math.max(minWidth, startWidth - deltaX);
-            newHeight = Math.max(minHeight, startHeight + deltaY);
+            const widthChangebl = startWidth - deltaX;
+            newWidth = widthChangebl;
+            newHeight = startHeight + deltaY;
             newX = startWindowX + deltaX;
-            if (newWidth === minWidth) {
-                newX = startWindowX + (startWidth - minWidth);
-            }
             break;
     }
     
-    // 使用 Tauri API 调整窗口
+    // 应用尺寸限制
+    const clampedSize = clampSize(newWidth, newHeight);
+    newWidth = clampedSize.width;
+    newHeight = clampedSize.height;
+    
+    // 对于左侧拖动，如果宽度被限制，需要调整x位置
+    if (resizeDirection === 'l' || resizeDirection === 'bl') {
+        const actualWidthChange = newWidth - startWidth;
+        newX = startWindowX - actualWidthChange;
+    }
+    
+    // 应用位置限制
+    const clampedPos = clampPosition(newX, newY, newWidth, newHeight);
+    newX = clampedPos.x;
+    newY = clampedPos.y;
+    
+    // 使用 Tauri API 调整窗口（批量操作）
     try {
+        // 先设置尺寸，再设置位置，避免闪烁
+        await appWindow.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) });
+        
         if (resizeDirection === 'l' || resizeDirection === 'bl') {
             await appWindow.setPosition({ type: 'Physical', x: Math.round(newX), y: Math.round(newY) });
         }
-        await appWindow.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) });
     } catch (err) {
         console.error('调整窗口失败:', err);
     }
 });
 
-document.addEventListener('mouseup', () => {
+document.addEventListener('mouseup', async () => {
     if (isResizing) {
         isResizing = false;
         document.body.style.cursor = '';
+        document.body.classList.remove('is-resizing');
         
         // 保存用户偏好
-        saveUserPreferences();
+        await saveUserPreferences();
         
-        // 延迟 500ms 后才允许收缩
-        resizeEndTimeout = setTimeout(() => {
-            notifyUserInteracting(false);
+        // 延迟通知结束交互，给保存操作时间完成
+        resizeEndTimeout = setTimeout(async () => {
+            await notifyUserInteracting(false);
             resizeEndTimeout = null;
-        }, 500);
+        }, 300);
+    }
+});
+
+// 防止在调整大小时出现文本选择
+document.addEventListener('selectstart', (e) => {
+    if (isResizing || isDraggingPosition) {
+        e.preventDefault();
     }
 });
 
@@ -759,10 +854,14 @@ async function loadUserPreferences() {
     try {
         const prefs = localStorage.getItem('desktopOrganizerPrefs');
         if (prefs) {
-            const { width, height, expandedCategories } = JSON.parse(prefs);
-            // 使用 Tauri API 设置窗口尺寸
+            const { width, height, positionX, expandedCategories } = JSON.parse(prefs);
+            // 使用 Tauri API 设置窗口尺寸和位置
             if (width && height) {
                 await appWindow.setSize({ type: 'Physical', width, height });
+            }
+            if (positionX !== undefined) {
+                const position = await appWindow.innerPosition();
+                await appWindow.setPosition({ type: 'Physical', x: positionX, y: position.y });
             }
             if (expandedCategories) {
                 state.expandedCategories = new Set(expandedCategories);
@@ -776,16 +875,145 @@ async function loadUserPreferences() {
 async function saveUserPreferences() {
     try {
         const size = await appWindow.innerSize();
+        const position = await appWindow.innerPosition();
         const prefs = {
             width: size.width,
             height: size.height,
+            positionX: position.x,
             expandedCategories: Array.from(state.expandedCategories),
         };
         localStorage.setItem('desktopOrganizerPrefs', JSON.stringify(prefs));
+        
+        // 通知 Rust 端更新热区位置
+        try {
+            await invoke('update_hotzone_position', { 
+                x: position.x, 
+                width: size.width 
+            });
+        } catch (e) {
+            // 忽略，可能命令未注册
+        }
     } catch (error) {
         console.error('保存偏好失败:', error);
     }
 }
+
+// ============================================
+// 拖动改变位置（优化版）
+// ============================================
+let isDraggingPosition = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartWindowX = 0;
+let dragStartWindowY = 0;
+let dragStartWindowWidth = 0;
+let dragStartWindowHeight = 0;
+let dragLastUpdateTime = 0;
+let dragMoved = false; // 用于区分点击和拖动
+
+elements.dragHandle?.addEventListener('mousedown', async (e) => {
+    // 防止与resize冲突
+    if (isResizing) return;
+    
+    // 只响应左键
+    if (e.button !== 0) return;
+    
+    isDraggingPosition = true;
+    dragMoved = false;
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    
+    const position = await appWindow.innerPosition();
+    const size = await appWindow.innerSize();
+    dragStartWindowX = position.x;
+    dragStartWindowY = position.y;
+    dragStartWindowWidth = size.width;
+    dragStartWindowHeight = size.height;
+    
+    // 更新屏幕边界
+    await updateScreenBounds();
+    
+    document.body.style.cursor = 'grabbing';
+    document.body.classList.add('is-dragging');
+    elements.dragHandle.style.cursor = 'grabbing';
+    
+    // 立即通知正在交互，阻止热区隐藏
+    await notifyUserInteracting(true);
+    e.preventDefault();
+});
+
+document.addEventListener('mousemove', async (e) => {
+    if (!isDraggingPosition) return;
+    
+    const moveDistX = Math.abs(e.screenX - dragStartX);
+    const moveDistY = Math.abs(e.screenY - dragStartY);
+    
+    // 判断是否真正移动（防止误触）
+    if (!dragMoved && (moveDistX > 3 || moveDistY > 3)) {
+        dragMoved = true;
+    }
+    
+    if (!dragMoved) return;
+    
+    // 节流：限制更新频率为60fps
+    const now = Date.now();
+    if (now - dragLastUpdateTime < 16) return;
+    dragLastUpdateTime = now;
+    
+    const deltaX = e.screenX - dragStartX;
+    const deltaY = e.screenY - dragStartY;
+    
+    let newX = dragStartWindowX + deltaX;
+    let newY = dragStartWindowY + deltaY;
+    
+    // 应用边界限制
+    const clampedPos = clampPosition(newX, newY, dragStartWindowWidth, dragStartWindowHeight);
+    newX = clampedPos.x;
+    newY = clampedPos.y;
+    
+    // 磁吸效果：接近屏幕边缘时自动吸附
+    const snapDistance = 15;
+    if (Math.abs(newX) < snapDistance) newX = 0;
+    if (Math.abs(newY) < snapDistance) newY = 0;
+    if (Math.abs(newX + dragStartWindowWidth - screenBounds.width) < snapDistance) {
+        newX = screenBounds.width - dragStartWindowWidth;
+    }
+    if (Math.abs(newY + dragStartWindowHeight - screenBounds.height) < snapDistance) {
+        newY = screenBounds.height - dragStartWindowHeight;
+    }
+    
+    try {
+        await appWindow.setPosition({ 
+            type: 'Physical', 
+            x: Math.round(newX), 
+            y: Math.round(newY) 
+        });
+    } catch (err) {
+        console.error('移动窗口失败:', err);
+    }
+});
+
+document.addEventListener('mouseup', async () => {
+    if (isDraggingPosition) {
+        const wasDragging = isDraggingPosition;
+        isDraggingPosition = false;
+        document.body.style.cursor = '';
+        document.body.classList.remove('is-dragging');
+        elements.dragHandle.style.cursor = '';
+        
+        // 只有真正拖动过才保存
+        if (dragMoved) {
+            await saveUserPreferences();
+        }
+        
+        // 延迟通知结束交互，给保存操作时间完成
+        if (wasDragging) {
+            setTimeout(async () => {
+                await notifyUserInteracting(false);
+            }, 300);
+        }
+    }
+});
 
 // ============================================
 // 初始化
@@ -793,6 +1021,18 @@ async function saveUserPreferences() {
 async function init() {
     await loadUserPreferences();
     await loadDesktopFiles();
+    
+    // 初始化时同步热区位置
+    try {
+        const size = await appWindow.innerSize();
+        const position = await appWindow.innerPosition();
+        await invoke('update_hotzone_position', { 
+            x: position.x, 
+            width: size.width 
+        });
+    } catch (e) {
+        // 忽略错误
+    }
 }
 
 init();
