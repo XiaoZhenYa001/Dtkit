@@ -16,6 +16,8 @@
     <link rel="stylesheet" href="css/tools-library.css">
     <!-- 设置页面样式 -->
     <link rel="stylesheet" href="css/settings.css">
+    <!-- 存储与网络设置增强样式 -->
+    <link rel="stylesheet" href="css/storage-settings-enhanced.css">
     <!-- 下载页面样式 -->
     <link rel="stylesheet" href="css/downloads.css">
     <!-- 工具样式 -->
@@ -169,84 +171,161 @@
                 <div class="view-container">
                     <div class="settings-content">
                         
+                        <!-- 设置页面头部 -->
+                        <div class="settings-hero">
+                            <div class="settings-hero-content">
+                                <div class="settings-hero-icon">
+                                    <i class="ri-settings-3-line"></i>
+                                </div>
+                                <div class="settings-hero-text">
+                                    <h1 class="settings-hero-title">设置</h1>
+                                    <p class="settings-hero-desc">管理应用程序的偏好设置、快捷键和功能开关</p>
+                                </div>
+                            </div>
+                            <div class="settings-quick-nav">
+                                <a href="#storageSection" class="settings-quick-nav-item">
+                                    <i class="ri-hard-drive-2-line"></i>
+                                    <span>存储</span>
+                                </a>
+                                <a href="#shortcutsSection" class="settings-quick-nav-item">
+                                    <i class="ri-keyboard-box-line"></i>
+                                    <span>快捷键</span>
+                                </a>
+                                <a href="#desktopSection" class="settings-quick-nav-item">
+                                    <i class="ri-layout-grid-line"></i>
+                                    <span>桌面整理</span>
+                                </a>
+                                <a href="#generalSection" class="settings-quick-nav-item">
+                                    <i class="ri-toggle-line"></i>
+                                    <span>常规</span>
+                                </a>
+                            </div>
+                        </div>
+                        
                         <!-- 存储与网络 -->
-                        <section class="settings-section">
+                        <section class="settings-section" id="storageSection">
                             <div class="settings-section-header">
                                 <i class="ri-hard-drive-2-line"></i>
                                 <h2 class="settings-section-title">存储与网络</h2>
+                                <span class="settings-section-badge settings-section-badge--blue"><i class="ri-star-line"></i> 核心</span>
                             </div>
                             <div class="settings-section-content">
                                 
-                                <div class="settings-item">
-                                    <label class="settings-label">文件下载位置</label>
-                                    <div class="settings-input-group">
-                                        <input type="text" id="downloadPathInput" class="settings-input" placeholder="输入下载路径...">
-                                        <div class="settings-btn-group">
-                                            <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">更改目录</button>
-                                            <button id="browseDownloadPathBtn" class="settings-btn-icon" title="选择文件夹">
-                                                <i class="ri-folder-open-line"></i>
-                                            </button>
+                                <!-- 文件下载设置卡片 -->
+                                <div class="storage-card">
+                                    <div class="storage-card-header">
+                                        <div class="storage-card-icon">
+                                            <i class="ri-folder-download-line"></i>
+                                        </div>
+                                        <div class="storage-card-info">
+                                            <h3 class="storage-card-title">文件下载位置</h3>
+                                            <p class="storage-card-desc">设置工具生成的文件保存路径</p>
                                         </div>
                                     </div>
-                                    <div class="settings-checkbox">
-                                        <input type="checkbox" id="clean-files" class="checkbox">
-                                        <label for="clean-files" class="checkbox-label">退出时自动清理临时文件</label>
+                                    <div class="storage-card-body">
+                                        <div class="settings-input-group">
+                                            <i class="settings-input-icon ri-folder-2-line"></i>
+                                            <input type="text" id="downloadPathInput" class="settings-input" placeholder="例如: C:\Users\Downloads\DtKit">
+                                            <div class="settings-btn-group">
+                                                <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">
+                                                    <i class="ri-check-line"></i>
+                                                    <span>更改目录</span>
+                                                </button>
+                                                <button id="browseDownloadPathBtn" class="settings-btn-icon" title="浏览文件夹">
+                                                    <i class="ri-folder-open-line"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="storage-options">
+                                            <div class="settings-checkbox-wrapper">
+                                                <input type="checkbox" id="clean-files" class="settings-checkbox-input">
+                                                <label for="clean-files" class="settings-checkbox-label">
+                                                    <i class="ri-delete-bin-line"></i>
+                                                    <span>退出时自动清理临时文件</span>
+                                                </label>
+                                            </div>
+                                            <div class="settings-checkbox-wrapper">
+                                                <input type="checkbox" id="auto-open-folder" class="settings-checkbox-input">
+                                                <label for="auto-open-folder" class="settings-checkbox-label">
+                                                    <i class="ri-folder-open-line"></i>
+                                                    <span>下载完成后自动打开文件夹</span>
+                                                </label>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
                                 <hr class="settings-divider">
 
-                                <!-- 镜像源设置区域 -->
-                                <div class="settings-mirror-section">
-                                    <!-- 上部：镜像源选择 -->
-                                    <div class="settings-item settings-item--mirror">
-                                        <div class="settings-mirror-header">
-                                            <div class="settings-mirror-title">
-                                                <label class="settings-label">工具资源镜像源</label>
-                                                <span class="settings-label-sub">Mirror Source</span>
+                                <!-- 镜像源设置卡片 -->
+                                <div class="storage-card storage-card--mirror">
+                                    <div class="storage-card-header">
+                                        <div class="storage-card-icon storage-card-icon--network">
+                                            <i class="ri-global-line"></i>
+                                        </div>
+                                        <div class="storage-card-info">
+                                            <h3 class="storage-card-title">工具资源镜像源</h3>
+                                            <p class="storage-card-desc">加速 NPM 包、图片资源及插件的下载速度</p>
+                                        </div>
+                                        <span class="settings-status-badge" id="mirrorPingStatus">
+                                            <i class="ri-wifi-line"></i> <span>--</span>
+                                        </span>
+                                    </div>
+                                    <div class="storage-card-body">
+                                        <div class="mirror-select-wrapper">
+                                            <div class="settings-mirror-controls">
+                                                <div class="select-wrapper">
+                                                    <i class="select-icon ri-server-line"></i>
+                                                    <select id="mirrorSourceSelect" class="settings-select-enhanced" title="选择镜像源">
+                                                        <option value="official" data-url="https://registry.npmjs.org/">🌐 官方源 (Default)</option>
+                                                        <option value="aliyun" data-url="https://registry.npmmirror.com/" selected>⚡ 阿里云 (Aliyun) - 推荐</option>
+                                                        <option value="tencent" data-url="https://mirrors.cloud.tencent.com/npm/">🚀 腾讯云 (Tencent)</option>
+                                                        <option value="huawei" data-url="https://repo.huaweicloud.com/repository/npm/">☁️ 华为云 (Huawei)</option>
+                                                        <option value="custom" data-url="">⚙️ 自定义...</option>
+                                                    </select>
+                                                </div>
+                                                <button id="testMirrorSpeedBtn" class="settings-btn settings-btn--icon-text" title="测试延迟">
+                                                    <i class="ri-speed-line"></i>
+                                                    <span>测速</span>
+                                                </button>
                                             </div>
-                                            <span class="settings-status-badge" id="mirrorPingStatus">
-                                                <i class="ri-wifi-line"></i> <span>--</span>
-                                            </span>
                                         </div>
-                                        <div class="settings-mirror-controls">
-                                            <select id="mirrorSourceSelect" class="settings-select" title="选择镜像源">
-                                                <option value="official" data-url="https://registry.npmjs.org/">官方源 (Default)</option>
-                                                <option value="aliyun" data-url="https://registry.npmmirror.com/" selected>阿里云 (Aliyun)</option>
-                                                <option value="tencent" data-url="https://mirrors.cloud.tencent.com/npm/">腾讯云 (Tencent)</option>
-                                                <option value="huawei" data-url="https://repo.huaweicloud.com/repository/npm/">华为云 (Huawei)</option>
-                                                <option value="custom" data-url="">自定义...</option>
-                                            </select>
-                                            <button id="testMirrorSpeedBtn" class="settings-btn settings-btn--icon-text" title="测试延迟">
-                                                <i class="ri-speed-line"></i>
-                                                <span>测速</span>
-                                            </button>
-                                        </div>
+                                        
                                         <!-- 智能镜像检测开关 -->
                                         <div class="settings-toggle-row">
+                                            <div class="toggle-info">
+                                                <i class="ri-flashlight-line toggle-icon"></i>
+                                                <div class="toggle-text">
+                                                    <span class="settings-toggle-label">智能镜像检测</span>
+                                                    <span class="settings-toggle-hint">自动检测受限链接并选择最快镜像</span>
+                                                </div>
+                                            </div>
                                             <label class="settings-toggle">
                                                 <input type="checkbox" id="autoMirrorDetect" class="settings-toggle-input" checked>
                                                 <span class="settings-toggle-slider"></span>
                                             </label>
-                                            <span class="settings-toggle-label">智能镜像检测</span>
-                                            <span class="settings-toggle-hint">自动检测受限链接并选择最快镜像</span>
                                         </div>
-                                        <p class="settings-help-text">用于加速 NPM 包、图片资源及插件的下载。</p>
-                                    </div>
-                                    
-                                    <!-- 下部：自定义源配置 -->
-                                    <div class="settings-custom-source-box">
-                                        <button id="configCustomSourceBtn" class="settings-custom-source-btn">
-                                            <i class="ri-add-circle-line"></i>
-                                            <span>配置自定义源</span>
-                                        </button>
-                                        <p class="settings-custom-source-hint">支持多个镜像源备用切换</p>
+                                        
+                                        <!-- 自定义源配置 -->
+                                        <div class="settings-custom-source-box">
+                                            <div class="custom-source-content">
+                                                <i class="ri-add-circle-line custom-source-icon"></i>
+                                                <div class="custom-source-text">
+                                                    <span class="custom-source-title">配置自定义镜像源</span>
+                                                    <span class="custom-source-hint">支持多个镜像源备用切换</span>
+                                                </div>
+                                            </div>
+                                            <button id="configCustomSourceBtn" class="settings-custom-source-btn">
+                                                <i class="ri-settings-3-line"></i>
+                                                <span>配置</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </section>
                         <!-- 快捷键绑定 -->
-                        <section class="settings-section">
+                        <section class="settings-section" id="shortcutsSection">
                             <div class="settings-section-header">
                                 <i class="ri-keyboard-box-line"></i>
                                 <h2 class="settings-section-title">快捷键绑定</h2>
@@ -281,10 +360,11 @@
                         </section>
 
                         <!-- 配置规则管理 -->
-                        <section class="settings-section">
+                        <section class="settings-section" id="configSection">
                             <div class="settings-section-header">
                                 <i class="ri-database-2-line"></i>
                                 <h2 class="settings-section-title">配置规则管理</h2>
+                                <span class="settings-section-badge settings-section-badge--purple">数据</span>
                             </div>
                             <div class="settings-section-content">
                                 
@@ -313,11 +393,11 @@
                         </section>
 
                         <!-- 桌面整理 -->
-                        <section class="settings-section">
+                        <section class="settings-section settings-section--featured" id="desktopSection">
                             <div class="settings-section-header">
                                 <i class="ri-layout-grid-line"></i>
                                 <h2 class="settings-section-title">桌面整理</h2>
-                                <span class="settings-section-hint">主推功能</span>
+                                <span class="settings-section-badge settings-section-badge--gradient"><i class="ri-star-fill"></i> 主推功能</span>
                             </div>
                             <div class="settings-section-content">
                                 <div class="settings-toggle-item">
@@ -344,13 +424,13 @@
                                 </div>
                                 <div class="settings-info-text">
                                     <i class="ri-information-line"></i>
-                                    <span>开启或关闭此功能需要重启应用生效</span>
+                                    <span>此功能为测试性功能</span>
                                 </div>
                             </div>
                         </section>
 
                         <!-- 常规选项 -->
-                        <section class="settings-section">
+                        <section class="settings-section" id="generalSection">
                             <div class="settings-section-header">
                                 <i class="ri-toggle-line"></i>
                                 <h2 class="settings-section-title">常规选项</h2>
@@ -374,7 +454,23 @@
                         </section>
 
                         <div class="settings-footer">
-                            <p>DtKit v0.1.2 • Build 20251220</p>
+                            <div class="settings-footer-card">
+                                <div class="settings-footer-logo">
+                                    <i class="ri-box-3-line"></i>
+                                </div>
+                                <div class="settings-footer-info">
+                                    <span class="settings-footer-name">DtKit</span>
+                                    <span class="settings-footer-version">v0.1.2</span>
+                                </div>
+                                <div class="settings-footer-meta">
+                                    <span class="settings-footer-build">Build 20251220</span>
+                                    <span class="settings-footer-separator">•</span>
+                                    <a href="#" class="settings-footer-link">检查更新</a>
+                                    <span class="settings-footer-separator">•</span>
+                                    <a href="#" class="settings-footer-link">关于</a>
+                                </div>
+                            </div>
+                            <p class="settings-footer-copyright">Made with <i class="ri-heart-fill"></i> by XiaoZhen</p>
                         </div>
 
                     </div>

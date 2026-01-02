@@ -1,16 +1,20 @@
 # GitHub 仓库配置指南
 
+> 最后更新：2026年1月2日
+
 ## ✅ 已完成的本地配置
 
-### 分支创建状态
-```
-* main      - 生产分支（主分支）
-* develop   - 开发分支（测试分支）
-* dev       - 开发分支（备用开发分支）
-```
+### 分支策略
 
-所有分支已推送到 GitHub，你可以在这里查看：
-🔗 https://github.com/XiaoZhenYa001/Dtkit/branches
+| 分支 | 用途 | 说明 |
+|------|------|------|
+| `main` | 生产分支 | 稳定版本，仅接受 develop 合并 |
+| `develop` | 阶段开发分支 | 功能集成测试 |
+| `dev` | 日常开发分支 | 日常开发使用 |
+
+**工作流程**：`dev` → `develop` → `main`
+
+🔗 查看分支：https://github.com/XiaoZhenYa001/Dtkit/branches
 
 ---
 

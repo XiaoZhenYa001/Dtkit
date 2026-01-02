@@ -1,0 +1,480 @@
+/* ============================================
+   存储与网络设置优化样式
+   创建日期: 2026-01-02
+   ============================================ */
+
+/* ============================================
+   存储与网络卡片样式
+   ============================================ */
+.storage-card {
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    border: 1px solid var(--color-border-light);
+    border-radius: 1rem;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.storage-card:hover {
+    border-color: var(--color-border);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
+}
+
+.storage-card-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem 1.75rem;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.storage-card-icon {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.875rem;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.5rem;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    flex-shrink: 0;
+}
+
+.storage-card-icon--network {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.storage-card-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.storage-card-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    margin: 0 0 0.25rem 0;
+    letter-spacing: -0.01em;
+}
+
+.storage-card-desc {
+    font-size: 0.8125rem;
+    color: var(--color-text-tertiary);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.storage-card-body {
+    padding: 1.75rem;
+}
+
+/* ============================================
+   下载路径输入组增强
+   ============================================ */
+.settings-input-icon {
+    position: absolute;
+    left: 1.125rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--color-text-tertiary);
+    font-size: 1.125rem;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.settings-input-group .settings-input {
+    padding-left: 3rem !important;
+}
+
+.storage-options {
+    margin-top: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+}
+
+.settings-checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    padding: 0.875rem 1rem;
+    background: rgba(241, 245, 249, 0.5);
+    border-radius: 0.625rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.settings-checkbox-wrapper:hover {
+    background: rgba(241, 245, 249, 0.8);
+    transform: translateX(4px);
+}
+
+.settings-checkbox-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--color-primary);
+}
+
+.settings-checkbox-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    margin-left: 0.875rem;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.settings-checkbox-label i {
+    font-size: 1rem;
+    color: var(--color-text-tertiary);
+}
+
+/* ============================================
+   镜像源设置增强样式
+   ============================================ */
+.storage-card--mirror {
+    margin-top: 1.5rem;
+}
+
+.settings-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    border-radius: 1.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.settings-status-badge i {
+    font-size: 0.875rem;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+.mirror-select-wrapper {
+    margin-bottom: 1.25rem;
+}
+
+.settings-mirror-controls {
+    display: flex;
+    align-items: stretch;
+    gap: 0.875rem;
+}
+
+.select-wrapper {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.select-icon {
+    position: absolute;
+    left: 1.125rem;
+    color: var(--color-text-tertiary);
+    font-size: 1.125rem;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.settings-select-enhanced {
+    flex: 1;
+    width: 100%;
+    padding: 0.875rem 2.75rem 0.875rem 3rem !important;
+    background: var(--color-bg-primary);
+    border: 1.5px solid var(--color-border);
+    border-radius: 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1.25rem;
+}
+
+.settings-select-enhanced:hover {
+    border-color: var(--color-primary);
+    background-color: white;
+}
+
+.settings-select-enhanced:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    background-color: white;
+}
+
+/* 镜像源按钮样式 */
+.settings-btn--icon-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    background: linear-gradient(135deg, var(--color-primary) 0%, #1e40af 100%);
+    color: white;
+    border: none;
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    letter-spacing: 0.02em;
+}
+
+.settings-btn--icon-text:hover {
+    background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+}
+
+.settings-btn--icon-text:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.settings-btn--icon-text:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.settings-btn--icon-text i {
+    font-size: 1.125rem;
+}
+
+/* ============================================
+   智能镜像检测开关增强
+   ============================================ */
+.settings-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding: 1rem 1.25rem;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(37, 99, 235, 0.03) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    border-radius: 0.75rem;
+    transition: all 0.25s ease;
+}
+
+.settings-toggle-row:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(37, 99, 235, 0.05) 100%);
+    border-color: rgba(59, 130, 246, 0.25);
+    transform: translateX(2px);
+}
+
+.toggle-info {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    flex: 1;
+}
+
+.toggle-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.5rem;
+    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.125rem;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(251, 191, 36, 0.3);
+}
+
+.toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.settings-toggle-row .settings-toggle-label {
+    font-size: 0.9375rem;
+    color: var(--color-text-primary);
+    font-weight: 600;
+    margin: 0;
+}
+
+.settings-toggle-row .settings-toggle-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-tertiary);
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+}
+
+/* ============================================
+   自定义源配置框增强
+   ============================================ */
+.settings-custom-source-box {
+    margin-top: 1.25rem;
+    padding: 1.25rem 1.5rem;
+    background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
+    border: 2px dashed rgba(234, 179, 8, 0.3);
+    border-radius: 0.875rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-custom-source-box:hover {
+    border-color: rgba(234, 179, 8, 0.5);
+    background: linear-gradient(135deg, #fef9c3 0%, #fef08a 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(234, 179, 8, 0.15);
+}
+
+.custom-source-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1;
+}
+
+.custom-source-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.625rem;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.custom-source-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.custom-source-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+}
+
+.custom-source-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-tertiary);
+}
+
+.settings-custom-source-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    border: none;
+    border-radius: 0.625rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.settings-custom-source-btn:hover {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
+}
+
+.settings-custom-source-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.settings-custom-source-btn i {
+    font-size: 1.125rem;
+}
+
+/* ============================================
+   响应式优化
+   ============================================ */
+@media (max-width: 768px) {
+    .storage-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.875rem;
+        padding: 1.25rem 1.5rem;
+    }
+
+    .storage-card-icon {
+        width: 2.5rem;
+        height: 2.5rem;
+        font-size: 1.25rem;
+    }
+
+    .storage-card-body {
+        padding: 1.5rem;
+    }
+
+    .settings-mirror-controls {
+        flex-direction: column;
+    }
+
+    .settings-btn--icon-text {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .settings-toggle-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.875rem;
+    }
+
+    .toggle-info {
+        width: 100%;
+    }
+
+    .settings-custom-source-box {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .settings-custom-source-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
