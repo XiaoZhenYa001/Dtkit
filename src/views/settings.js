@@ -288,11 +288,13 @@ function showConfirmDialog(title, message) {
         messageEl.textContent = message;
         dialog.style.display = 'flex';
         
+        // 使用 AbortController 管理所有事件监听器
+        const abortController = new AbortController();
+        const { signal } = abortController;
+        
         const cleanup = () => {
             dialog.style.display = 'none';
-            confirmBtn.removeEventListener('click', onConfirm);
-            cancelBtn.removeEventListener('click', onCancel);
-            closeBtn.removeEventListener('click', onCancel);
+            abortController.abort(); // 自动移除所有事件监听器
         };
         
         const onConfirm = () => {
@@ -305,11 +307,34 @@ function showConfirmDialog(title, message) {
             resolve(false);
         };
         
-        confirmBtn.addEventListener('click', onConfirm);
-        cancelBtn.addEventListener('click', onCancel);
-        closeBtn.addEventListener('click', onCancel);
+        // 点击遮罩层关闭
+        const onOverlayClick = (e) => {
+            if (e.target === dialog) {
+                onCancel();
+            }
+        };
+        
+        // ESC 键关闭
+        const onKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                onCancel();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                onConfirm();
+            }
+        };
+        
+        confirmBtn.addEventListener('click', onConfirm, { signal });
+        cancelBtn.addEventListener('click', onCancel, { signal });
+        closeBtn.addEventListener('click', onCancel, { signal });
+        dialog.addEventListener('click', onOverlayClick, { signal });
+        document.addEventListener('keydown', onKeyDown, { signal });
     });
 }
+
+// 防止重复初始化的标记
+let desktopOrganizerSettingsInitialized = false;
 
 async function initDesktopOrganizerSettings() {
     const mainToggle = document.getElementById('desktopOrganizerToggle');
@@ -317,6 +342,10 @@ async function initDesktopOrganizerSettings() {
     const subSettings = document.getElementById('desktopOrganizerSubSettings');
     
     if (!mainToggle) return;
+    
+    // 防止重复初始化
+    if (desktopOrganizerSettingsInitialized) return;
+    desktopOrganizerSettingsInitialized = true;
     
     // 从本地存储加载设置
     const savedSettings = localStorage.getItem('dtkit_desktop_organizer');
