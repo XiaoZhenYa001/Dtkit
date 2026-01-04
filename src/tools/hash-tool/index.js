@@ -19,7 +19,8 @@ const hashState = {
     },
     uppercase: true,
     verifyHash: '',
-    unlistenProgress: null
+    unlistenProgress: null,
+    abortController: null  // 用于清理事件监听器
 };
 
 // ============================================
@@ -130,6 +131,12 @@ function getStyles() {
 async function init() {
     console.log('[HashTool] 初始化哈希工具');
     
+    // 清理之前的事件监听器
+    if (hashState.abortController) {
+        hashState.abortController.abort();
+    }
+    hashState.abortController = new AbortController();
+    
     // 绑定事件
     bindEvents();
     
@@ -141,10 +148,12 @@ async function init() {
 // 绑定事件
 // ============================================
 function bindEvents() {
+    const signal = hashState.abortController?.signal;
+    
     // 计算按钮
     const calculateBtn = document.getElementById('hashCalculateBtn');
     if (calculateBtn) {
-        calculateBtn.addEventListener('click', handleCalculate);
+        calculateBtn.addEventListener('click', handleCalculate, { signal });
     }
     
     // 文件上传区域
@@ -188,13 +197,13 @@ function bindEvents() {
                 // 浏览器环境使用原生 input
                 fileInput.click();
             }
-        });
+        }, { signal });
         
         fileInput.addEventListener('change', (e) => {
             if (e.target.files && e.target.files[0]) {
                 selectFile(e.target.files[0]);
             }
-        });
+        }, { signal });
         
         // 拖放支持
         fileUpload.addEventListener('dragover', (e) => {
@@ -202,11 +211,11 @@ function bindEvents() {
             if (!hashState.selectedFile) {
                 fileUpload.classList.add('dragover');
             }
-        });
+        }, { signal });
         
         fileUpload.addEventListener('dragleave', () => {
             fileUpload.classList.remove('dragover');
-        });
+        }, { signal });
         
         fileUpload.addEventListener('drop', (e) => {
             e.preventDefault();
@@ -216,7 +225,7 @@ function bindEvents() {
             if (e.dataTransfer.files && e.dataTransfer.files[0]) {
                 selectFile(e.dataTransfer.files[0]);
             }
-        });
+        }, { signal });
     }
     
     // 算法开关
@@ -225,7 +234,7 @@ function bindEvents() {
             const algo = sw.dataset.algo;
             hashState.algorithms[algo] = !hashState.algorithms[algo];
             sw.classList.toggle('active', hashState.algorithms[algo]);
-        });
+        }, { signal });
     });
     
     // 大写开关
@@ -238,7 +247,7 @@ function bindEvents() {
             if (Object.keys(hashState.results).length > 0) {
                 renderResults();
             }
-        });
+        }, { signal });
     }
     
     // 校验输入
@@ -247,7 +256,7 @@ function bindEvents() {
         verifyInput.addEventListener('input', (e) => {
             hashState.verifyHash = e.target.value.trim();
             verifyHash();
-        });
+        }, { signal });
     }
     
     // 文本输入变化时清除文件选择
@@ -257,7 +266,29 @@ function bindEvents() {
             if (textInput.value.trim() && hashState.selectedFile) {
                 clearFile();
             }
-        });
+        }, { signal });
+    }
+    
+    // 使用事件委托处理复制按钮点击（避免每次 renderResults 时重复绑定）
+    const resultsList = document.getElementById('hashResultsList');
+    if (resultsList) {
+        resultsList.addEventListener('click', async (e) => {
+            const copyBtn = e.target.closest('.hash-copy-btn');
+            if (copyBtn) {
+                const hash = copyBtn.dataset.hash;
+                try {
+                    await navigator.clipboard.writeText(hash);
+                    copyBtn.innerHTML = '<i class="ri-check-line"></i> 已复制';
+                    copyBtn.classList.add('copied');
+                    setTimeout(() => {
+                        copyBtn.innerHTML = '<i class="ri-file-copy-line"></i> 复制';
+                        copyBtn.classList.remove('copied');
+                    }, 1500);
+                } catch (err) {
+                    showToast('复制失败', 'error');
+                }
+            }
+        }, { signal });
     }
 }
 
@@ -573,23 +604,7 @@ function renderResults() {
     
     container.innerHTML = html;
     
-    // 绑定复制事件
-    container.querySelectorAll('.hash-copy-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const hash = btn.dataset.hash;
-            try {
-                await navigator.clipboard.writeText(hash);
-                btn.innerHTML = '<i class="ri-check-line"></i> 已复制';
-                btn.classList.add('copied');
-                setTimeout(() => {
-                    btn.innerHTML = '<i class="ri-file-copy-line"></i> 复制';
-                    btn.classList.remove('copied');
-                }, 1500);
-            } catch (err) {
-                showToast('复制失败', 'error');
-            }
-        });
-    });
+    // 注意：复制事件已通过事件委托在 bindEvents 中处理，无需在此重复绑定
 }
 
 // ============================================
@@ -685,6 +700,12 @@ function formatFileSize(bytes) {
 // ============================================
 function destroy() {
     console.log('[HashTool] 销毁哈希工具');
+    
+    // 取消所有事件监听器
+    if (hashState.abortController) {
+        hashState.abortController.abort();
+        hashState.abortController = null;
+    }
     
     // 清理进度监听
     if (hashState.unlistenProgress) {

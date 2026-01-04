@@ -14,7 +14,10 @@ let alarmState = {
     timers: {},             // 定时器映射 { taskId: intervalId }
     completedToday: 0,      // 今日完成数
     nextAlarmTime: null,    // 下一个提醒时间
-    countdownInterval: null // 全局倒计时更新定时器
+    countdownInterval: null, // 全局倒计时更新定时器
+    sortableInstance: null, // Sortable 实例引用（防止重复创建）
+    abortController: null,  // 用于清理事件监听器
+    audioContext: null      // 共享的 AudioContext 实例
 };
 
 // 标记工具是否已经初始化过（用于区分首次加载和标签页切换）
@@ -947,6 +950,12 @@ function getStyles() {
 function init() {
     console.log('[AlarmClock] 初始化定时闹钟工具');
     
+    // 清理之前的事件监听器（防止重复绑定）
+    if (alarmState.abortController) {
+        alarmState.abortController.abort();
+    }
+    alarmState.abortController = new AbortController();
+    
     // 只有首次加载时才从 localStorage 加载任务并启动定时器
     // 切换标签页回来时，任务和定时器已经在后台运行，只需刷新 UI
     if (!isToolInitialized) {
@@ -973,10 +982,12 @@ function init() {
 // 事件绑定
 // ============================================
 function bindEvents() {
+    const signal = alarmState.abortController?.signal;
+    
     // 任务类型切换
     const taskTypeSelect = document.getElementById('alarmTaskType');
     if (taskTypeSelect) {
-        taskTypeSelect.addEventListener('change', handleTaskTypeChange);
+        taskTypeSelect.addEventListener('change', handleTaskTypeChange, { signal });
         // 初始化显示
         handleTaskTypeChange();
     }
@@ -984,7 +995,7 @@ function bindEvents() {
     // 动作类型切换
     const actionTypeSelect = document.getElementById('alarmActionType');
     if (actionTypeSelect) {
-        actionTypeSelect.addEventListener('change', handleActionTypeChange);
+        actionTypeSelect.addEventListener('change', handleActionTypeChange, { signal });
         // 初始化显示
         handleActionTypeChange();
     }
@@ -992,7 +1003,7 @@ function bindEvents() {
     // 添加任务按钮
     const addBtn = document.getElementById('addTaskBtn');
     if (addBtn) {
-        addBtn.addEventListener('click', addTask);
+        addBtn.addEventListener('click', addTask, { signal });
     }
     
     // 重复开关
@@ -1018,7 +1029,7 @@ function bindEvents() {
                     }, 300);
                 }
             }
-        });
+        }, { signal });
     }
 }
 
@@ -1124,6 +1135,7 @@ function handleActionTypeChange() {
 // 声音选择绑定
 // ============================================
 function bindSoundOptions() {
+    const signal = alarmState.abortController?.signal;
     const options = document.querySelectorAll('.alarm-sound-option');
     options.forEach(option => {
         option.addEventListener('click', () => {
@@ -1131,7 +1143,7 @@ function bindSoundOptions() {
             option.classList.add('selected');
             // 预览播放声音
             playPreviewSound(option.dataset.soundId);
-        });
+        }, { signal });
     });
 }
 
@@ -1139,6 +1151,7 @@ function bindSoundOptions() {
 // 文件选择绑定
 // ============================================
 function bindFileSelector() {
+    const signal = alarmState.abortController?.signal;
     const selectBtn = document.getElementById('selectFileBtn');
     if (selectBtn) {
         selectBtn.addEventListener('click', async () => {
@@ -1162,17 +1175,27 @@ function bindFileSelector() {
                 console.error('[AlarmClock] 选择文件失败:', err);
                 showToast('选择文件失败', 'error');
             }
-        });
+        }, { signal });
     }
+}
+
+// ============================================
+// 获取或创建共享的 AudioContext
+// ============================================
+function getAudioContext() {
+    if (!alarmState.audioContext || alarmState.audioContext.state === 'closed') {
+        alarmState.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return alarmState.audioContext;
 }
 
 // ============================================
 // 播放预览声音
 // ============================================
 function playPreviewSound(soundId) {
-    // 创建音频上下文来生成简单的提示音
+    // 使用共享的音频上下文
     try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioContext = getAudioContext();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
         
@@ -1515,7 +1538,7 @@ function showNotification(task) {
 // ============================================
 function playAlarmSound(soundId) {
     try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioContext = getAudioContext();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
         
@@ -1687,7 +1710,13 @@ function initSortable() {
     const panel = document.getElementById('taskListPanel');
     if (!panel || !window.Sortable || alarmState.tasks.length === 0) return;
 
-    new Sortable(panel, {
+    // 销毁旧的 Sortable 实例（防止累积）
+    if (alarmState.sortableInstance) {
+        alarmState.sortableInstance.destroy();
+        alarmState.sortableInstance = null;
+    }
+
+    alarmState.sortableInstance = new Sortable(panel, {
         animation: 150,  // 动画速度稍微加快，体验更好
         handle: '.alarm-task-drag-handle',  // 只有点击手柄才能拖拽
         ghostClass: 'sortable-ghost',
@@ -1909,8 +1938,22 @@ function destroy() {
         alarmState.countdownInterval = null;
     }
     
+    // 销毁 Sortable 实例
+    if (alarmState.sortableInstance) {
+        alarmState.sortableInstance.destroy();
+        alarmState.sortableInstance = null;
+    }
+    
+    // 取消所有事件监听器
+    if (alarmState.abortController) {
+        alarmState.abortController.abort();
+        alarmState.abortController = null;
+    }
+    
     // 注意：不清除任务定时器，让它们在后台继续运行
     // 这样即使切换到其他工具，定时任务仍然会执行
+    
+    // 注意：不关闭 AudioContext，因为后台任务可能需要播放声音
 }
 
 // ============================================

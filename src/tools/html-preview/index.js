@@ -11,7 +11,8 @@ const previewState = {
     autoRefresh: true,
     refreshTimer: null,
     refreshDelay: 500,
-    isFullscreen: false
+    isFullscreen: false,
+    abortController: null  // 用于清理事件监听器
 };
 
 // ============================================
@@ -830,6 +831,12 @@ body {
 async function init() {
     console.log('[HTMLPreview] 初始化 HTML 预览工具');
     
+    // 清理之前的事件监听器
+    if (previewState.abortController) {
+        previewState.abortController.abort();
+    }
+    previewState.abortController = new AbortController();
+    
     bindEvents();
     refreshPreview();
 }
@@ -838,9 +845,11 @@ async function init() {
 // 绑定事件
 // ============================================
 function bindEvents() {
+    const signal = previewState.abortController?.signal;
+    
     // 标签页切换
     document.querySelectorAll('.panel-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+        tab.addEventListener('click', () => switchTab(tab.dataset.tab), { signal });
     });
 
     // 编辑器输入
@@ -852,7 +861,7 @@ function bindEvents() {
                 if (previewState.autoRefresh) {
                     debounceRefresh();
                 }
-            });
+            }, { signal });
 
             // Tab 键支持
             editor.addEventListener('keydown', (e) => {
@@ -863,20 +872,20 @@ function bindEvents() {
                     editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
                     editor.selectionStart = editor.selectionEnd = start + 4;
                 }
-            });
+            }, { signal });
         }
     });
 
     // 刷新按钮
     const refreshBtn = document.getElementById('refreshPreviewBtn');
     if (refreshBtn) {
-        refreshBtn.addEventListener('click', refreshPreview);
+        refreshBtn.addEventListener('click', refreshPreview, { signal });
     }
 
     // 清空按钮
     const clearBtn = document.getElementById('clearCodeBtn');
     if (clearBtn) {
-        clearBtn.addEventListener('click', clearCode);
+        clearBtn.addEventListener('click', clearCode, { signal });
     }
 
     // 自动刷新开关
@@ -884,21 +893,21 @@ function bindEvents() {
     if (autoRefreshToggle) {
         autoRefreshToggle.addEventListener('change', (e) => {
             previewState.autoRefresh = e.target.checked;
-        });
+        }, { signal });
     }
 
     // 全屏按钮
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
+        fullscreenBtn.addEventListener('click', toggleFullscreen, { signal });
     }
 
-    // ESC 键退出全屏
-    document.addEventListener('keydown', handleKeydown);
+    // ESC 键退出全屏（使用 signal 管理）
+    document.addEventListener('keydown', handleKeydown, { signal });
 
     // 示例按钮
     document.querySelectorAll('.html-preview-example-btn').forEach(btn => {
-        btn.addEventListener('click', () => loadExample(btn.dataset.example));
+        btn.addEventListener('click', () => loadExample(btn.dataset.example), { signal });
     });
 }
 
@@ -1073,9 +1082,15 @@ function loadExample(name) {
 function destroy() {
     if (previewState.refreshTimer) {
         clearTimeout(previewState.refreshTimer);
+        previewState.refreshTimer = null;
     }
-    // 移除键盘事件监听
-    document.removeEventListener('keydown', handleKeydown);
+    
+    // 取消所有事件监听器（包括键盘事件）
+    if (previewState.abortController) {
+        previewState.abortController.abort();
+        previewState.abortController = null;
+    }
+    
     // 如果在全屏状态，退出全屏
     if (previewState.isFullscreen) {
         previewState.isFullscreen = false;

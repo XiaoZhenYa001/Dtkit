@@ -9,6 +9,7 @@ let jsonState = {
     currentOutput: '',
     isValid: false,
     indent: 2,
+    abortController: null,
 };
 
 /**
@@ -258,6 +259,13 @@ function getStyles() {
  * 初始化 JSON 格式化工具
  */
 export function initJsonFormatterTool() {
+    // 清理之前的事件监听器
+    if (jsonState.abortController) {
+        jsonState.abortController.abort();
+    }
+    jsonState.abortController = new AbortController();
+    const { signal } = jsonState.abortController;
+
     const inputArea = document.getElementById('jsonInput');
     const outputArea = document.getElementById('jsonOutput');
     const formatBtn = document.getElementById('jsonFormatBtn');
@@ -272,27 +280,27 @@ export function initJsonFormatterTool() {
     inputArea.addEventListener('input', () => {
         jsonState.currentInput = inputArea.value;
         validateAndFormat();
-    });
+    }, { signal });
 
     // 格式化按钮
     if (formatBtn) {
         formatBtn.addEventListener('click', () => {
             formatJson();
-        });
+        }, { signal });
     }
 
     // 压缩按钮
     if (compressBtn) {
         compressBtn.addEventListener('click', () => {
             compressJson();
-        });
+        }, { signal });
     }
 
     // 复制输出按钮
     if (copyOutputBtn) {
         copyOutputBtn.addEventListener('click', () => {
             copyToClipboard(jsonState.currentOutput);
-        });
+        }, { signal });
     }
 
     // 粘贴按钮
@@ -306,7 +314,7 @@ export function initJsonFormatterTool() {
             } catch (err) {
                 console.error('无法读取剪贴板:', err);
             }
-        });
+        }, { signal });
     }
 
     // 清空按钮
@@ -318,7 +326,7 @@ export function initJsonFormatterTool() {
             jsonState.currentOutput = '';
             jsonState.isValid = false;
             updateStatus();
-        });
+        }, { signal });
     }
 
     updateStatus();
@@ -475,12 +483,15 @@ function updateStatus(errorMsg = null) {
 }
 
 export function destroyJsonFormatterTool() {
-    jsonState = {
-        currentInput: '',
-        currentOutput: '',
-        isValid: false,
-        indent: 2,
-    };
+    // 清理事件监听器
+    if (jsonState.abortController) {
+        jsonState.abortController.abort();
+        jsonState.abortController = null;
+    }
+    jsonState.currentInput = '';
+    jsonState.currentOutput = '';
+    jsonState.isValid = false;
+    jsonState.indent = 2;
 }
 
 registerTool({
