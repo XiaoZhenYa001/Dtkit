@@ -6,6 +6,7 @@ import { registerTool } from '../toolRegistry.js';
 
 let colorState = {
     currentColor: '#3b82f6',
+    abortController: null,
 };
 
 /**
@@ -224,6 +225,13 @@ const presetColors = [
  * 初始化颜色选择器工具
  */
 function initColorPickerTool() {
+    // 清理之前的事件监听器
+    if (colorState.abortController) {
+        colorState.abortController.abort();
+    }
+    colorState.abortController = new AbortController();
+    const { signal } = colorState.abortController;
+
     const colorInput = document.getElementById('colorInput');
     const colorPreview = document.getElementById('colorPreview');
     const hexInput = document.getElementById('hexInput');
@@ -241,7 +249,7 @@ function initColorPickerTool() {
     // 颜色选择器变化
     colorInput.addEventListener('input', (e) => {
         updateColor(e.target.value);
-    });
+    }, { signal });
 
     // HEX 输入
     hexInput.addEventListener('input', (e) => {
@@ -249,12 +257,12 @@ function initColorPickerTool() {
         if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
             updateColor(hex);
         }
-    });
+    }, { signal });
 
     // 复制按钮
-    copyHex?.addEventListener('click', () => copyToClipboard(hexInput.value, copyHex));
-    copyRgb?.addEventListener('click', () => copyToClipboard(rgbInput.value, copyRgb));
-    copyHsl?.addEventListener('click', () => copyToClipboard(hslInput.value, copyHsl));
+    copyHex?.addEventListener('click', () => copyToClipboard(hexInput.value, copyHex), { signal });
+    copyRgb?.addEventListener('click', () => copyToClipboard(rgbInput.value, copyRgb), { signal });
+    copyHsl?.addEventListener('click', () => copyToClipboard(hslInput.value, copyHsl), { signal });
 
     // 渲染预设颜色
     colorPresetsGrid.innerHTML = '';
@@ -263,9 +271,17 @@ function initColorPickerTool() {
         preset.className = 'color-preset';
         preset.style.backgroundColor = color;
         preset.title = color;
-        preset.addEventListener('click', () => updateColor(color));
+        preset.dataset.color = color;
         colorPresetsGrid.appendChild(preset);
     });
+
+    // 使用事件委托处理预设颜色点击，避免重复绑定
+    colorPresetsGrid.addEventListener('click', (e) => {
+        const preset = e.target.closest('.color-preset');
+        if (preset && preset.dataset.color) {
+            updateColor(preset.dataset.color);
+        }
+    }, { signal });
 
     // 初始化显示
     updateColor(colorState.currentColor);
@@ -350,6 +366,11 @@ function copyToClipboard(text, btn) {
 }
 
 function destroyColorPickerTool() {
+    // 清理事件监听器
+    if (colorState.abortController) {
+        colorState.abortController.abort();
+        colorState.abortController = null;
+    }
     console.log('[ColorPicker] 已销毁');
 }
 

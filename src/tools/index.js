@@ -38,11 +38,16 @@ import './base64-codec/index.js';           // Base64 编解码
 // === 设计与图像工具 ===
 import './color-picker/index.js';           // 颜色提取器
 import './qr-generator/index.js';           // 二维码生成器
+import './html-preview/index.js';           // HTML 代码预览
 import './image-compressor.js';             // 图片压缩（待迁移）
 import './favicon-generator.js';            // Favicon 生成器（待迁移）
 
 // === 其他实用工具 ===
-import './hash-calculator.js';              // Hash 计算（待迁移）
+import './hash-tool/index.js';              // Hash 计算（新版玻璃拟态）
+// import './hash-calculator.js';           // Hash 计算（旧版-已弃用）
 import './url-encoder.js';                  // URL 编解码（待迁移）
 import './crontab-explainer.js';            // Crontab 解释器（待迁移）
 import './unit-converter.js';               // 单位转换器（待迁移）
+
+// === 日常工具 ===
+import './alarm-clock/index.js';            // 定时闹钟

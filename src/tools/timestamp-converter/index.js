@@ -8,6 +8,8 @@ import { registerTool } from '../toolRegistry.js';
 
 // 定时器引用，用于清理
 let updateInterval = null;
+// 事件监听器控制器
+let abortController = null;
 
 /**
  * 获取工具的 HTML 模板
@@ -298,11 +300,16 @@ function initTimestampTool() {
     
     if (!currentTimestamp) return; // 如果不在时间戳视图中则返回
     
-    // 清理之前的定时器
+    // 清理之前的定时器和事件监听器
     if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
     }
+    if (abortController) {
+        abortController.abort();
+    }
+    abortController = new AbortController();
+    const signal = abortController.signal;
     
     // 更新当前时间
     function updateCurrentTime() {
@@ -319,7 +326,7 @@ function initTimestampTool() {
                     copyCurrentBtn.innerHTML = '<i class="ri-file-copy-line"></i>';
                 }, 1500);
             });
-        });
+        }, { signal });
     }
     
     // 时间戳转日期
@@ -405,9 +412,9 @@ function initTimestampTool() {
     }
     
     // 绑定事件
-    toDateBtn.addEventListener('click', handleToDate);
-    toTimestampBtn.addEventListener('click', handleToTimestamp);
-    nowBtn.addEventListener('click', handleUseNow);
+    toDateBtn.addEventListener('click', handleToDate, { signal });
+    toTimestampBtn.addEventListener('click', handleToTimestamp, { signal });
+    nowBtn.addEventListener('click', handleUseNow, { signal });
     
     // 渲染快速参考
     const quickReferences = [
@@ -430,7 +437,7 @@ function initTimestampTool() {
             const valueToUse = ref.value === 'now' ? Math.floor(Date.now() / 1000) : ref.value;
             timestampInput.value = valueToUse;
             toDateBtn.click();
-        });
+        }, { signal });
         
         quickReferenceGrid.appendChild(item);
     });
@@ -442,10 +449,10 @@ function initTimestampTool() {
     // 回车键触发转换
     timestampInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') toDateBtn.click();
-    });
+    }, { signal });
     dateInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') toTimestampBtn.click();
-    });
+    }, { signal });
 }
 
 /**
@@ -455,6 +462,10 @@ function destroyTimestampTool() {
     if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
+    }
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
     }
 }
 

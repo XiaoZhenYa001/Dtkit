@@ -35,6 +35,7 @@ import { updateBackForwardButtons, goBack, goForward, initNavigationListeners, s
 // ============================================
 import { renderToolLibrary, handleSearch, initSearchListener, setToolLibraryCallbacks } from './views/toolLibrary.js';
 import { renderFavoritesPage, updateClearFavoritesButton, initClearFavoritesListener, setFavoritesCallbacks } from './views/favorites.js';
+import { renderDownloadsPage, initDownloadsView } from './views/downloads.js';
 import { initSettings } from './views/settings.js';
 
 // ============================================
@@ -52,8 +53,8 @@ function syncNavButtonState() {
         if (activeTab.toolId === 'settings') {
             activeView = 'settings';
         } else if (activeTab.toolId) {
-            // 工具视图，不高亮任何导航按钮（或保持工具库高亮）
-            activeView = 'toolLibrary';
+            // 工具视图，根据 viewType 保持对应导航按钮高亮
+            activeView = activeTab.viewType || 'toolLibrary';
         } else {
             activeView = activeTab.viewType || 'toolLibrary';
         }
@@ -80,7 +81,10 @@ function updateContentView() {
     DOM.toolLibraryView?.classList.remove('view--active');
     DOM.favoritesView?.classList.remove('view--active');
     DOM.settingsView?.classList.remove('view--active');
-    if (DOM.searchContainer) DOM.searchContainer.style.display = 'none';
+    DOM.downloadsView?.classList.remove('view--active');
+    
+    // 默认隐藏导航栏
+    if (DOM.navbar) DOM.navbar.style.display = 'none';
     
     // 隐藏动态工具容器
     hideDynamicContainer();
@@ -94,6 +98,9 @@ function updateContentView() {
     else if (activeTab.toolId) {
         const tool = getTool(activeTab.toolId);
         if (tool) {
+            // 工具页面也显示导航栏（后退/前进按钮）
+            if (DOM.navbar) DOM.navbar.style.display = 'flex';
+            
             if (hasToolTemplate(activeTab.toolId)) {
                 renderToolView(activeTab.toolId);
                 showDynamicContainer();
@@ -108,13 +115,17 @@ function updateContentView() {
     }
     else if (appState.currentView === 'favorites') {
         DOM.favoritesView?.classList.add('view--active');
-        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
+        if (DOM.navbar) DOM.navbar.style.display = 'flex';
         renderFavoritesPage();
         appState.currentToolId = null;
         updateClearFavoritesButton();
+    } else if (appState.currentView === 'downloads') {
+        DOM.downloadsView?.classList.add('view--active');
+        renderDownloadsPage();
+        appState.currentToolId = null;
     } else {
         DOM.toolLibraryView?.classList.add('view--active');
-        if (DOM.searchContainer) DOM.searchContainer.style.display = 'flex';
+        if (DOM.navbar) DOM.navbar.style.display = 'flex';
         appState.currentToolId = null;
     }
     
@@ -142,10 +153,10 @@ function openTool(toolId, toolName, toolIcon) {
     activeTab.title = toolName;
     activeTab.icon = toolIcon;
     
-    // 添加到历史栈
+    // 添加到历史栈（保存 toolId 和 viewType）
     const historyIndex = activeTab.historyIndex + 1;
     activeTab.history = activeTab.history.slice(0, historyIndex);
-    activeTab.history.push(toolId);
+    activeTab.history.push({ toolId: toolId, viewType: activeTab.viewType });
     activeTab.historyIndex = activeTab.history.length - 1;
     
     appState.currentView = toolId;
@@ -184,9 +195,14 @@ function initNavButtonListeners() {
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
                 }
-            } else if (view === 'history') {
-                alert('历史功能即将推出');
-                return;
+            } else if (view === 'downloads') {
+                appState.currentView = 'downloads';
+                if (activeTab) {
+                    activeTab.toolId = null;
+                    activeTab.viewType = 'downloads';
+                    activeTab.title = '下载';
+                    activeTab.icon = 'ri-download-2-line';
+                }
             } else if (view === 'settings') {
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
                 
@@ -279,7 +295,7 @@ function initializeApp() {
     initAddTabListener();
     initClearFavoritesListener();
     
-    // 初始化设置（下载路径、快捷键）
+    // 初始化设置（下载路径、镜像源、快捷键）
     initSettings();
 }
 

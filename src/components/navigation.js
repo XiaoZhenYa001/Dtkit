@@ -37,13 +37,24 @@ export function goBack() {
     if (!activeTab || activeTab.historyIndex <= 0) return;
     
     activeTab.historyIndex--;
-    const toolId = activeTab.history[activeTab.historyIndex];
+    const historyItem = activeTab.history[activeTab.historyIndex];
+    
+    // 兼容旧格式（纯 toolId）和新格式（对象）
+    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
+    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
     
     if (toolId === null) {
-        appState.currentView = 'toolLibrary';
+        // 回到列表视图（工具库或收藏）
+        activeTab.viewType = viewType;
+        appState.currentView = viewType;
         activeTab.toolId = null;
-        activeTab.title = '工具库';
-        activeTab.icon = 'ri-apps-2-line';
+        if (viewType === 'favorites') {
+            activeTab.title = '收藏';
+            activeTab.icon = 'ri-star-line';
+        } else {
+            activeTab.title = '工具库';
+            activeTab.icon = 'ri-apps-2-line';
+        }
     } else {
         const tool = onGetTool ? onGetTool(toolId) : null;
         if (tool) {
@@ -67,13 +78,24 @@ export function goForward() {
     if (!activeTab || activeTab.historyIndex >= activeTab.history.length - 1) return;
     
     activeTab.historyIndex++;
-    const toolId = activeTab.history[activeTab.historyIndex];
+    const historyItem = activeTab.history[activeTab.historyIndex];
+    
+    // 兼容旧格式（纯 toolId）和新格式（对象）
+    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
+    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
     
     if (toolId === null) {
-        appState.currentView = 'toolLibrary';
+        // 回到列表视图（工具库或收藏）
+        activeTab.viewType = viewType;
+        appState.currentView = viewType;
         activeTab.toolId = null;
-        activeTab.title = '工具库';
-        activeTab.icon = 'ri-apps-2-line';
+        if (viewType === 'favorites') {
+            activeTab.title = '收藏';
+            activeTab.icon = 'ri-star-line';
+        } else {
+            activeTab.title = '工具库';
+            activeTab.icon = 'ri-apps-2-line';
+        }
     } else {
         const tool = onGetTool ? onGetTool(toolId) : null;
         if (tool) {

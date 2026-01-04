@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>桌面整理</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="panel" id="panel">
+        <!-- 拖动条 - 用于拖动改变弹窗位置 -->
+        <div class="drag-handle" id="dragHandle">
+            <div class="drag-indicator"></div>
+        </div>
+        
+        <!-- 搜索框 -->
+        <div class="search-container">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="search-input" id="searchInput" placeholder="搜索文件或输入 / 命令...">
+                <span class="search-shortcut">Ctrl+F</span>
+                <span class="search-clear" id="searchClear" style="display: none;">✕</span>
+            </div>
+            <div class="command-hint" id="commandHint">
+                命令: <code>/d</code>文档 <code>/p</code>图片 <code>/v</code>视频 <code>/f</code>文件夹 <code>/a</code>程序 <code>/z</code>压缩包
+            </div>
+        </div>
+
+        <!-- 分类列表 -->
+        <div class="category-list" id="categoryList">
+            <!-- 动态生成 -->
+        </div>
+
+        <!-- 搜索结果 -->
+        <div class="search-results" id="searchResults" style="display: none;">
+            <div class="search-results-header">
+                <span class="search-results-title">搜索结果</span>
+                <span class="search-results-count" id="searchResultsCount">0</span>
+            </div>
+            <div class="search-results-list" id="searchResultsList">
+                <!-- 动态生成 -->
+            </div>
+        </div>
+
+        <!-- 状态栏 -->
+        <div class="status-bar">
+            <span class="status-text" id="statusText">加载中...</span>
+            <div class="status-actions">
+                <button class="status-btn" id="refreshBtn" title="刷新">🔄</button>
+            </div>
+        </div>
+
+        <!-- 拖拽调整大小的手柄 -->
+        <div class="resize-handle resize-handle-l" data-direction="l"></div>
+        <div class="resize-handle resize-handle-r" data-direction="r"></div>
+        <div class="resize-handle resize-handle-b" data-direction="b"></div>
+        <div class="resize-handle resize-handle-bl" data-direction="bl"></div>
+        <div class="resize-handle resize-handle-br" data-direction="br"></div>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div class="context-menu" id="contextMenu" style="display: none;">
+        <div class="menu-item" data-action="open">
+            <span class="menu-icon">📂</span>
+            <span class="menu-text">打开</span>
+            <span class="menu-shortcut">Enter</span>
+        </div>
+        <div class="menu-item" data-action="locate">
+            <span class="menu-icon">📍</span>
+            <span class="menu-text">定位到文件</span>
+            <span class="menu-shortcut">Ctrl+L</span>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item" data-action="copy">
+            <span class="menu-icon">📋</span>
+            <span class="menu-text">复制路径</span>
+            <span class="menu-shortcut">Ctrl+C</span>
+        </div>
+        <div class="menu-item" data-action="cut">
+            <span class="menu-icon">✂️</span>
+            <span class="menu-text">剪切</span>
+            <span class="menu-shortcut">Ctrl+X</span>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item" data-action="rename">
+            <span class="menu-icon">✏️</span>
+            <span class="menu-text">重命名</span>
+            <span class="menu-shortcut">F2</span>
+        </div>
+    </div>
+
+    <!-- 重命名对话框 -->
+    <div class="rename-dialog" id="renameDialog" style="display: none;">
+        <div class="rename-dialog-content">
+            <div class="rename-dialog-title">重命名</div>
+            <input type="text" class="rename-input" id="renameInput">
+            <div class="rename-dialog-actions">
+                <button class="rename-btn rename-btn-cancel" id="renameCancelBtn">取消</button>
+                <button class="rename-btn rename-btn-confirm" id="renameConfirmBtn">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="main.js" type="module"></script>
+</body>
+</html>

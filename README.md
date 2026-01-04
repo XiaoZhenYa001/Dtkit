@@ -1,7 +1,11 @@
-# DToolBox - 桌面工具箱
+# DtKit - 桌面工具箱
 
-一个高效、易于扩展的桌面工具箱应用，采用 **Tauri + Web** 技术栈，基于模块化架构。
-## 换ai之前请阅读项目,理解布局与结构(完全遵守),不要再生成新的md文件了,太多了
+> 🔧 高效、易于扩展的桌面工具箱应用 | Tauri 2.0 + Web 技术栈 | 模块化架构
+
+[![Version](https://img.shields.io/badge/version-0.1.3-blue.svg)]()
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-orange.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
+
 ## 🎯 项目特点
 
 - ✅ **模块化设计** - 工具与框架分离，易于添加新工具
@@ -15,30 +19,56 @@
 ```
 DtKit/
 ├── src/
-│   ├── css/                      # 🎨 样式组件化
-│   │   ├── base.css             # 变量、重置、基础样式
-│   │   ├── layout.css           # 侧边栏、标签栏、工具栏
-│   │   ├── tools-library.css    # 工具库网格、卡片样式
-│   │   ├── tools/               # 各工具独立样式
-│   │   │   ├── timestamp-converter.css
-│   │   │   └── json-formatter.css
-│   │   └── responsive.css       # 响应式设计
+│   ├── index.html               # 🌐 前端入口页面
+│   ├── main.js                  # 📄 应用主框架
+│   │
+│   ├── assets/                  # 🎨 静态资源
+│   │   └── remixicon.css        # 图标库
+│   │
+│   ├── components/              # 🧩 UI 组件
+│   │   ├── navigation.js        # 导航组件
+│   │   ├── tabs.js              # 标签页组件
+│   │   └── toolCard.js          # 工具卡片组件
+│   │
+│   ├── core/                    # ⚙️ 核心模块
+│   │   ├── dom.js               # DOM 操作
+│   │   ├── mirrorSource.js      # 镜像源管理
+│   │   ├── state.js             # 状态管理
+│   │   └── utils.js             # 工具函数
+│   │
+│   ├── css/                     # 🎨 样式文件
+│   │   ├── base.css             # 基础样式
+│   │   ├── layout.css           # 布局样式
+│   │   ├── tools-library.css    # 工具库样式
+│   │   ├── responsive.css       # 响应式设计
+│   │   └── tools/               # 各工具独立样式
+│   │
+│   ├── desktop-organizer/       # 🗂️ 桌面整理模块（独立窗口）
+│   │   ├── index.html
+│   │   ├── main.js
+│   │   └── styles.css
 │   │
 │   ├── tools/                   # 🔧 工具模块目录
-│   │   ├── toolRegistry.js      # ⚙️  工具注册中心
-│   │   ├── index.js             # 📦 工具导入入口
-│   │   ├── timestamp-converter.js  # ✅ 时间戳工具（已实现）
-│   │   ├── json-formatter.js    # ✅ JSON 格式化（已实现）
-│   │   ├── base64-codec.js      # ⏳ Base64 编解码（模板）
-│   │   └── [other-tools].js     # 🔮 未来工具
+│   │   ├── toolRegistry.js      # 工具注册中心
+│   │   ├── index.js             # 工具导入入口
+│   │   ├── _TOOL_TEMPLATE/      # 工具模板
+│   │   └── [tool-name]/         # 各工具模块
 │   │
-│   ├── main.js                  # 📄 应用框架（精简后 326 行）
-│   ├── index.html               # 🌐 前端页面
-│   └── [assets, etc.]
+│   └── views/                   # 📄 视图模块
+│       ├── downloads.js         # 下载视图
+│       ├── favorites.js         # 收藏视图
+│       ├── settings.js          # 设置视图
+│       └── toolLibrary.js       # 工具库视图
 │
-├── src-tauri/                   # 🦀 Tauri 后端配置
-├── package.json
-├── PROJECT_SUMMARY.md           # 📚 项目总结文档
+├── src-tauri/                   # 🦀 Tauri 后端
+│   ├── src/
+│   │   ├── main.rs              # Rust 入口
+│   │   ├── lib.rs               # 库模块
+│   │   └── desktop/             # 桌面整理后端
+│   ├── tauri.conf.json          # Tauri 配置
+│   └── Cargo.toml               # Rust 依赖
+│
+├── package.json                 # 📦 npm 配置
 └── README.md                    # 📝 本文件
 ```
 
@@ -61,53 +91,53 @@ npm run tauri build
 
 ## 📖 开发指南
 
-本项目采用**模块化 + 组件化**架构，新工具添加流程标准化。
+本项目采用**模块化 + 组件化**架构。
 
-### 核心概念
+### 核心模块
 
-#### 1. 工具注册中心 (`src/tools/toolRegistry.js`)
-统一的工具生命周期管理（注册、初始化、销毁）
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| 工具注册中心 | `src/tools/toolRegistry.js` | 工具生命周期管理 |
+| 应用框架 | `src/main.js` | 标签页、视图切换 |
+| 工具模块 | `src/tools/*/index.js` | 独立的工具逻辑 |
+| 样式文件 | `src/css/tools/*.css` | 工具独立样式 |
 
-#### 2. 应用框架 (`src/main.js`)
-提供标签页、视图切换等框架功能，不包含工具逻辑
+## 🛠️ 添加新工具
 
-#### 3. 工具模块 (`src/tools/*.js`)
-独立的 ES6 模块，每个工具自包含业务逻辑
-
-#### 4. 工具样式 (`src/css/tools/*.css`)
-每个工具独立的 CSS 文件，无需修改现有样式
-
-## 🛠️ 快速添加新工具（5-10 分钟）
-
-📖 **详细指南**: 查看 [`TOOL_FORMAT_GUIDE.md`](TOOL_FORMAT_GUIDE.md) 获取完整的标准化工具实现流程
-
-**快速清单** (修改 5 个文件):
-1. ✏️ `src/tools/tool-name.js` - 工具逻辑（~150 行）
-2. 🎨 `src/css/tools/tool-name.css` - 工具样式（~90 行）
-3. 📄 `src/index.html` - 添加 HTML 视图（~80 行）
-4. 📦 `src/tools/index.js` - 导入工具（1 行）
-5. ⚙️ `src/main.js` - 配置视图切换（3-5 行）
-
-**参考示例**:
-- 新格式标准: `src/tools/base64-codec.js` + 相关文件 ✨
-- 详细模板: [`TOOL_FORMAT_GUIDE.md`](TOOL_FORMAT_GUIDE.md) 中的代码模板
+1. 复制 `src/tools/_TOOL_TEMPLATE/` 目录
+2. 重命名为新工具名称
+3. 实现 `index.js` 中的 `init()` 和 `destroy()` 方法
+4. 在 `src/tools/index.js` 中导入新工具
+5. 在 `src/index.html` 中添加 HTML 视图
 
 ## 📊 当前工具列表
 
-### ✅ 已实现 (3 个)
-- **时间戳转换** - Unix 时间戳与日期相互转换
-- **JSON 格式化** - JSON 校验、格式化、压缩、着色显示
-- **Base64 编解码** - 文本 Base64 编码/解码，自动检测格式
+### ✅ 已实现 (12 个)
+
+| 工具 | 说明 | 目录 |
+|------|------|------|
+| ⏰ 时间戳转换 | Unix 时间戳与日期相互转换 | `timestamp-converter/` |
+| 📝 JSON 格式化 | JSON 校验、格式化、压缩、着色显示 | `json-formatter/` |
+| 🔐 Base64 编解码 | 文本 Base64 编码/解码 | `base64-codec/` |
+| #️⃣ Hash 计算 | MD5/SHA 哈希计算 | `hash-tool/` |
+| 🎨 颜色选择器 | 颜色拾取与格式转换 | `color-picker/` |
+| 📱 二维码生成 | 生成自定义二维码 | `qr-generator/` |
+| ⏰ 闹钟工具 | 定时提醒功能 | `alarm-clock/` |
+| 🌐 HTML 预览 | 实时预览 HTML 代码 | `html-preview/` |
+| 🔗 URL 编码 | URL 编码/解码 | `url-encoder.js` |
+| 📐 单位换算 | 常用单位转换 | `unit-converter.js` |
+| 🖼️ 图片压缩 | 图片压缩优化 | `image-compressor.js` |
+| 📅 Cron 表达式 | Crontab 表达式解析 | `crontab-explainer.js` |
+| 🌟 Favicon 生成 | 网站图标生成 | `favicon-generator.js` |
 
 ### ⏳ 计划中
-- 二维码生成
-- 正则表达式测试
-- 颜色提取器
-- 图片压缩
-- Hash 计算 (MD5/SHA)
-- URL 编码/解码
-- 单位换算
-- 等等...
+- 🔍 正则表达式测试
+- 📝 Markdown 预览
+- 🔤 文本差异对比
+- 🌐 IP 查询工具
+- 📊 代码统计
+- 🔄 进制转换
+- 📑 文本格式化
 
 ## 🏗️ 架构优势
 
@@ -128,44 +158,22 @@ npm run tauri build
 
 ## 📚 相关文档
 
-- **[TOOL_FORMAT_GUIDE.md](./TOOL_FORMAT_GUIDE.md)** - 🏗️ 标准化工具实现流程（必读）
-- **[PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md)** - 项目总结和路线图
-- **[src/tools/base64-codec.js](./src/tools/base64-codec.js)** - 新格式工具示例 ✨
-- **[src/tools/toolRegistry.js](./src/tools/toolRegistry.js)** - 工具注册中心 API
+- [版本说明与各类说明.md](版本说明与各类说明.md) - 版本管理与开发规范
+- [DESKTOP_ORGANIZER_DESIGN.md](DESKTOP_ORGANIZER_DESIGN.md) - 桌面整理设计文档
+- [GITHUB_CONFIGURATION.md](GITHUB_CONFIGURATION.md) - GitHub 配置指南
+- [待添加功能.md](待添加功能.md) - 功能规划清单
 
-## 💡 最佳实践
+## � 项目信息
 
-✅ **必读** [`TOOL_FORMAT_GUIDE.md`](./TOOL_FORMAT_GUIDE.md) 了解标准化流程  
-✅ **参考** `base64-codec.js` 作为新工具实现模板 ✨  
-✅ **遵循** 命名规范和代码模板  
-✅ **使用** 提供的文件模板加速开发  
-✅ **测试** 新工具的初始化和销毁流程  
-✅ **清理** 资源（定时器、事件监听等）  
+| 项目 | 说明 |
+|------|------|
+| 技术栈 | Tauri 2.0 + HTML/CSS/JavaScript |
+| 模块系统 | ES6 Modules |
+| 样式规范 | CSS 变量 + BEM 命名 |
+| 图标库 | Remixicon |
+| 后端 | Rust 1.70+ |
 
-## ❓ 遇到问题？
 
-常见问题和排查方法详见 [`TOOL_FORMAT_GUIDE.md#-常见错误`](./TOOL_FORMAT_GUIDE.md#-常见错误)
 
-## 📝 项目信息
-
-- **技术栈**: Tauri + HTML/CSS/JavaScript (Vanilla)
-- **模块系统**: ES6 Modules
-- **样式框架**: CSS 变量 + BEM 命名
-- **图标库**: Remixicon (CDN)
-- **Node 版本**: 14+
-- **Rust 版本**: 1.70+
-
-## 🎉 快速导航
-
-| 需求 | 查看文件 |
-|------|---------|
-| 🔧 想添加新工具？ | 👉 [TOOL_FORMAT_GUIDE.md](./TOOL_FORMAT_GUIDE.md) |
-| 📊 想了解项目状态？ | 👉 [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) |
-| 💻 想看代码示例？ | 👉 [src/tools/base64-codec.js](./src/tools/base64-codec.js) ✨ |
-| 🏗️ 想查架构文档？ | 👉 [TOOL_FORMAT_GUIDE.md#-文件模板标准](./TOOL_FORMAT_GUIDE.md#-文件模板标准) |
-| 🐛 想排查问题？ | 👉 [TOOL_FORMAT_GUIDE.md#-常见错误](./TOOL_FORMAT_GUIDE.md#-常见错误) |
-
----
-
-**最后更新**: 2025 年 12 月 15 日  
-**当前版本**: 0.1.0
+**最后更新**: 2026 年 1 月 2 日  
+**当前版本**: 0.1.3

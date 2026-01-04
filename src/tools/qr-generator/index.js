@@ -11,6 +11,7 @@ import { showToast } from '../../core/utils.js';
 let qrState = {
     qrCode: null,
     isFirstInit: true,  // 标记是否首次初始化
+    abortController: null,  // 用于清理事件监听器
     currentOptions: {
         data: 'https://github.com',
         width: 300,
@@ -784,7 +785,7 @@ function browserDownload(blob, filename, format) {
 /**
  * 同步颜色输入
  */
-function syncColorInput(colorInputId, textInputId) {
+function syncColorInput(colorInputId, textInputId, signal) {
     const colorInput = document.getElementById(colorInputId);
     const textInput = document.getElementById(textInputId);
     
@@ -792,14 +793,14 @@ function syncColorInput(colorInputId, textInputId) {
 
     colorInput.addEventListener('input', () => {
         textInput.value = colorInput.value.toUpperCase();
-    });
+    }, { signal });
 
     textInput.addEventListener('input', () => {
         const value = textInput.value;
         if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
             colorInput.value = value;
         }
-    });
+    }, { signal });
 }
 
 /**
@@ -807,6 +808,13 @@ function syncColorInput(colorInputId, textInputId) {
  */
 async function initQRGeneratorTool() {
     console.log('[QRGenerator] 初始化中...');
+
+    // 清理之前的事件监听器
+    if (qrState.abortController) {
+        qrState.abortController.abort();
+    }
+    qrState.abortController = new AbortController();
+    const { signal } = qrState.abortController;
 
     // 获取 DOM 元素
     const dataInput = document.getElementById('qrDataInput');
@@ -846,76 +854,76 @@ async function initQRGeneratorTool() {
     }
 
     // 同步颜色输入框
-    syncColorInput('dotsColorInput', 'dotsColorText');
-    syncColorInput('cornersSquareColorInput', 'cornersSquareColorText');
-    syncColorInput('cornersDotColorInput', 'cornersDotColorText');
-    syncColorInput('bgColorInput', 'bgColorText');
+    syncColorInput('dotsColorInput', 'dotsColorText', signal);
+    syncColorInput('cornersSquareColorInput', 'cornersSquareColorText', signal);
+    syncColorInput('cornersDotColorInput', 'cornersDotColorText', signal);
+    syncColorInput('bgColorInput', 'bgColorText', signal);
 
     // 数据输入变化
     dataInput?.addEventListener('input', () => {
         qrState.currentOptions.data = dataInput.value || 'https://github.com';
-    });
+    }, { signal });
 
     // 码点样式变化
     dotsTypeSelect?.addEventListener('change', () => {
         qrState.currentOptions.dotsType = dotsTypeSelect.value;
-    });
+    }, { signal });
 
     dotsColorInput?.addEventListener('input', () => {
         qrState.currentOptions.dotsColor = dotsColorInput.value;
-    });
+    }, { signal });
 
     dotsColorText?.addEventListener('change', () => {
         if (/^#[0-9A-Fa-f]{6}$/.test(dotsColorText.value)) {
             qrState.currentOptions.dotsColor = dotsColorText.value;
         }
-    });
+    }, { signal });
 
     // 定位角外框样式变化
     cornersSquareTypeSelect?.addEventListener('change', () => {
         qrState.currentOptions.cornersSquareType = cornersSquareTypeSelect.value;
-    });
+    }, { signal });
 
     cornersSquareColorInput?.addEventListener('input', () => {
         qrState.currentOptions.cornersSquareColor = cornersSquareColorInput.value;
-    });
+    }, { signal });
 
     cornersSquareColorText?.addEventListener('change', () => {
         if (/^#[0-9A-Fa-f]{6}$/.test(cornersSquareColorText.value)) {
             qrState.currentOptions.cornersSquareColor = cornersSquareColorText.value;
         }
-    });
+    }, { signal });
 
     // 定位角内点样式变化
     cornersDotTypeSelect?.addEventListener('change', () => {
         qrState.currentOptions.cornersDotType = cornersDotTypeSelect.value;
-    });
+    }, { signal });
 
     cornersDotColorInput?.addEventListener('input', () => {
         qrState.currentOptions.cornersDotColor = cornersDotColorInput.value;
-    });
+    }, { signal });
 
     cornersDotColorText?.addEventListener('change', () => {
         if (/^#[0-9A-Fa-f]{6}$/.test(cornersDotColorText.value)) {
             qrState.currentOptions.cornersDotColor = cornersDotColorText.value;
         }
-    });
+    }, { signal });
 
     // 背景颜色变化
     bgColorInput?.addEventListener('input', () => {
         qrState.currentOptions.backgroundColor = bgColorInput.value;
-    });
+    }, { signal });
 
     bgColorText?.addEventListener('change', () => {
         if (/^#[0-9A-Fa-f]{6}$/.test(bgColorText.value)) {
             qrState.currentOptions.backgroundColor = bgColorText.value;
         }
-    });
+    }, { signal });
 
     // Logo 上传
     uploadLogoBtn?.addEventListener('click', () => {
         logoFileInput?.click();
-    });
+    }, { signal });
 
     logoFileInput?.addEventListener('change', (e) => {
         const file = e.target.files?.[0];
@@ -939,7 +947,7 @@ async function initQRGeneratorTool() {
             };
             reader.readAsDataURL(file);
         }
-    });
+    }, { signal });
 
     // 清除 Logo
     clearLogoBtn?.addEventListener('click', () => {
@@ -953,7 +961,7 @@ async function initQRGeneratorTool() {
         }
         clearLogoBtn.style.display = 'none';
         showToast('Logo 已清除', 'info');
-    });
+    }, { signal });
 
     // Logo 大小滑块
     logoSizeSlider?.addEventListener('input', () => {
@@ -962,28 +970,28 @@ async function initQRGeneratorTool() {
         if (logoSizeValue) {
             logoSizeValue.textContent = `${Math.round(value * 100)}%`;
         }
-    });
+    }, { signal });
 
     // 尺寸输入
     qrWidthInput?.addEventListener('change', () => {
         const value = parseInt(qrWidthInput.value) || 300;
         qrState.currentOptions.width = Math.min(Math.max(value, 100), 1000);
         qrWidthInput.value = qrState.currentOptions.width;
-    });
+    }, { signal });
 
     qrHeightInput?.addEventListener('change', () => {
         const value = parseInt(qrHeightInput.value) || 300;
         qrState.currentOptions.height = Math.min(Math.max(value, 100), 1000);
         qrHeightInput.value = qrState.currentOptions.height;
-    });
+    }, { signal });
 
     // 生成按钮
-    generateQrBtn.addEventListener('click', generateQRCode);
+    generateQrBtn.addEventListener('click', generateQRCode, { signal });
 
     // 下载按钮
-    downloadPngBtn?.addEventListener('click', () => downloadQRCode('png'));
-    downloadSvgBtn?.addEventListener('click', () => downloadQRCode('svg'));
-    downloadJpegBtn?.addEventListener('click', () => downloadQRCode('jpeg'));
+    downloadPngBtn?.addEventListener('click', () => downloadQRCode('png'), { signal });
+    downloadSvgBtn?.addEventListener('click', () => downloadQRCode('svg'), { signal });
+    downloadJpegBtn?.addEventListener('click', () => downloadQRCode('jpeg'), { signal });
 
     // 初始生成一个二维码（只有首次初始化才显示Toast）
     await generateQRCode(qrState.isFirstInit);
@@ -997,6 +1005,12 @@ async function initQRGeneratorTool() {
  */
 function destroyQRGeneratorTool() {
     console.log('[QRGenerator] 销毁中...');
+    
+    // 清理事件监听器
+    if (qrState.abortController) {
+        qrState.abortController.abort();
+        qrState.abortController = null;
+    }
     
     // 清理二维码实例
     if (qrState.qrCode) {

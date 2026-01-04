@@ -2,6 +2,7 @@
  * 工具卡片组件
  */
 import appState, { toggleFavorite, isFavorited } from '../core/state.js';
+import { isDragging } from '../views/favorites.js';
 
 /**
  * 创建工具卡片元素
@@ -21,6 +22,9 @@ export function createToolCard(tool, onOpenTool) {
         <button class="tool-card__favorite ${favorited ? 'tool-card__favorite--active' : ''}" title="${favorited ? '取消收藏' : '收藏'}">
             <i class="ri-star-fill"></i>
         </button>
+        <button class="tool-card__drag-handle" title="拖动调整顺序" style="display: none;">
+            <i class="ri-draggable"></i>
+        </button>
         <div class="tool-card__header">
             <div class="tool-card__icon ${colorClass}">
                 <i class="${tool.icon}"></i>
@@ -39,9 +43,12 @@ export function createToolCard(tool, onOpenTool) {
         updateFavoriteButton(favoriteBtn, tool.id);
     });
     
-    // 卡片整体点击打开工具
+    // 卡片整体点击打开工具 - 拖动状态时不触发
     card.addEventListener('click', (e) => {
-        if (e.target !== favoriteBtn && !e.target.closest('.tool-card__favorite')) {
+        // 如果正在拖动，不触发点击
+        if (isDragging()) return;
+        
+        if (e.target !== favoriteBtn && !e.target.closest('.tool-card__favorite') && !e.target.closest('.tool-card__drag-handle')) {
             if (onOpenTool) {
                 onOpenTool(tool.id, tool.name, tool.icon);
             }

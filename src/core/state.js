@@ -12,7 +12,7 @@ function createDefaultTab() {
         toolId: null,
         viewType: 'toolLibrary', // toolLibrary | favorites | settings
         active: true,
-        history: [null],
+        history: [{ toolId: null, viewType: 'toolLibrary' }],
         historyIndex: 0
     };
 }
@@ -103,7 +103,7 @@ export function createNewTabConfig() {
         toolId: null,
         viewType: 'toolLibrary', // toolLibrary | favorites | settings
         active: false,
-        history: [null],
+        history: [{ toolId: null, viewType: 'toolLibrary' }],
         historyIndex: 0
     };
 }

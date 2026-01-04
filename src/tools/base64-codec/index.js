@@ -7,6 +7,7 @@ import { registerTool } from '../toolRegistry.js';
 let base64State = {
     currentText: '',
     currentEncoded: '',
+    abortController: null,
 };
 
 /**
@@ -240,6 +241,13 @@ function getStyles() {
  * 初始化 Base64 工具
  */
 export function initBase64Tool() {
+    // 清理之前的事件监听器
+    if (base64State.abortController) {
+        base64State.abortController.abort();
+    }
+    base64State.abortController = new AbortController();
+    const { signal } = base64State.abortController;
+
     const inputArea = document.getElementById('base64Input');
     const outputArea = document.getElementById('base64Output');
     const encodeBtn = document.getElementById('base64EncodeBtn');
@@ -255,34 +263,34 @@ export function initBase64Tool() {
         base64State.currentText = inputArea.value;
         autoConvert();
         updateStats();
-    });
+    }, { signal });
 
     // 手动编码
     if (encodeBtn) {
         encodeBtn.addEventListener('click', () => {
             encodeBase64();
-        });
+        }, { signal });
     }
 
     // 手动解码
     if (decodeBtn) {
         decodeBtn.addEventListener('click', () => {
             decodeBase64();
-        });
+        }, { signal });
     }
 
     // 复制输出
     if (copyBtn) {
         copyBtn.addEventListener('click', () => {
             copyToClipboard(outputArea.value, copyBtn);
-        });
+        }, { signal });
     }
 
     // 复制输入
     if (copyInputBtn) {
         copyInputBtn.addEventListener('click', () => {
             copyToClipboard(inputArea.value, copyInputBtn);
-        });
+        }, { signal });
     }
 
     // 清空
@@ -293,7 +301,7 @@ export function initBase64Tool() {
             base64State.currentText = '';
             base64State.currentEncoded = '';
             updateStats();
-        });
+        }, { signal });
     }
 
     updateStats();
@@ -407,10 +415,13 @@ function updateStats() {
 }
 
 export function destroyBase64Tool() {
-    base64State = {
-        currentText: '',
-        currentEncoded: '',
-    };
+    // 清理事件监听器
+    if (base64State.abortController) {
+        base64State.abortController.abort();
+        base64State.abortController = null;
+    }
+    base64State.currentText = '';
+    base64State.currentEncoded = '';
 }
 
 registerTool({
