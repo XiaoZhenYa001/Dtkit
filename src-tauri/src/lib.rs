@@ -200,6 +200,113 @@ fn run_command(cmd: String, args: Vec<String>) -> Result<String, String> {
     }
 }
 
+// ============================================
+// 闹钟音频文件管理
+// ============================================
+
+#[derive(Serialize, Deserialize)]
+struct AudioFileInfo {
+    name: String,
+    path: String,
+    size: u64,
+}
+
+/// 扫描Kit/clock文件夹中的音频文件
+#[tauri::command]
+fn scan_audio_files(app: AppHandle) -> Result<Vec<AudioFileInfo>, String> {
+    // 获取应用数据目录
+    let app_data_dir = app.path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
+    
+    // 构建Kit/clock路径
+    let audio_dir = app_data_dir.join("Kit").join("clock");
+    
+    // 如果目录不存在，创建它
+    if !audio_dir.exists() {
+        fs::create_dir_all(&audio_dir)
+            .map_err(|e| format!("创建音频目录失败: {}", e))?;
+    }
+    
+    let mut audio_files = Vec::new();
+    
+    // 支持的音频格式
+    let supported_extensions = vec!["wav", "mp3", "ogg", "m4a", "WAV", "MP3", "OGG", "M4A"];
+    
+    // 读取目录
+    let entries = fs::read_dir(&audio_dir)
+        .map_err(|e| format!("读取音频目录失败: {}", e))?;
+    
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            
+            // 只处理文件
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_string();
+                    
+                    // 检查是否为支持的音频格式
+                    if supported_extensions.contains(&ext_str.as_str()) {
+                        let metadata = entry.metadata()
+                            .map_err(|e| format!("读取文件元数据失败: {}", e))?;
+                        
+                        let file_name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("未知文件")
+                            .to_string();
+                        
+                        audio_files.push(AudioFileInfo {
+                            name: file_name,
+                            path: path.to_string_lossy().to_string(),
+                            size: metadata.len(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    // 按文件名排序
+    audio_files.sort_by(|a, b| a.name.cmp(&b.name));
+    
+    Ok(audio_files)
+}
+
+/// 打开音频文件夹
+#[tauri::command]
+fn open_audio_folder(app: AppHandle) -> Result<(), String> {
+    // 获取应用数据目录
+    let app_data_dir = app.path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
+    
+    // 构建Kit/clock路径
+    let audio_dir = app_data_dir.join("Kit").join("clock");
+    
+    // 如果目录不存在，创建它
+    if !audio_dir.exists() {
+        fs::create_dir_all(&audio_dir)
+            .map_err(|e| format!("创建音频目录失败: {}", e))?;
+    }
+    
+    // 使用Windows资源管理器打开文件夹
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(audio_dir.to_string_lossy().to_string())
+            .spawn()
+            .map_err(|e| format!("打开文件夹失败: {}", e))?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err("此功能仅支持Windows系统".to_string());
+    }
+    
+    Ok(())
+}
+
 /// 开始下载文件（支持多镜像自动重试）
 #[tauri::command]
 async fn start_download(
@@ -643,6 +750,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 注意：热区监听现在通过前端调用 start_hotzone_monitor 命令启动
             // 不再在启动时自动启动，由用户设置控制
@@ -684,6 +792,8 @@ pub fn run() {
             remove_download_record,
             open_file_location,
             open_file,
+            scan_audio_files,
+            open_audio_folder,
             // 桌面整理命令
             desktop_scan,
             desktop_search,

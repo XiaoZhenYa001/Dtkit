@@ -17,6 +17,10 @@
     "fs:default",
     "fs:write-all",
     "fs:read-all",
-    "shell:default"
+    "shell:default",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-request-permission",
+    "notification:allow-is-permission-granted"
   ]
 }
