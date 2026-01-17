@@ -2194,9 +2194,8 @@ async function executeAction(task) {
             break;
             
         case 'sound':
-            // 使用队列机制播放音频
+            // 使用队列机制播放音频（playAudioLoop 内部已包含通知逻辑）
             await playAudioWithQueue(task);
-            showNotification(task);
             break;
             
         case 'run':
@@ -2340,16 +2339,13 @@ function showToastWithAudioControl(task, audioController) {
         
         if (audioController.audio) {
             // 移除事件监听器
-            if (audioController.onEnded) {
-                audioController.audio.removeEventListener('ended', audioController.onEnded);
-                audioController.onEnded = null;
-            }
             if (audioController.onError) {
                 audioController.audio.removeEventListener('error', audioController.onError);
                 audioController.onError = null;
             }
             
             audioController.audio.pause();
+            audioController.audio.loop = false; // 重置 loop 属性
             audioController.audio.src = '';
             audioController.audio.load(); // 强制释放
         }
@@ -2598,79 +2594,15 @@ async function playAudioLoop(task) {
     // 显示带控制按钮的通知
     showNotification(task, controller);
     
-    // 循环播放逻辑
-    let playCount = 0;
+    // 使用原生 loop 属性实现无缝循环播放
+    audio.loop = true;
     const maxDuration = 7 * 60 * 1000; // 7分钟
-    let isPlaying = false; // 防止重复播放
     
-    const playOnce = async () => {
-        if (controller.stop || isPlaying) {
-            if (controller.stop) {
-                console.log('[AlarmClock] 音频播放已停止');
-                cleanup();
-            }
-            return;
-        }
-        
-        // 检查是否超过7分钟
-        if (Date.now() - controller.startTime > maxDuration) {
-            console.log('[AlarmClock] 音频播放时长已达7分钟，自动停止');
-            cleanup();
-            return;
-        }
-        
-        isPlaying = true;
-        playCount++;
-        console.log(`[AlarmClock] 播放音频 - 第 ${playCount} 次`);
-        
-        try {
-            // 确保音频可以播放
-            if (audio.readyState < 2) {
-                // 等待音频加载
-                await new Promise((resolve, reject) => {
-                    const onCanPlay = () => {
-                        audio.removeEventListener('canplay', onCanPlay);
-                        audio.removeEventListener('error', onError);
-                        resolve();
-                    };
-                    const onError = (e) => {
-                        audio.removeEventListener('canplay', onCanPlay);
-                        audio.removeEventListener('error', onError);
-                        reject(e);
-                    };
-                    audio.addEventListener('canplay', onCanPlay);
-                    audio.addEventListener('error', onError);
-                    // 超时保护
-                    setTimeout(() => reject(new Error('音频加载超时')), 5000);
-                });
-            }
-            
-            if (!controller.stop) {
-                await audio.play();
-            }
-        } catch (err) {
-            console.error('[AlarmClock] 播放音频失败:', err);
-            isPlaying = false;
-            // 不要立即 cleanup，可能只是暂时的错误
-            if (err.name !== 'AbortError') {
-                cleanup();
-            }
-        }
-    };
-    
-    // 音频播放结束后再次播放 - 使用命名函数以便移除
-    controller.onEnded = () => {
-        isPlaying = false; // 重置播放状态
-        if (!controller.stop && Date.now() - controller.startTime < maxDuration) {
-            // 重置播放位置
-            audio.currentTime = 0;
-            // 减少延迟到100ms，并保存 timeoutId
-            controller.timeoutId = setTimeout(playOnce, 100);
-        } else {
-            cleanup();
-        }
-    };
-    audio.addEventListener('ended', controller.onEnded);
+    // 7分钟后自动停止
+    controller.timeoutId = setTimeout(() => {
+        console.log('[AlarmClock] 音频播放时长已达7分钟，自动停止');
+        cleanup();
+    }, maxDuration);
     
     // 音频加载错误 - 使用命名函数以便移除
     controller.onError = (e) => {
@@ -2679,6 +2611,49 @@ async function playAudioLoop(task) {
         cleanup();
     };
     audio.addEventListener('error', controller.onError);
+    
+    // 开始播放
+    const startPlayback = async () => {
+        try {
+            // 确保音频可以播放
+            if (audio.readyState < 2) {
+                // 等待音频加载
+                await new Promise((resolve, reject) => {
+                    let timeoutId;
+                    const onCanPlay = () => {
+                        audio.removeEventListener('canplay', onCanPlay);
+                        audio.removeEventListener('error', onLoadError);
+                        clearTimeout(timeoutId);
+                        resolve();
+                    };
+                    const onLoadError = (e) => {
+                        audio.removeEventListener('canplay', onCanPlay);
+                        audio.removeEventListener('error', onLoadError);
+                        clearTimeout(timeoutId);
+                        reject(e);
+                    };
+                    audio.addEventListener('canplay', onCanPlay);
+                    audio.addEventListener('error', onLoadError);
+                    // 超时保护
+                    timeoutId = setTimeout(() => {
+                        audio.removeEventListener('canplay', onCanPlay);
+                        audio.removeEventListener('error', onLoadError);
+                        reject(new Error('音频加载超时'));
+                    }, 5000);
+                });
+            }
+            
+            if (!controller.stop) {
+                await audio.play();
+                console.log('[AlarmClock] 音频开始循环播放（原生loop模式）');
+            }
+        } catch (err) {
+            console.error('[AlarmClock] 播放音频失败:', err);
+            if (err.name !== 'AbortError') {
+                cleanup();
+            }
+        }
+    };
     
     // 清理函数 - 彻底释放所有资源
     function cleanup() {
@@ -2690,7 +2665,7 @@ async function playAudioLoop(task) {
         console.log(`[AlarmClock] 清理音频资源: ${controller.taskName}`);
         controller.stop = true;
         
-        // 清除 setTimeout
+        // 清除自动停止定时器
         if (controller.timeoutId) {
             clearTimeout(controller.timeoutId);
             controller.timeoutId = null;
@@ -2698,10 +2673,6 @@ async function playAudioLoop(task) {
         
         if (audio) {
             // 移除事件监听器（防止内存泄漏）
-            if (controller.onEnded) {
-                audio.removeEventListener('ended', controller.onEnded);
-                controller.onEnded = null;
-            }
             if (controller.onError) {
                 audio.removeEventListener('error', controller.onError);
                 controller.onError = null;
@@ -2709,7 +2680,7 @@ async function playAudioLoop(task) {
             
             // 停止并清理音频
             audio.pause();
-            const audioSrc = audio.src;
+            audio.loop = false; // 重置 loop 属性
             audio.src = '';
             audio.load(); // 强制释放音频资源
             
@@ -2752,7 +2723,7 @@ async function playAudioLoop(task) {
     }
     
     // 立即开始播放
-    playOnce();
+    startPlayback();
 }
 
 // 转换文件路径为Tauri可访问的URL
@@ -2830,16 +2801,13 @@ function stopAllAudio() {
         
         if (controller.audio) {
             // 移除事件监听器
-            if (controller.onEnded) {
-                controller.audio.removeEventListener('ended', controller.onEnded);
-                controller.onEnded = null;
-            }
             if (controller.onError) {
                 controller.audio.removeEventListener('error', controller.onError);
                 controller.onError = null;
             }
             
             controller.audio.pause();
+            controller.audio.loop = false; // 重置 loop 属性
             controller.audio.src = '';
             controller.audio.load(); // 强制释放
             controller.audio = null;
@@ -2870,16 +2838,13 @@ function stopAllAudio() {
         
         if (controller.audio) {
             // 移除事件监听器
-            if (controller.onEnded) {
-                controller.audio.removeEventListener('ended', controller.onEnded);
-                controller.onEnded = null;
-            }
             if (controller.onError) {
                 controller.audio.removeEventListener('error', controller.onError);
                 controller.onError = null;
             }
             
             controller.audio.pause();
+            controller.audio.loop = false; // 重置 loop 属性
             controller.audio.src = '';
             controller.audio.load(); // 强制释放
             controller.audio = null;
@@ -2893,9 +2858,9 @@ function stopAllAudio() {
     });
     alarmState.activeLoopControllers.clear();
     
-    // 移除所有遮罩层和 Toast
-    document.querySelectorAll('[id^="alarm-overlay-"]').forEach(el => el.remove());
-    document.querySelectorAll('[id^="alarm-toast-"]').forEach(el => el.remove());
+    // 移除所有遮罩层和 Toast（同时使用 id 和 class 选择器确保完整清理）
+    document.querySelectorAll('[id^="alarm-overlay-"], .alarm-overlay').forEach(el => el.remove());
+    document.querySelectorAll('[id^="alarm-toast-"], .dtkit-toast--alarm').forEach(el => el.remove());
     
     console.log('[AlarmClock] 已停止所有音频播放，资源已释放');
 }
@@ -2913,6 +2878,14 @@ function playAlarmSound(soundId) {
 // ============================================
 async function runProgram(filePath) {
     try {
+        // 验证文件路径安全性
+        const dangerousChars = /[;&|`$()<>]/;
+        if (dangerousChars.test(filePath)) {
+            showToast('文件路径包含非法字符', 'error');
+            console.error('[AlarmClock] 文件路径验证失败:', filePath);
+            return;
+        }
+        
         // 获取文件扩展名
         const ext = filePath.toLowerCase().split('.').pop();
         
