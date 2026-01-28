@@ -11,8 +11,8 @@ use base64::Engine;
 use image::{ImageBuffer, Rgba};
 use lazy_static::lazy_static;
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, SelectObject,
-    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject,
+    BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
 };
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
@@ -207,6 +207,27 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
         return None;
     }
 
+    // 获取位图的实际尺寸
+    let mut bitmap = BITMAP::default();
+    let obj_size = unsafe {
+        GetObjectW(
+            hbitmap,
+            std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bitmap as *mut _ as *mut _),
+        )
+    };
+    
+    if obj_size == 0 {
+        return None;
+    }
+
+    let width = bitmap.bmWidth;
+    let height = bitmap.bmHeight.abs(); // 确保高度为正
+
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+
     // 创建兼容 DC
     let hdc = unsafe { CreateCompatibleDC(None) };
     if hdc.is_invalid() {
@@ -216,10 +237,6 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
 
     // 选择位图到 DC
     let old_bitmap = unsafe { SelectObject(hdc, hbitmap) };
-
-    // 设置位图信息头 - 使用 32x32 固定大小
-    let width = 32i32;
-    let height = 32i32;
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
