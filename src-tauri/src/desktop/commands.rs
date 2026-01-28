@@ -17,6 +17,19 @@ pub fn desktop_search(query: String, category_filter: Option<String>) -> Result<
     search_desktop_files(&query, category_filter.as_deref())
 }
 
+/// 获取单个文件的图标
+#[cfg(windows)]
+#[tauri::command]
+pub fn desktop_get_icon(path: String) -> Result<Option<String>, String> {
+    Ok(crate::desktop::icon::extract_file_icon(&path))
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn desktop_get_icon(_path: String) -> Result<Option<String>, String> {
+    Ok(None)
+}
+
 /// 打开文件
 #[tauri::command]
 pub fn desktop_open_file(path: String) -> Result<(), String> {

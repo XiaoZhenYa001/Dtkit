@@ -4,3 +4,6 @@
 pub mod scanner;
 pub mod commands;
 pub mod hotzone;
+
+#[cfg(windows)]
+pub mod icon;

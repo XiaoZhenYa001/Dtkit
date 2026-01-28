@@ -802,6 +802,7 @@ pub fn run() {
             desktop_rename_file,
             desktop_get_file_path,
             desktop_get_path,
+            desktop_get_icon,
             start_hotzone_monitor,
             stop_hotzone,
             get_hotzone_status,

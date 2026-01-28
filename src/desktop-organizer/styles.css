@@ -433,6 +433,26 @@ html, body {
     margin-right: 12px;
     flex-shrink: 0;
     transition: transform 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+/* 包含真实图标的容器 */
+.file-icon.file-icon-real {
+    width: 20px;
+    height: 20px;
+    line-height: 0;
+}
+
+/* 真实文件图标图片 */
+.file-icon-img {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    vertical-align: middle;
 }
 
 .file-item:hover .file-icon {

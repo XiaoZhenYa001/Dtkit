@@ -83,6 +83,7 @@ pub struct DesktopFile {
     pub modified_time: u64,     // 修改时间（时间戳）
     pub accessed_time: u64,     // 访问时间（时间戳）
     pub children: Option<Vec<DesktopFile>>, // 子文件（仅文件夹有，一级）
+    pub icon: Option<String>,   // 文件图标（Base64 PNG）
 }
 
 /// 分类后的桌面文件
@@ -141,6 +142,20 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
         None
     };
     
+    // 提取文件图标（仅对程序和快捷方式）
+    let icon = if category == FileCategory::Program || extension == "lnk" {
+        #[cfg(windows)]
+        {
+            crate::desktop::icon::extract_file_icon(&path.to_string_lossy())
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    } else {
+        None
+    };
+
     Some(DesktopFile {
         name,
         path: path.to_string_lossy().to_string(),
@@ -151,6 +166,7 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
         modified_time: get_timestamp(metadata.modified()),
         accessed_time: get_timestamp(metadata.accessed()),
         children,
+        icon,
     })
 }
 

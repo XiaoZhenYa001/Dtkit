@@ -81,6 +81,11 @@ function formatFileSize(bytes) {
 }
 
 function getFileIcon(file) {
+    // 如果有真实图标，返回 img 标签
+    if (file.icon) {
+        return `<img src="${file.icon}" class="file-icon-img" alt="" loading="lazy">`;
+    }
+    
     if (file.is_folder) return '📂';
     
     const iconMap = {
@@ -160,14 +165,17 @@ function renderCategoryList() {
 }
 
 function renderFileList(files) {
-    return files.map(file => `
+    return files.map(file => {
+        const iconContent = getFileIcon(file);
+        const isImgIcon = file.icon ? true : false;
+        return `
         <div class="file-item" data-path="${escapeHtml(file.path)}" data-name="${escapeHtml(file.name)}">
-            <span class="file-icon">${getFileIcon(file)}</span>
+            <span class="file-icon${isImgIcon ? ' file-icon-real' : ''}">${iconContent}</span>
             <span class="file-name">${escapeHtml(file.name)}</span>
             <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
             ${file.is_folder && file.children ? renderFolderChildren(file.children) : ''}
         </div>
-    `).join('');
+    `}).join('');
 }
 
 function renderFolderChildren(children) {
