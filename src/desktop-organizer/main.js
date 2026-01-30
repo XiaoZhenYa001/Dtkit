@@ -41,6 +41,8 @@ let state = {
     searchQuery: '',      // 搜索关键词
     searchResults: [],    // 搜索结果
     isSearching: false,   // 是否在搜索模式
+    customCategories: [], // 自定义分类
+    fileCategories: {},   // 文件到分类的映射 { filePath: categoryKey }
 };
 
 // ============================================
@@ -59,10 +61,20 @@ const elements = {
     statusText: document.getElementById('statusText'),
     refreshBtn: document.getElementById('refreshBtn'),
     contextMenu: document.getElementById('contextMenu'),
+    blankContextMenu: document.getElementById('blankContextMenu'),
+    categorySubmenu: document.getElementById('categorySubmenu'),
     renameDialog: document.getElementById('renameDialog'),
     renameInput: document.getElementById('renameInput'),
     renameCancelBtn: document.getElementById('renameCancelBtn'),
     renameConfirmBtn: document.getElementById('renameConfirmBtn'),
+    createCategoryDialog: document.getElementById('createCategoryDialog'),
+    categoryNameInput: document.getElementById('categoryNameInput'),
+    iconPicker: document.getElementById('iconPicker'),
+    createCategoryCancelBtn: document.getElementById('createCategoryCancelBtn'),
+    createCategoryConfirmBtn: document.getElementById('createCategoryConfirmBtn'),
+    manageCategoriesDialog: document.getElementById('manageCategoriesDialog'),
+    customCategoriesList: document.getElementById('customCategoriesList'),
+    manageCategoriesCloseBtn: document.getElementById('manageCategoriesCloseBtn'),
 };
 
 // ============================================
@@ -125,12 +137,68 @@ function renderCategoryList() {
         return;
     }
 
+    // 收集被分配到自定义分类的文件路径
+    const customCategoryFiles = new Set(Object.keys(state.fileCategories));
+    
+    // 构建自定义分类的文件列表
+    const customCategoryData = {};
+    for (const cat of state.customCategories) {
+        customCategoryData[cat.key] = [];
+    }
+    
+    // 从所有文件中找出分配到自定义分类的
+    const allFiles = [
+        ...(state.files.documents || []),
+        ...(state.files.images || []),
+        ...(state.files.videos || []),
+        ...(state.files.audios || []),
+        ...(state.files.archives || []),
+        ...(state.files.programs || []),
+        ...(state.files.folders || []),
+        ...(state.files.others || []),
+    ];
+    
+    for (const file of allFiles) {
+        const catKey = state.fileCategories[file.path];
+        if (catKey && customCategoryData[catKey]) {
+            customCategoryData[catKey].push(file);
+        }
+    }
+
     const categoryOrder = ['recent', 'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'];
     let html = '';
 
+    // 先渲染自定义分类（即使是空的也显示）
+    for (const cat of state.customCategories) {
+        const files = customCategoryData[cat.key] || [];
+        
+        const isExpanded = state.expandedCategories.has(cat.key);
+        const emptyHint = files.length === 0 ? '<div class="empty-category-hint">将文件拖到此分类或右键文件选择"移动到分类"</div>' : '';
+        
+        html += `
+            <div class="category-item custom-category ${isExpanded ? 'expanded' : ''}" data-category="${cat.key}">
+                <div class="category-header" data-category="${cat.key}">
+                    <span class="category-icon">${cat.icon}</span>
+                    <span class="category-name">${escapeHtml(cat.name)}</span>
+                    <span class="category-count">${files.length}</span>
+                    <span class="category-arrow">▶</span>
+                </div>
+                <div class="category-files">
+                    ${files.length > 0 ? renderFileList(files) : emptyHint}
+                </div>
+            </div>
+        `;
+    }
+
+    // 渲染默认分类
     for (const catKey of categoryOrder) {
         const catConfig = CATEGORIES[catKey];
-        const files = state.files[catConfig.key] || [];
+        let files = state.files[catConfig.key] || [];
+        
+        // 排除已分配到自定义分类的文件（最近使用分类除外）
+        if (catKey !== 'recent') {
+            files = files.filter(f => !customCategoryFiles.has(f.path));
+        }
         
         if (files.length === 0) continue;
 
@@ -220,12 +288,107 @@ function renderSearchResults() {
 }
 
 // ============================================
+// 自定义分类管理
+// ============================================
+const CUSTOM_CATEGORIES_KEY = 'desktop_organizer_custom_categories';
+const FILE_CATEGORIES_KEY = 'desktop_organizer_file_categories';
+
+// 加载自定义分类
+function loadCustomCategories() {
+    try {
+        const saved = localStorage.getItem(CUSTOM_CATEGORIES_KEY);
+        state.customCategories = saved ? JSON.parse(saved) : [];
+        
+        const fileCategories = localStorage.getItem(FILE_CATEGORIES_KEY);
+        state.fileCategories = fileCategories ? JSON.parse(fileCategories) : {};
+    } catch (e) {
+        console.error('加载自定义分类失败:', e);
+        state.customCategories = [];
+        state.fileCategories = {};
+    }
+}
+
+// 保存自定义分类
+function saveCustomCategories() {
+    try {
+        localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(state.customCategories));
+        localStorage.setItem(FILE_CATEGORIES_KEY, JSON.stringify(state.fileCategories));
+    } catch (e) {
+        console.error('保存自定义分类失败:', e);
+    }
+}
+
+// 创建新分类
+function createCategory(name, icon) {
+    const key = `custom_${Date.now()}`;
+    const newCategory = { key, name, icon };
+    state.customCategories.push(newCategory);
+    saveCustomCategories();
+    renderCategoryList();
+    return newCategory;
+}
+
+// 删除分类
+function deleteCategory(key) {
+    state.customCategories = state.customCategories.filter(c => c.key !== key);
+    // 移除该分类下的所有文件映射
+    for (const [filePath, catKey] of Object.entries(state.fileCategories)) {
+        if (catKey === key) {
+            delete state.fileCategories[filePath];
+        }
+    }
+    saveCustomCategories();
+    renderCategoryList();
+}
+
+// 将文件移动到分类
+function moveFileToCategory(filePath, categoryKey) {
+    if (categoryKey === null) {
+        delete state.fileCategories[filePath];
+    } else {
+        state.fileCategories[filePath] = categoryKey;
+    }
+    saveCustomCategories();
+    renderCategoryList();
+}
+
+// 获取文件所属的自定义分类
+function getFileCustomCategory(filePath) {
+    return state.fileCategories[filePath] || null;
+}
+
+// 更新分类子菜单
+function updateCategorySubmenu() {
+    if (!elements.categorySubmenu) return;
+    
+    let html = `
+        <div class="submenu-item" data-category="null">
+            <span class="submenu-icon">🔄</span>
+            <span class="submenu-text">恢复默认分类</span>
+        </div>
+    `;
+    
+    if (state.customCategories.length > 0) {
+        html += '<div class="submenu-divider"></div>';
+        html += state.customCategories.map(cat => `
+            <div class="submenu-item" data-category="${cat.key}">
+                <span class="submenu-icon">${cat.icon}</span>
+                <span class="submenu-text">${escapeHtml(cat.name)}</span>
+            </div>
+        `).join('');
+    }
+    
+    elements.categorySubmenu.innerHTML = html;
+}
+
+// ============================================
 // 数据加载
 // ============================================
 async function loadDesktopFiles() {
     try {
         elements.statusText.textContent = '扫描中...';
         state.files = await invoke('desktop_scan');
+        loadCustomCategories();
         renderCategoryList();
     } catch (error) {
         console.error('扫描桌面失败:', error);
@@ -453,23 +616,55 @@ elements.searchResultsList?.addEventListener('dblclick', (e) => {
 // 右键菜单
 function showContextMenu(e, fileItem) {
     e.preventDefault();
+    hideBlankContextMenu();
+    
     state.selectedFile = {
         path: fileItem.dataset.path,
         name: fileItem.dataset.name,
     };
     
+    // 更新分类子菜单
+    updateCategorySubmenu();
+    
     elements.contextMenu.style.display = 'block';
     elements.contextMenu.style.left = `${e.clientX}px`;
     elements.contextMenu.style.top = `${e.clientY}px`;
+    // 重置方向类
+    elements.contextMenu.classList.remove('menu-up');
     
-    // 确保菜单不超出窗口
-    const rect = elements.contextMenu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-        elements.contextMenu.style.left = `${window.innerWidth - rect.width - 10}px`;
-    }
-    if (rect.bottom > window.innerHeight) {
-        elements.contextMenu.style.top = `${window.innerHeight - rect.height - 10}px`;
-    }
+    // 确保菜单不超出窗口，并调整子菜单方向
+    requestAnimationFrame(() => {
+        const rect = elements.contextMenu.getBoundingClientRect();
+        let menuLeft = e.clientX;
+        let menuTop = e.clientY;
+        
+        // 水平方向调整
+        if (rect.right > window.innerWidth) {
+            menuLeft = window.innerWidth - rect.width - 10;
+            elements.contextMenu.style.left = `${menuLeft}px`;
+        }
+        
+        // 垂直方向调整 - 如果菜单底部超出窗口，向上展开
+        if (rect.bottom > window.innerHeight) {
+            // 从点击位置向上展开
+            menuTop = e.clientY - rect.height;
+            if (menuTop < 0) menuTop = 10; // 确保不超出顶部
+            elements.contextMenu.style.top = `${menuTop}px`;
+            elements.contextMenu.classList.add('menu-up');
+        }
+        
+        // 检查子菜单是否需要向左展开
+        const submenu = elements.categorySubmenu;
+        if (submenu) {
+            const menuRight = menuLeft + rect.width;
+            const submenuWidth = 170; // 估算子菜单宽度
+            if (menuRight + submenuWidth > window.innerWidth) {
+                submenu.classList.add('submenu-left');
+            } else {
+                submenu.classList.remove('submenu-left');
+            }
+        }
+    });
 }
 
 function hideContextMenu() {
@@ -481,10 +676,48 @@ function hideContextMenu() {
     }, 150);
 }
 
+// 空白区域右键菜单
+function showBlankContextMenu(e) {
+    e.preventDefault();
+    hideContextMenu();
+    
+    elements.blankContextMenu.style.display = 'block';
+    elements.blankContextMenu.style.left = `${e.clientX}px`;
+    elements.blankContextMenu.style.top = `${e.clientY}px`;
+    elements.blankContextMenu.classList.remove('menu-up');
+    
+    requestAnimationFrame(() => {
+        const rect = elements.blankContextMenu.getBoundingClientRect();
+        let menuTop = e.clientY;
+        
+        if (rect.right > window.innerWidth) {
+            elements.blankContextMenu.style.left = `${window.innerWidth - rect.width - 10}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menuTop = e.clientY - rect.height;
+            if (menuTop < 0) menuTop = 10;
+            elements.blankContextMenu.style.top = `${menuTop}px`;
+            elements.blankContextMenu.classList.add('menu-up');
+        }
+    });
+}
+
+function hideBlankContextMenu() {
+    if (!elements.blankContextMenu || elements.blankContextMenu.style.display === 'none') return;
+    elements.blankContextMenu.classList.add('closing');
+    setTimeout(() => {
+        elements.blankContextMenu.style.display = 'none';
+        elements.blankContextMenu.classList.remove('closing');
+    }, 150);
+}
+
 elements.categoryList.addEventListener('contextmenu', (e) => {
     const fileItem = e.target.closest('.file-item');
     if (fileItem) {
         showContextMenu(e, fileItem);
+    } else {
+        // 空白区域右键
+        showBlankContextMenu(e);
     }
 });
 
@@ -495,14 +728,26 @@ elements.searchResultsList?.addEventListener('contextmenu', (e) => {
     }
 });
 
-document.addEventListener('click', () => {
-    hideContextMenu();
+// 面板空白区域右键
+elements.panel.addEventListener('contextmenu', (e) => {
+    // 只在非文件区域触发
+    if (!e.target.closest('.file-item') && !e.target.closest('.context-menu')) {
+        showBlankContextMenu(e);
+    }
 });
 
-// 右键菜单操作
+document.addEventListener('click', () => {
+    hideContextMenu();
+    hideBlankContextMenu();
+});
+
+// 右键菜单操作 - 文件
 elements.contextMenu.addEventListener('click', async (e) => {
     const menuItem = e.target.closest('.menu-item');
     if (!menuItem || !state.selectedFile) return;
+    
+    // 如果点击的是有子菜单的项，不处理
+    if (menuItem.classList.contains('has-submenu')) return;
     
     const action = menuItem.dataset.action;
     const { path, name } = state.selectedFile;
@@ -527,6 +772,164 @@ elements.contextMenu.addEventListener('click', async (e) => {
     }
     
     hideContextMenu();
+});
+
+// 分类子菜单点击
+elements.categorySubmenu?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const submenuItem = e.target.closest('.submenu-item');
+    if (!submenuItem || !state.selectedFile) return;
+    
+    const categoryKey = submenuItem.dataset.category;
+    const { path } = state.selectedFile;
+    
+    if (categoryKey === 'null') {
+        moveFileToCategory(path, null);
+    } else {
+        moveFileToCategory(path, categoryKey);
+    }
+    
+    hideContextMenu();
+});
+
+// 空白区域菜单操作
+elements.blankContextMenu?.addEventListener('click', async (e) => {
+    const menuItem = e.target.closest('.menu-item');
+    if (!menuItem) return;
+    
+    const action = menuItem.dataset.action;
+    
+    switch (action) {
+        case 'create-category':
+            showCreateCategoryDialog();
+            break;
+        case 'manage-categories':
+            showManageCategoriesDialog();
+            break;
+        case 'refresh':
+            await loadDesktopFiles();
+            break;
+    }
+    
+    hideBlankContextMenu();
+});
+
+// ============================================
+// 创建分类对话框
+// ============================================
+let selectedCategoryIcon = '📁';
+
+function showCreateCategoryDialog() {
+    elements.createCategoryDialog.style.display = 'flex';
+    elements.createCategoryDialog.classList.remove('closing');
+    elements.categoryNameInput.value = '';
+    selectedCategoryIcon = '📁';
+    
+    // 重置图标选择
+    elements.iconPicker.querySelectorAll('.icon-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.dataset.icon === '📁');
+    });
+    
+    requestAnimationFrame(() => {
+        elements.categoryNameInput.focus();
+    });
+}
+
+function hideCreateCategoryDialog() {
+    elements.createCategoryDialog.classList.add('closing');
+    setTimeout(() => {
+        elements.createCategoryDialog.style.display = 'none';
+        elements.createCategoryDialog.classList.remove('closing');
+    }, 150);
+}
+
+elements.iconPicker?.addEventListener('click', (e) => {
+    const option = e.target.closest('.icon-option');
+    if (!option) return;
+    
+    elements.iconPicker.querySelectorAll('.icon-option').forEach(opt => {
+        opt.classList.remove('selected');
+    });
+    option.classList.add('selected');
+    selectedCategoryIcon = option.dataset.icon;
+});
+
+elements.createCategoryCancelBtn?.addEventListener('click', () => {
+    hideCreateCategoryDialog();
+});
+
+elements.createCategoryConfirmBtn?.addEventListener('click', () => {
+    const name = elements.categoryNameInput.value.trim();
+    if (!name) {
+        elements.categoryNameInput.focus();
+        return;
+    }
+    
+    createCategory(name, selectedCategoryIcon);
+    hideCreateCategoryDialog();
+});
+
+elements.categoryNameInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        elements.createCategoryConfirmBtn.click();
+    } else if (e.key === 'Escape') {
+        hideCreateCategoryDialog();
+    }
+});
+
+// ============================================
+// 管理分类对话框
+// ============================================
+function showManageCategoriesDialog() {
+    renderManageCategoriesList();
+    elements.manageCategoriesDialog.style.display = 'flex';
+    elements.manageCategoriesDialog.classList.remove('closing');
+}
+
+function hideManageCategoriesDialog() {
+    elements.manageCategoriesDialog.classList.add('closing');
+    setTimeout(() => {
+        elements.manageCategoriesDialog.style.display = 'none';
+        elements.manageCategoriesDialog.classList.remove('closing');
+    }, 150);
+}
+
+function renderManageCategoriesList() {
+    if (state.customCategories.length === 0) {
+        elements.customCategoriesList.innerHTML = `
+            <div class="empty-categories">
+                <span>暂无自定义分类</span>
+            </div>
+        `;
+        return;
+    }
+    
+    elements.customCategoriesList.innerHTML = state.customCategories.map(cat => {
+        const fileCount = Object.values(state.fileCategories).filter(k => k === cat.key).length;
+        return `
+            <div class="category-manage-item" data-key="${cat.key}">
+                <span class="category-manage-icon">${cat.icon}</span>
+                <span class="category-manage-name">${escapeHtml(cat.name)}</span>
+                <span class="category-manage-count">${fileCount} 个文件</span>
+                <button class="category-delete-btn" data-key="${cat.key}" title="删除分类">✕</button>
+            </div>
+        `;
+    }).join('');
+}
+
+elements.customCategoriesList?.addEventListener('click', (e) => {
+    const deleteBtn = e.target.closest('.category-delete-btn');
+    if (deleteBtn) {
+        const key = deleteBtn.dataset.key;
+        if (confirm('确定要删除这个分类吗？分类中的文件将恢复到默认分类。')) {
+            deleteCategory(key);
+            renderManageCategoriesList();
+        }
+    }
+});
+
+elements.manageCategoriesCloseBtn?.addEventListener('click', () => {
+    hideManageCategoriesDialog();
 });
 
 // 重命名对话框

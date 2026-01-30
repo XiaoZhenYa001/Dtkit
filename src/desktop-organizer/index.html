@@ -58,7 +58,7 @@
         <div class="resize-handle resize-handle-br" data-direction="br"></div>
     </div>
 
-    <!-- 右键菜单 -->
+    <!-- 右键菜单 - 文件 -->
     <div class="context-menu" id="contextMenu" style="display: none;">
         <div class="menu-item" data-action="open">
             <span class="menu-icon">📂</span>
@@ -82,10 +82,84 @@
             <span class="menu-shortcut">Ctrl+X</span>
         </div>
         <div class="menu-divider"></div>
+        <div class="menu-item has-submenu" data-action="move-to-category">
+            <span class="menu-icon">🏷️</span>
+            <span class="menu-text">移动到分类</span>
+            <span class="menu-arrow">▶</span>
+            <div class="submenu" id="categorySubmenu">
+                <!-- 动态生成分类列表 -->
+            </div>
+        </div>
+        <div class="menu-divider"></div>
         <div class="menu-item" data-action="rename">
             <span class="menu-icon">✏️</span>
             <span class="menu-text">重命名</span>
             <span class="menu-shortcut">F2</span>
+        </div>
+    </div>
+
+    <!-- 右键菜单 - 空白区域 -->
+    <div class="context-menu" id="blankContextMenu" style="display: none;">
+        <div class="menu-item" data-action="create-category">
+            <span class="menu-icon">➕</span>
+            <span class="menu-text">创建分类</span>
+        </div>
+        <div class="menu-item" data-action="manage-categories">
+            <span class="menu-icon">⚙️</span>
+            <span class="menu-text">管理分类</span>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="menu-item" data-action="refresh">
+            <span class="menu-icon">🔄</span>
+            <span class="menu-text">刷新</span>
+            <span class="menu-shortcut">F5</span>
+        </div>
+    </div>
+
+    <!-- 创建分类对话框 -->
+    <div class="rename-dialog" id="createCategoryDialog" style="display: none;">
+        <div class="rename-dialog-content">
+            <div class="rename-dialog-title">创建分类</div>
+            <div class="category-form">
+                <div class="form-group">
+                    <label>分类名称</label>
+                    <input type="text" class="rename-input" id="categoryNameInput" placeholder="输入分类名称">
+                </div>
+                <div class="form-group">
+                    <label>选择图标</label>
+                    <div class="icon-picker" id="iconPicker">
+                        <span class="icon-option selected" data-icon="📁">📁</span>
+                        <span class="icon-option" data-icon="⭐">⭐</span>
+                        <span class="icon-option" data-icon="💼">💼</span>
+                        <span class="icon-option" data-icon="🎮">🎮</span>
+                        <span class="icon-option" data-icon="🛠️">🛠️</span>
+                        <span class="icon-option" data-icon="📚">📚</span>
+                        <span class="icon-option" data-icon="🎨">🎨</span>
+                        <span class="icon-option" data-icon="💡">💡</span>
+                        <span class="icon-option" data-icon="🔧">🔧</span>
+                        <span class="icon-option" data-icon="📝">📝</span>
+                        <span class="icon-option" data-icon="🎯">🎯</span>
+                        <span class="icon-option" data-icon="🚀">🚀</span>
+                    </div>
+                </div>
+            </div>
+            <div class="rename-dialog-actions">
+                <button class="rename-btn rename-btn-cancel" id="createCategoryCancelBtn">取消</button>
+                <button class="rename-btn rename-btn-confirm" id="createCategoryConfirmBtn">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理分类对话框 -->
+    <div class="rename-dialog" id="manageCategoriesDialog" style="display: none;">
+        <div class="rename-dialog-content manage-categories-content">
+            <div class="rename-dialog-title">管理自定义分类</div>
+            <div class="custom-categories-list" id="customCategoriesList">
+                <!-- 动态生成 -->
+            </div>
+            <div class="rename-dialog-actions">
+                <button class="rename-btn rename-btn-confirm" id="manageCategoriesCloseBtn">关闭</button>
+            </div>
         </div>
     </div>
 
