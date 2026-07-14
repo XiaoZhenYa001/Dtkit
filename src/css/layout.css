@@ -1,154 +1,157 @@
-/* ============================================
-   侧边栏导航
-   ============================================ */
 .sidebar {
-    width: 5rem;
-    background-color: var(--color-bg-secondary);
-    border-right: 1px solid var(--color-border);
+    position: relative;
+    z-index: 2;
+    width: 5.75rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: var(--spacing-lg) 0;
     gap: var(--spacing-lg);
-    flex-shrink: 0;
-    box-shadow: 2px 0 15px -5px rgba(0, 0, 0, 0.05);
-    z-index: 20;
+    padding: 1.5rem 0.75rem;
+    background: linear-gradient(180deg, rgba(32, 39, 51, 0.96), rgba(35, 42, 56, 0.88));
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 12px 0 30px rgba(20, 25, 33, 0.14);
 }
 
 .sidebar-logo {
-    width: 2.5rem;
-    height: 2.5rem;
-    background-color: var(--color-primary);
-    border-radius: var(--radius-xl);
+    width: 3.15rem;
+    height: 3.15rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    font-weight: bold;
-    font-size: var(--font-size-xl);
-    cursor: pointer;
-    box-shadow: 0 8px 12px 0 rgba(37, 99, 235, 0.2);
-    transition: all var(--transition-fast);
+    border-radius: 1.25rem;
+    color: #fff8f1;
+    font-weight: 800;
+    font-size: 1.15rem;
+    letter-spacing: 0.08em;
+    background: linear-gradient(135deg, var(--color-primary), #dda255);
+    box-shadow: 0 16px 26px rgba(216, 111, 61, 0.28);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .sidebar-logo:hover {
-    transform: scale(1.05);
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 22px 34px rgba(216, 111, 61, 0.34);
 }
 
 .sidebar-nav {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-lg);
+    gap: 0.875rem;
     width: 100%;
     align-items: center;
 }
 
-/* 导航按钮 */
 .nav-btn {
     position: relative;
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--spacing-sm);
-    color: var(--color-text-tertiary);
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    color: rgba(233, 238, 244, 0.62);
     background: none;
     border: none;
     cursor: pointer;
-    transition: color var(--transition-fast);
-    padding: 0;
-    font-size: var(--font-size-xs);
-    font-weight: 500;
+    font-size: 0.72rem;
+    font-weight: 600;
+    transition: color var(--transition-fast), transform var(--transition-fast);
 }
 
 .nav-btn:hover {
-    color: var(--color-text-secondary);
+    color: rgba(255, 246, 237, 0.94);
+    transform: translateY(-1px);
 }
 
 .nav-btn--active {
-    color: var(--color-primary);
-}
-
-.nav-btn--active .nav-btn__icon {
-    background-color: var(--color-primary-light);
-    box-shadow: var(--shadow-sm);
+    color: #fff8f1;
 }
 
 .nav-btn--active::before {
     content: '';
     position: absolute;
-    left: 0;
-    top: var(--spacing-sm);
-    bottom: var(--spacing-sm);
-    width: 0.25rem;
-    background-color: var(--color-primary);
-    border-radius: 0 0.125rem 0.125rem 0;
+    left: -0.35rem;
+    top: 0.55rem;
+    bottom: 0.55rem;
+    width: 0.24rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, var(--color-primary), #e0ab62);
+    box-shadow: 0 0 18px rgba(216, 111, 61, 0.45);
 }
 
 .nav-btn__icon {
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 3rem;
+    height: 3rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-lg);
-    transition: background-color var(--transition-fast);
-    font-size: var(--font-size-lg);
+    border-radius: 1.15rem;
+    font-size: 1.15rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    transition:
+        transform var(--transition-fast),
+        background-color var(--transition-fast),
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast);
 }
 
 .nav-btn:hover .nav-btn__icon {
-    background-color: var(--color-bg-tertiary);
-    transform: scale(1.05);
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.nav-btn--active .nav-btn__icon {
+    background: linear-gradient(135deg, rgba(216, 111, 61, 0.92), rgba(221, 162, 85, 0.84));
+    border-color: rgba(255, 245, 235, 0.22);
+    box-shadow: 0 18px 30px rgba(216, 111, 61, 0.22);
 }
 
 .nav-btn__label {
     display: block;
+    letter-spacing: 0.02em;
 }
 
-.nav-btn--bottom {
-    margin-top: auto;
-}
-
-/* ============================================
-   主容器布局
-   ============================================ */
 .main-container {
+    position: relative;
+    z-index: 1;
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
-    background-color: var(--color-bg-primary);
+    margin: 0.85rem;
+    margin-left: 0;
+    border: 1px solid rgba(255, 255, 255, 0.46);
+    border-radius: 2rem;
+    background: linear-gradient(180deg, rgba(255, 253, 250, 0.76), rgba(255, 248, 240, 0.6));
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(24px);
     overflow: hidden;
 }
 
-/* ============================================
-   标签页栏 (Chrome 风格 - 优化版)
-   ============================================ */
-/* 标签栏容器 */
 .tab-container {
-    height: 46px;
-    background-color: #f1f5f9; /* 浅灰背景，区分于下方的白色 */
+    height: 4rem;
     display: flex;
     align-items: flex-end;
-    padding: 8px 8px 0 8px;
-    gap: 4px;
+    gap: 0.5rem;
+    padding: 0.7rem 1rem 0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.12));
+    border-bottom: 1px solid rgba(118, 93, 63, 0.08);
     flex-shrink: 0;
-    justify-content: flex-start;
 }
 
 .tab-bar {
     height: 100%;
     display: flex;
     align-items: flex-end;
-    gap: 6px; /* 增加标签间距 */
-    flex: 0 1 auto;
-    max-width: calc(100% - 48px);
+    gap: 0.55rem;
+    flex: 1 1 auto;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
-    -ms-overflow-style: none;
-    padding-right: 8px;
 }
 
 .tab-bar::-webkit-scrollbar {
@@ -159,93 +162,115 @@
     position: relative;
     display: flex;
     align-items: center;
-    height: 36px;
-    padding: 0 12px 0 16px;
-    font-size: var(--font-size-sm);
-    background-color: transparent; /* 非激活状态透明，透出底部的灰色 */
-    border: none;
-    border-radius: 12px 12px 0 0;
+    gap: 0.65rem;
+    height: 3rem;
+    min-width: 8rem;
+    max-width: 13rem;
+    padding: 0 0.95rem 0 1.05rem;
+    border-radius: 1.15rem 1.15rem 0.7rem 0.7rem;
+    background: rgba(255, 255, 255, 0.36);
+    border: 1px solid transparent;
+    color: var(--color-text-secondary);
     cursor: pointer;
-    gap: 8px;
-    color: #64748b;
-    transition: all 0.2s ease;
-    max-width: 200px;
-    min-width: 100px;
-    flex: 0 1 auto;
-    width: auto;
-    margin: 0;
+    transition:
+        background-color var(--transition-fast),
+        color var(--transition-fast),
+        transform var(--transition-fast),
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast);
 }
 
 .tab:hover {
-    background-color: rgba(255, 255, 255, 0.6); /* 悬停时半透明白 */
-    z-index: 1;
-    color: #334155;
+    transform: translateY(-1px);
+    color: var(--color-text-primary);
+    background: rgba(255, 255, 255, 0.56);
 }
 
 .tab--active {
-    background-color: #ffffff; /* 激活状态纯白，与下方连通 */
-    color: var(--color-primary);
-    font-weight: 600;
-    z-index: 10;
-    box-shadow: 0 -1px 2px rgba(0,0,0,0.02), 0 0 0 1px rgba(0,0,0,0.04);
+    color: var(--color-text-primary);
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(118, 93, 63, 0.12);
+    box-shadow: var(--shadow-xs);
 }
 
-/* 激活标签顶部的蓝色高亮条 - 两端弯曲 */
 .tab--active::before {
     content: '';
     position: absolute;
-    top: 0;
-    left: 8px;
-    right: 8px;
-    height: 3px;
-    background-color: var(--color-primary);
-    border-radius: 3px;
-    opacity: 1;
-    display: block;
-}
-
-/* 移除分隔线，因为现在有间距了 */
-.tab:not(.tab--active):not(:hover)::after {
-    display: none;
+    left: 0.7rem;
+    right: 0.7rem;
+    top: 0.2rem;
+    height: 0.18rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--color-primary), #dda255);
 }
 
 .tab__label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 0.55rem;
     flex: 1;
-    overflow: hidden;
-    pointer-events: none;
+    min-width: 0;
 }
 
-.tab__label span {
+.tab__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.08rem;
+    min-width: 0;
+}
+
+.tab__title {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-size: 0.84rem;
+    line-height: 1.1;
 }
 
 .tab__icon {
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-}
-
-.tab__close {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 0.7rem;
+    background: rgba(216, 111, 61, 0.1);
+    color: var(--color-primary);
+    font-size: 0.95rem;
+    flex-shrink: 0;
+}
+
+.tab__badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    min-height: 1.2rem;
+    padding: 0.02rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(63, 109, 116, 0.08);
+    color: var(--color-accent);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tab__close {
+    width: 1.65rem;
+    height: 1.65rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: none;
     color: inherit;
     background: transparent;
-    border: none;
     cursor: pointer;
     opacity: 0;
-    transition: all 0.2s;
-    font-size: 14px;
-    margin-left: 4px;
-    flex-shrink: 0;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .tab:hover .tab__close,
@@ -254,47 +279,54 @@
 }
 
 .tab__close:hover {
-    background-color: #fee2e2;
-    color: #ef4444;
+    color: var(--color-danger);
+    background: rgba(204, 86, 86, 0.1);
+}
+
+.tab--active .tab__icon {
+    background: linear-gradient(135deg, rgba(216, 111, 61, 0.16), rgba(221, 162, 85, 0.14));
+}
+
+.tab--active .tab__badge {
+    background: rgba(216, 111, 61, 0.1);
+    color: var(--color-primary);
 }
 
 .tab-add-btn {
-    width: 36px; /* 加大尺寸 */
-    height: 36px;
-    border-radius: 50%;
+    width: 2.6rem;
+    height: 2.6rem;
+    margin-bottom: 0.2rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: transparent;
-    border: none;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.34);
+    color: var(--color-text-secondary);
     cursor: pointer;
-    color: #64748b;
-    transition: all 0.2s;
-    margin-bottom: 2px;
-    flex-shrink: 0;
-    font-size: 1.25rem; /* 加大图标 */
+    transition:
+        transform var(--transition-fast),
+        color var(--transition-fast),
+        border-color var(--transition-fast),
+        background-color var(--transition-fast);
 }
 
 .tab-add-btn:hover {
-    background-color: var(--color-primary-light);
+    transform: rotate(90deg);
     color: var(--color-primary);
-    transform: rotate(90deg); /* 趣味旋转效果 */
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(216, 111, 61, 0.22);
 }
 
-/* ============================================
-   工具栏
-   ============================================ */
 .toolbar {
     height: 3rem;
     display: flex;
     align-items: center;
-    padding: 0 var(--spacing-lg);
-    background-color: rgba(248, 250, 252, 0.8);
-    backdrop-filter: blur(4px);
-    border-bottom: 1px solid rgba(226, 232, 240, 0.5);
     gap: var(--spacing-lg);
+    padding: 0 var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.28);
+    border-bottom: 1px solid rgba(118, 93, 63, 0.08);
     flex-shrink: 0;
-    z-index: 10;
 }
 
 .toolbar-actions {
@@ -302,125 +334,59 @@
     gap: var(--spacing-sm);
 }
 
-.search-container {
-    position: relative;
-    flex: 1;
-    max-width: 28rem;
-    display: none;
-}
-
-.search-container > i {
-    position: absolute;
-    left: var(--spacing-md);
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--color-text-tertiary);
-    font-size: var(--font-size-base);
-    pointer-events: none;
-}
-
-.search-input {
-    width: 100%;
-    padding: var(--spacing-sm) var(--spacing-md) var(--spacing-sm) 2.25rem;
-    background-color: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    font-size: var(--font-size-sm);
-    transition: all var(--transition-fast);
-    color: var(--color-text-primary);
-}
-
-.search-input::placeholder {
-    color: var(--color-text-tertiary);
-}
-
-.search-input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light);
-}
-
-/* ============================================
-   内容区域
-   ============================================ */
 .content-area {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     scroll-behavior: smooth;
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-border) transparent;
 }
 
-.content-area::-webkit-scrollbar {
-    width: 6px;
-}
-
-.content-area::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.content-area::-webkit-scrollbar-thumb {
-    background-color: var(--color-border);
-    border-radius: var(--radius-full);
-    border: 3px solid transparent;
-    background-clip: content-box;
-}
-
-.content-area::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-text-secondary);
-}
-
-/* ============================================
-   导航栏（navbar）- 优化版
-   ============================================ */
 .navbar {
-    height: 3.5rem; /* 稍微增加高度 */
-    display: flex;
-    align-items: center;
-    padding: 0 var(--spacing-lg);
-    background-color: rgba(255, 255, 255, 0.9); /* 更纯净的白 */
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--color-border-light);
-    gap: var(--spacing-md);
-    flex-shrink: 0;
+    height: 4.25rem;
     position: sticky;
     top: 0;
     z-index: 5;
-    box-shadow: var(--shadow-sm); /* 添加轻微阴影 */
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0 1.25rem;
+    background: linear-gradient(180deg, rgba(255, 251, 246, 0.86), rgba(255, 248, 241, 0.68));
+    border-bottom: 1px solid rgba(118, 93, 63, 0.08);
+    backdrop-filter: blur(18px);
 }
 
 .navbar__nav-buttons {
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm);
+    gap: 0.55rem;
 }
 
-/* 导航按钮图标 */
 .nav-btn-icon {
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 2.65rem;
+    height: 2.65rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: transparent; /* 幽灵按钮风格 */
-    border: 1px solid transparent;
-    border-radius: var(--radius-full);
+    border-radius: 1rem;
+    border: 1px solid var(--color-border);
+    background: rgba(255, 255, 255, 0.62);
     color: var(--color-text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
-    font-size: 1.25rem;
+    font-size: 1.1rem;
+    transition:
+        transform var(--transition-fast),
+        color var(--transition-fast),
+        border-color var(--transition-fast),
+        background-color var(--transition-fast),
+        box-shadow var(--transition-fast);
 }
 
 .nav-btn-icon:hover:not(:disabled) {
-    background-color: var(--color-primary-light);
-    color: var(--color-primary);
     transform: translateY(-1px);
-}
-
-.nav-btn-icon:active:not(:disabled) {
-    transform: scale(0.95);
+    color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(216, 111, 61, 0.24);
+    box-shadow: var(--shadow-xs);
 }
 
 .nav-btn-icon:disabled {
@@ -428,11 +394,10 @@
     cursor: not-allowed;
 }
 
-/* 搜索容器更新 */
 .search-container {
     position: relative;
     flex: 1;
-    max-width: 32rem; /* 稍微加宽 */
+    max-width: 36rem;
     display: flex !important;
 }
 
@@ -441,47 +406,38 @@
     left: 1rem;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--color-primary); /* 图标使用品牌色 */
-    font-size: var(--font-size-base);
+    color: var(--color-primary);
+    font-size: 1rem;
+    opacity: 0.82;
     pointer-events: none;
-    opacity: 0.7;
 }
 
 .search-input {
     width: 100%;
-    padding: 0.6rem 1rem 0.6rem 2.5rem;
-    background-color: var(--color-bg-tertiary);
-    border: 1px solid transparent;
-    border-radius: var(--radius-full);
-    font-size: var(--font-size-sm);
-    transition: all var(--transition-normal);
+    padding: 0.9rem 1rem 0.9rem 2.75rem;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
     color: var(--color-text-primary);
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+    font-size: var(--font-size-sm);
+    transition:
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast),
+        background-color var(--transition-fast);
 }
 
-.search-input:hover {
-    background-color: white;
-    border-color: var(--color-border);
-    box-shadow: var(--shadow-sm);
+.search-input::placeholder {
+    color: var(--color-text-tertiary);
 }
 
+.search-input:hover,
 .search-input:focus {
     outline: none;
-    background-color: white;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 4px var(--color-primary-light), var(--shadow-sm);
-}
-    transform: translateY(-50%);
-    color: var(--color-text-tertiary);
-    font-size: var(--font-size-base);
-    pointer-events: none;
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(216, 111, 61, 0.24);
+    box-shadow: 0 0 0 4px rgba(216, 111, 61, 0.08);
 }
 
-/* 标签栏容器 - 已在上方定义 */
-
-/* ============================================
-   设置按钮 (底部导航)
-   ============================================ */
 .nav-settings {
     margin-top: auto;
 }

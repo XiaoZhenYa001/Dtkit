@@ -23,6 +23,14 @@
     box-sizing: border-box;
 }
 
+html .is-initially-hidden {
+    display: none;
+}
+
+.file-item--more {
+    color: var(--text-tertiary);
+}
+
 html, body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif;
     background: #1e1e23;

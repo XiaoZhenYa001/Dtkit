@@ -3,6 +3,7 @@
  * 格式化、美化和验证 JSON 数据
  */
 import { registerTool } from '../toolRegistry.js';
+import '../../css/tools/json-formatter.css';
 
 let jsonState = {
     currentInput: '',
@@ -83,177 +84,7 @@ function getTemplate() {
 /**
  * 获取工具的 CSS 样式
  */
-function getStyles() {
-    return `
-        .view-container--json {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            padding: 0;
-            gap: 0;
-        }
 
-        .json-toolbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 3.5rem;
-            padding: 0 var(--spacing-lg);
-            background-color: var(--color-bg-secondary);
-            border-bottom: 1px solid var(--color-border);
-            gap: var(--spacing-lg);
-        }
-
-        .json-toolbar-left {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-md);
-        }
-
-        .json-title {
-            font-size: var(--font-size-lg);
-            font-weight: 600;
-            color: var(--color-text-primary);
-            margin: 0;
-        }
-
-        .json-toolbar-actions {
-            display: flex;
-            gap: var(--spacing-sm);
-        }
-
-        .json-editor-container {
-            display: flex;
-            flex: 1;
-            gap: var(--spacing-lg);
-            padding: var(--spacing-lg);
-            background-color: var(--color-bg-primary);
-            overflow: hidden;
-        }
-
-        .json-editor-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background-color: var(--color-bg-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg);
-            overflow: hidden;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .json-editor-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 2rem;
-            padding: 0 var(--spacing-md);
-            background-color: var(--color-bg-tertiary);
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .json-editor-label {
-            font-size: var(--font-size-xs);
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--color-text-secondary);
-        }
-
-        .json-editor-actions {
-            display: flex;
-            gap: var(--spacing-sm);
-        }
-
-        .json-editor-btn {
-            background: none;
-            border: none;
-            color: var(--color-text-tertiary);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: var(--radius-sm);
-            transition: all var(--transition-fast);
-        }
-
-        .json-editor-btn:hover {
-            color: var(--color-primary);
-        }
-
-        .json-editor-textarea {
-            flex: 1;
-            padding: var(--spacing-md);
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-            font-size: var(--font-size-sm);
-            color: var(--color-text-primary);
-            background: transparent;
-            border: none;
-            outline: none;
-            resize: none;
-            line-height: 1.5;
-        }
-
-        .json-editor-textarea::placeholder {
-            color: var(--color-text-tertiary);
-        }
-
-        .json-editor-output {
-            flex: 1;
-            padding: var(--spacing-md);
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-            font-size: var(--font-size-sm);
-            color: var(--color-text-primary);
-            overflow: auto;
-            line-height: 1.5;
-            background-color: rgba(15, 23, 42, 0.02);
-        }
-
-        .json-statusbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 2rem;
-            padding: 0 var(--spacing-lg);
-            background-color: var(--color-bg-secondary);
-            border-top: 1px solid var(--color-border);
-            font-size: var(--font-size-xs);
-        }
-
-        .json-status-left {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            color: var(--color-text-secondary);
-        }
-
-        .json-status-right {
-            color: var(--color-text-tertiary);
-        }
-
-        /* 语法高亮样式 */
-        .text-purple-600 { color: #9333ea; }
-        .text-green-600 { color: #16a34a; }
-        .text-blue-600 { color: #2563eb; }
-        .text-orange-600 { color: #ea580c; }
-        .text-slate-500 { color: #64748b; }
-        .text-slate-600 { color: #475569; }
-        .text-red-500 { color: #ef4444; }
-        .text-red-600 { color: #dc2626; }
-
-        @media (max-width: 1024px) {
-            .json-editor-container {
-                flex-direction: column;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .json-toolbar {
-                flex-wrap: wrap;
-                height: auto;
-                padding: var(--spacing-md);
-            }
-        }
-    `;
-}
 
 /**
  * 初始化 JSON 格式化工具
@@ -334,7 +165,7 @@ export function initJsonFormatterTool() {
 
 function validateAndFormat() {
     const input = jsonState.currentInput.trim();
-    
+
     if (!input) {
         jsonState.isValid = false;
         jsonState.currentOutput = '';
@@ -362,7 +193,7 @@ function formatJson() {
 
 function compressJson() {
     const input = jsonState.currentInput.trim();
-    
+
     if (!input) {
         updateStatus('输入为空');
         return;
@@ -400,13 +231,16 @@ function renderOutput(text, isCompressed = false) {
     });
 
     outputArea.innerHTML = html;
+    outputArea.querySelectorAll('.json-output-line[data-indent]').forEach(outputLine => {
+        outputLine.style.paddingLeft = `${outputLine.dataset.indent}em`;
+    });
 }
 
 function syntaxHighlight(line) {
     const match = line.match(/^(\s*)/);
     const indent = match ? match[1].length : 0;
     const content = line.substring(indent);
-    
+
     let highlighted = escapeHtml(content);
 
     // 字符串和键值对
@@ -427,7 +261,7 @@ function syntaxHighlight(line) {
     highlighted = highlighted.replace(/[{[\]},]/g, (m) => `<span class="text-slate-500">${m}</span>`);
 
     const paddingLeft = indent * 0.5;
-    return `<div style="padding-left: ${paddingLeft}em">${highlighted}</div>`;
+    return `<div class="json-output-line" data-indent="${paddingLeft}">${highlighted}</div>`;
 }
 
 function escapeHtml(text) {
@@ -468,7 +302,7 @@ function updateStatus(errorMsg = null) {
         }
     } else if (jsonState.isValid) {
         const lines = jsonState.currentOutput.split('\n').length;
-        statusDisplay.innerHTML = `<i class="ri-check-double-line" style="color: #22c55e;"></i><span>JSON 解析成功 • ${lines} 行 • UTF-8</span>`;
+        statusDisplay.innerHTML = `<i class="ri-check-double-line json-status__success-icon"></i><span>JSON 解析成功 • ${lines} 行 • UTF-8</span>`;
         if (validBadge) {
             validBadge.className = 'px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium';
             validBadge.textContent = 'Valid';
@@ -502,7 +336,6 @@ registerTool({
     category: 'dev',
     description: '格式化、美化和验证 JSON 数据',
     template: getTemplate,
-    styles: getStyles,
     init: initJsonFormatterTool,
     destroy: destroyJsonFormatterTool
 });

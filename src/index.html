@@ -6,7 +6,7 @@
     <title>DToolBox - 桌面工具箱</title>
     
     <!-- 本地 RemixIcon 字体图标 -->
-    <link rel="stylesheet" href="assets/remixicon.css">
+    <link rel="stylesheet" href="assets/remixicon-subset.css">
     
     <!-- 基础样式 -->
     <link rel="stylesheet" href="css/base.css">
@@ -14,17 +14,7 @@
     <link rel="stylesheet" href="css/layout.css">
     <!-- 工具库样式 -->
     <link rel="stylesheet" href="css/tools-library.css">
-    <!-- 设置页面样式 -->
-    <link rel="stylesheet" href="css/settings.css">
-    <!-- 存储与网络设置增强样式 -->
-    <link rel="stylesheet" href="css/storage-settings-enhanced.css">
-    <!-- 下载页面样式 -->
-    <link rel="stylesheet" href="css/downloads.css">
-    <!-- 工具样式 -->
-    <link rel="stylesheet" href="css/tools/timestamp-converter.css">
-    <link rel="stylesheet" href="css/tools/json-formatter.css">
-    <link rel="stylesheet" href="css/tools/base64-codec.css">
-    <link rel="stylesheet" href="css/tools/hash-tool.css">
+    <!-- 设置页与下载页样式在首次访问时按需加载 -->
     <!-- 响应式设计 -->
     <link rel="stylesheet" href="css/responsive.css">
 </head>
@@ -100,40 +90,60 @@
                 </div>
             </div>
 
-            <!-- 工具库视图 -->
+            <!-- 工具库视图（Apple-Style Redesign） -->
             <div id="toolLibraryView" class="view view--active">
                 <div class="view-container">
-                    <!-- 开发工具分类 -->
-                    <div class="tools-category">
-                        <h2 class="section-title">开发工具</h2>
+
+                    <!-- 最近使用 -->
+                    <section class="home-section home-section--recent is-initially-hidden" id="recentSection">
+                        <h2 class="home-section__title">
+                            <i class="ri-time-line"></i> 最近使用
+                        </h2>
+                        <div class="recent-scroll" id="recentToolsScroll">
+                            <!-- JS 动态生成 mini 卡片 -->
+                        </div>
+                    </section>
+
+                    <!-- 开发工具 -->
+                    <section class="home-section" id="devToolsSection">
+                        <h2 class="home-section__title">
+                            <i class="ri-code-s-slash-line"></i> 开发工具
+                        </h2>
                         <div class="tool-grid" id="devToolsGrid">
                             <!-- 工具卡片动态生成 -->
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- 设计工具分类 -->
-                    <div class="tools-category">
-                        <h2 class="section-title">设计工具</h2>
+                    <!-- 设计工具 -->
+                    <section class="home-section" id="designToolsSection">
+                        <h2 class="home-section__title">
+                            <i class="ri-palette-line"></i> 设计工具
+                        </h2>
                         <div class="tool-grid" id="designToolsGrid">
                             <!-- 工具卡片动态生成 -->
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- 日常工具分类 -->
-                    <div class="tools-category">
-                        <h2 class="section-title">日常工具</h2>
+                    <!-- 日常工具 -->
+                    <section class="home-section" id="utilityToolsSection">
+                        <h2 class="home-section__title">
+                            <i class="ri-tools-line"></i> 日常工具
+                        </h2>
                         <div class="tool-grid" id="utilityToolsGrid">
                             <!-- 工具卡片动态生成 -->
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- 其他工具分类 -->
-                    <div class="tools-category">
-                        <h2 class="section-title">其他工具</h2>
+                    <!-- 其他工具 -->
+                    <section class="home-section" id="otherToolsSection">
+                        <h2 class="home-section__title">
+                            <i class="ri-more-line"></i> 其他工具
+                        </h2>
                         <div class="tool-grid" id="otherToolsGrid">
                             <!-- 工具卡片动态生成 -->
                         </div>
-                    </div>
+                    </section>
+
                 </div>
             </div>
 
@@ -145,6 +155,14 @@
             <!-- 收藏夹视图 -->
             <div id="favoritesView" class="view">
                 <div class="view-container">
+                    <section class="page-hero page-hero--favorites page-hero--compact">
+                        <div class="page-hero__content">
+                            <span class="page-hero__eyebrow">Pinned Workspace</span>
+                            <h1 class="page-hero__title">把最常用的工具固定成你自己的工作台</h1>
+                            <p class="page-hero__description">收藏页会和工具箱保持同一套材质与层级，但更强调高频入口、排序和连续操作。</p>
+                        </div>
+                    </section>
+
                     <div class="favorites-header">
                         <h2 class="section-title">我的收藏</h2>
                         <button id="clearFavoritesBtn" class="btn btn--secondary favorites__clear-btn">
@@ -182,25 +200,37 @@
                                     <p class="settings-hero-desc">管理应用程序的偏好设置、快捷键和功能开关</p>
                                 </div>
                             </div>
-                            <div class="settings-quick-nav">
-                                <a href="#storageSection" class="settings-quick-nav-item">
-                                    <i class="ri-hard-drive-2-line"></i>
-                                    <span>存储</span>
-                                </a>
-                                <a href="#shortcutsSection" class="settings-quick-nav-item">
-                                    <i class="ri-keyboard-box-line"></i>
-                                    <span>快捷键</span>
-                                </a>
-                                <a href="#desktopSection" class="settings-quick-nav-item">
-                                    <i class="ri-layout-grid-line"></i>
-                                    <span>桌面整理</span>
-                                </a>
-                                <a href="#generalSection" class="settings-quick-nav-item">
-                                    <i class="ri-toggle-line"></i>
-                                    <span>常规</span>
-                                </a>
+                            <div class="settings-hero-meta" aria-label="设置状态">
+                                <span><i class="ri-shield-check-line"></i> 本地优先</span>
+                                <span><i class="ri-check-double-line"></i> 自动保存</span>
                             </div>
                         </div>
+
+                        <div class="settings-workspace">
+                            <nav class="settings-side-nav" aria-label="设置分类">
+                                <div class="settings-side-nav__label">设置分类</div>
+                                <a href="#storageSection" class="settings-side-nav__item settings-side-nav__item--active" aria-current="true">
+                                    <i class="ri-hard-drive-2-line"></i><span>存储与网络</span>
+                                </a>
+                                <a href="#shortcutsSection" class="settings-side-nav__item">
+                                    <i class="ri-keyboard-box-line"></i><span>快捷键</span>
+                                </a>
+                                <a href="#desktopSection" class="settings-side-nav__item">
+                                    <i class="ri-layout-grid-line"></i><span>桌面整理</span>
+                                </a>
+                                <a href="#configSection" class="settings-side-nav__item">
+                                    <i class="ri-database-2-line"></i><span>配置规则</span>
+                                </a>
+                                <a href="#generalSection" class="settings-side-nav__item">
+                                    <i class="ri-toggle-line"></i><span>常规选项</span>
+                                </a>
+                                <div class="settings-side-nav__note">
+                                    <i class="ri-information-line"></i>
+                                    <span>设置保存在当前设备</span>
+                                </div>
+                            </nav>
+
+                            <div class="settings-panels">
                         
                         <!-- 存储与网络 -->
                         <section class="settings-section" id="storageSection">
@@ -238,17 +268,19 @@
                                         </div>
                                         <div class="storage-options">
                                             <div class="settings-checkbox-wrapper">
-                                                <input type="checkbox" id="clean-files" class="settings-checkbox-input">
+                                                <input type="checkbox" id="clean-files" class="settings-checkbox-input" disabled>
                                                 <label for="clean-files" class="settings-checkbox-label">
                                                     <i class="ri-delete-bin-line"></i>
                                                     <span>退出时自动清理临时文件</span>
+                                                    <small>规划中</small>
                                                 </label>
                                             </div>
                                             <div class="settings-checkbox-wrapper">
-                                                <input type="checkbox" id="auto-open-folder" class="settings-checkbox-input">
+                                                <input type="checkbox" id="auto-open-folder" class="settings-checkbox-input" disabled>
                                                 <label for="auto-open-folder" class="settings-checkbox-label">
                                                     <i class="ri-folder-open-line"></i>
                                                     <span>下载完成后自动打开文件夹</span>
+                                                    <small>规划中</small>
                                                 </label>
                                             </div>
                                         </div>
@@ -364,7 +396,7 @@
                             <div class="settings-section-header">
                                 <i class="ri-database-2-line"></i>
                                 <h2 class="settings-section-title">配置规则管理</h2>
-                                <span class="settings-section-badge settings-section-badge--purple">数据</span>
+                                <span class="settings-section-badge settings-section-badge--muted">规划中</span>
                             </div>
                             <div class="settings-section-content">
                                 
@@ -373,7 +405,7 @@
                                         <div class="settings-item-title">备份配置</div>
                                         <div class="settings-item-desc">导出所有工具设置、快捷键及收藏列表</div>
                                     </div>
-                                    <button class="settings-btn settings-btn--primary">
+                                    <button class="settings-btn settings-btn--primary" disabled title="该功能正在开发中">
                                         <i class="ri-upload-2-line"></i> 导出 Config.json
                                     </button>
                                 </div>
@@ -385,7 +417,7 @@
                                         <div class="settings-item-title">导入配置</div>
                                         <div class="settings-item-desc">从 JSON 文件恢复设置，这将覆盖当前配置</div>
                                     </div>
-                                    <button class="settings-btn settings-btn--secondary">
+                                    <button class="settings-btn settings-btn--secondary" disabled title="该功能正在开发中">
                                         <i class="ri-download-2-line"></i> 导入...
                                     </button>
                                 </div>
@@ -410,7 +442,7 @@
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
-                                <div class="settings-sub-item" id="desktopOrganizerSubSettings" style="display: none;">
+                                <div class="settings-sub-item" id="desktopOrganizerSubSettings" hidden>
                                     <div class="settings-toggle-item sub-item">
                                         <div class="settings-toggle-label-group">
                                             <span class="settings-toggle-label">自动分析</span>
@@ -434,24 +466,28 @@
                             <div class="settings-section-header">
                                 <i class="ri-toggle-line"></i>
                                 <h2 class="settings-section-title">常规选项</h2>
+                                <span class="settings-section-badge settings-section-badge--muted">规划中</span>
                             </div>
                             <div class="settings-section-content">
                                 <div class="settings-toggle-item">
                                     <span class="settings-toggle-label">开机自动启动</span>
                                     <label class="settings-toggle">
-                                        <input type="checkbox" class="settings-toggle-input">
+                                        <input type="checkbox" class="settings-toggle-input" disabled>
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
                                 <div class="settings-toggle-item">
                                     <span class="settings-toggle-label">关闭主面板时最小化到托盘</span>
                                     <label class="settings-toggle">
-                                        <input type="checkbox" class="settings-toggle-input" checked>
+                                        <input type="checkbox" class="settings-toggle-input" checked disabled>
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
                             </div>
                         </section>
+
+                            </div>
+                        </div>
 
                         <div class="settings-footer">
                             <div class="settings-footer-card">
@@ -460,10 +496,10 @@
                                 </div>
                                 <div class="settings-footer-info">
                                     <span class="settings-footer-name">DtKit</span>
-                                    <span class="settings-footer-version">v0.1.5</span>
+                                    <span class="settings-footer-version">v0.1.6</span>
                                 </div>
                                 <div class="settings-footer-meta">
-                                    <span class="settings-footer-build">Build 20260117</span>
+                                    <span class="settings-footer-build">Build 20260130</span>
                                     <span class="settings-footer-separator">•</span>
                                     <a href="#" class="settings-footer-link">检查更新</a>
                                     <span class="settings-footer-separator">•</span>
@@ -481,11 +517,11 @@
     </div>
 
     <!-- 自定义镜像源配置对话框 -->
-    <div id="customSourceDialog" class="modal-overlay" style="display: none;">
-        <div class="modal-dialog">
+    <div id="customSourceDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="customSourceDialogTitle" aria-hidden="true" hidden>
+        <div class="modal-dialog" tabindex="-1">
             <div class="modal-header">
-                <h3 class="modal-title"><i class="ri-settings-4-line"></i> 配置自定义镜像源</h3>
-                <button class="modal-close" id="closeCustomSourceDialog">
+                <h3 class="modal-title" id="customSourceDialogTitle"><i class="ri-settings-4-line"></i> 配置自定义镜像源</h3>
+                <button class="modal-close" id="closeCustomSourceDialog" type="button" aria-label="关闭对话框">
                     <i class="ri-close-line"></i>
                 </button>
             </div>
@@ -497,17 +533,18 @@
                 <textarea 
                     id="customSourceInput" 
                     class="modal-textarea" 
-                    placeholder="{\n  &quot;name&quot;: &quot;自定义镜像源&quot;,\n  &quot;url&quot;: &quot;https://example.com/registry/&quot;,\n  &quot;description&quot;: &quot;镜像源描述&quot;\n}"
+                    placeholder='{"name": "自定义镜像源", "url": "https://example.com/registry/", "description": "镜像源描述"}'
                     rows="10"
                 ></textarea>
+                <p id="customSourceError" class="modal-error" role="alert" hidden></p>
                 <div class="modal-hint">
                     <i class="ri-lightbulb-line"></i>
                     示例格式：包含 name（名称）、url（地址）和可选的 description（描述）字段
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="modal-btn modal-btn--secondary" id="cancelCustomSource">取消</button>
-                <button class="modal-btn modal-btn--primary" id="confirmCustomSource">
+                <button class="modal-btn modal-btn--secondary" id="cancelCustomSource" type="button">取消</button>
+                <button class="modal-btn modal-btn--primary" id="confirmCustomSource" type="button">
                     <i class="ri-check-line"></i> 确定
                 </button>
             </div>
@@ -515,11 +552,11 @@
     </div>
 
     <!-- 桌面整理确认对话框 -->
-    <div id="desktopOrganizerConfirmDialog" class="modal-overlay" style="display: none;">
-        <div class="modal-dialog modal-dialog--small">
+    <div id="desktopOrganizerConfirmDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="desktopOrganizerDialogTitle" aria-hidden="true" hidden>
+        <div class="modal-dialog modal-dialog--small" tabindex="-1">
             <div class="modal-header">
                 <h3 class="modal-title"><i class="ri-layout-grid-line"></i> <span id="desktopOrganizerDialogTitle">确认操作</span></h3>
-                <button class="modal-close" id="closeDesktopOrganizerDialog">
+                <button class="modal-close" id="closeDesktopOrganizerDialog" type="button" aria-label="关闭对话框">
                     <i class="ri-close-line"></i>
                 </button>
             </div>
@@ -530,8 +567,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="modal-btn modal-btn--secondary" id="cancelDesktopOrganizer">取消</button>
-                <button class="modal-btn modal-btn--primary" id="confirmDesktopOrganizer">
+                <button class="modal-btn modal-btn--secondary" id="cancelDesktopOrganizer" type="button">取消</button>
+                <button class="modal-btn modal-btn--primary" id="confirmDesktopOrganizer" type="button">
                     <i class="ri-check-line"></i> 确定
                 </button>
             </div>

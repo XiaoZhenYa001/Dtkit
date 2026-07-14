@@ -1,8 +1,8 @@
 # DtKit - 桌面工具箱
 
-> 🔧 高效、易于扩展的桌面工具箱应用 | Tauri 2.0 + Web 技术栈 | 模块化架构
+> 🔧 高效、易于扩展的桌面工具箱应用 | Tauri 2.0 + Vite | 模块化架构
 
-[![Version](https://img.shields.io/badge/version-0.1.3-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)]()
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -23,7 +23,8 @@ DtKit/
 │   ├── main.js                  # 📄 应用主框架
 │   │
 │   ├── assets/                  # 🎨 静态资源
-│   │   └── remixicon.css        # 图标库
+│   │   ├── remixicon.css        # 完整图标源文件（用于生成子集）
+│   │   └── remixicon-subset.css # 应用实际加载的图标子集
 │   │
 │   ├── components/              # 🧩 UI 组件
 │   │   ├── navigation.js        # 导航组件
@@ -84,10 +85,38 @@ npm install
 npm run tauri dev
 ```
 
+仅调试前端时可以运行：
+```bash
+npm run dev
+```
+
 ### 构建应用
 ```bash
 npm run tauri build
 ```
+
+`tauri build` 会自动先执行 `npm run build`，生成经过压缩和分包的 `dist/` 前端产物。
+
+### 更新图标子集
+
+新增或移除 `ri-*` 图标后，安装一次字体构建依赖并重新生成子集：
+
+```bash
+python -m pip install fonttools brotli
+npm run icons:build
+```
+
+`npm run test:js` 会检查应用引用的完整图标类是否全部包含在子集中。
+
+### 更新 HTML 预览运行器
+
+HTML 预览运行器使用 CSP SHA-256 白名单。修改 `src/preview-runner.js` 后需要更新哈希：
+
+```bash
+npm run csp:hash
+```
+
+`npm run test:js` 会检查生产与开发 CSP 中的哈希是否和运行器源码一致。
 
 ## 📖 开发指南
 
@@ -107,12 +136,12 @@ npm run tauri build
 1. 复制 `src/tools/_TOOL_TEMPLATE/` 目录
 2. 重命名为新工具名称
 3. 实现 `index.js` 中的 `init()` 和 `destroy()` 方法
-4. 在 `src/tools/index.js` 中导入新工具
-5. 在 `src/index.html` 中添加 HTML 视图
+4. 在 `src/tools/index.js` 中登记工具清单和动态加载器
+5. 将清单状态设为 `ready`、`beta` 或 `planned`
 
 ## 📊 当前工具列表
 
-### ✅ 已实现 (12 个)
+### ✅ 已实现 (11 个)
 
 | 工具 | 说明 | 目录 |
 |------|------|------|
@@ -124,13 +153,19 @@ npm run tauri build
 | 📱 二维码生成 | 生成自定义二维码 | `qr-generator/` |
 | ⏰ 闹钟工具 | 定时提醒功能 | `alarm-clock/` |
 | 🌐 HTML 预览 | 实时预览 HTML 代码 | `html-preview/` |
-| 🔗 URL 编码 | URL 编码/解码 | `url-encoder.js` |
-| 📐 单位换算 | 常用单位转换 | `unit-converter.js` |
-| 🖼️ 图片压缩 | 图片压缩优化 | `image-compressor.js` |
-| 📅 Cron 表达式 | Crontab 表达式解析 | `crontab-explainer.js` |
-| 🌟 Favicon 生成 | 网站图标生成 | `favicon-generator.js` |
+| 🔗 URL 编码 | URL 组件和完整网址编解码 | `url-encoder/` |
+| 📐 单位换算 | 数据、长度、质量、温度、面积、速度换算 | `unit-converter/` |
+| 📅 Cron 表达式 | 标准 5 段 Crontab 解析和执行时间预估 | `crontab-explainer/` |
 
-### ⏳ 计划中
+### ⏳ 计划中 (2 个已展示入口)
+
+- 🖼️ 图片压缩
+- 🌟 Favicon 生成
+
+计划中工具会在工具库标记为“即将推出”，并禁止打开空白页面。
+
+### 🧭 后续候选
+
 - 🔍 正则表达式测试
 - 📝 Markdown 预览
 - 🔤 文本差异对比
@@ -167,7 +202,7 @@ npm run tauri build
 
 | 项目 | 说明 |
 |------|------|
-| 技术栈 | Tauri 2.0 + HTML/CSS/JavaScript |
+| 技术栈 | Tauri 2.0 + Vite + HTML/CSS/JavaScript |
 | 模块系统 | ES6 Modules |
 | 样式规范 | CSS 变量 + BEM 命名 |
 | 图标库 | Remixicon |
@@ -175,5 +210,6 @@ npm run tauri build
 
 
 
-**最后更新**: 2026 年 1 月 17 日  
-**当前版本**: 0.1.5
+**最后更新**: 2026 年 7 月 13 日
+
+**当前版本**: 0.1.6

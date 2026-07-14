@@ -79,8 +79,11 @@ export function renderTabs() {
         const label = document.createElement('div');
         label.className = 'tab__label';
         label.innerHTML = `
-            <i class="${tab.icon}"></i>
-            <span>${tab.title}</span>
+            <span class="tab__icon"><i class="${tab.icon}"></i></span>
+            <span class="tab__text">
+                <span class="tab__title">${tab.title}</span>
+                <span class="tab__badge">${tab.badge || '界面'}</span>
+            </span>
         `;
         tabEl.appendChild(label);
         

@@ -4,116 +4,122 @@
 import appState, { getActiveTab } from '../core/state.js';
 import DOM from '../core/dom.js';
 
-// 回调函数引用
 let onRenderTabs = null;
 let onUpdateContentView = null;
 let onGetTool = null;
 
-/**
- * 注入回调函数
- */
 export function setNavigationCallbacks(callbacks) {
     onRenderTabs = callbacks.onRenderTabs;
     onUpdateContentView = callbacks.onUpdateContentView;
     onGetTool = callbacks.onGetTool;
 }
 
-/**
- * 更新后退/前进按钮状态
- */
+function getToolBadge(tool) {
+    const badgeMap = {
+        dev: '开发',
+        design: '设计',
+        utility: '日常',
+        other: '其他'
+    };
+
+    return badgeMap[tool?.category] || '工具';
+}
+
+function applyViewState(activeTab, viewType) {
+    const viewMap = {
+        toolLibrary: {
+            title: '工具库',
+            icon: 'ri-apps-2-line',
+            badge: '工作台'
+        },
+        favorites: {
+            title: '收藏',
+            icon: 'ri-star-line',
+            badge: '收藏夹'
+        },
+        downloads: {
+            title: '下载',
+            icon: 'ri-download-2-line',
+            badge: '下载'
+        },
+        settings: {
+            title: '设置',
+            icon: 'ri-settings-3-line',
+            badge: '设置'
+        }
+    };
+
+    const nextView = viewMap[viewType] || viewMap.toolLibrary;
+    activeTab.title = nextView.title;
+    activeTab.icon = nextView.icon;
+    activeTab.badge = nextView.badge;
+}
+
 export function updateBackForwardButtons() {
     const activeTab = getActiveTab();
     if (!activeTab) return;
-    
+
     if (DOM.backBtn) DOM.backBtn.disabled = activeTab.historyIndex <= 0;
     if (DOM.forwardBtn) DOM.forwardBtn.disabled = activeTab.historyIndex >= activeTab.history.length - 1;
 }
 
-/**
- * 后退
- */
+function applyHistoryItem(historyItem) {
+    const activeTab = getActiveTab();
+    if (!activeTab) return;
+
+    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
+    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
+
+    if (toolId === null) {
+        activeTab.viewType = viewType;
+        activeTab.toolId = null;
+        appState.currentView = viewType;
+        applyViewState(activeTab, viewType);
+        return;
+    }
+
+    if (toolId === 'settings') {
+        activeTab.viewType = 'settings';
+        activeTab.toolId = 'settings';
+        appState.currentView = 'settings';
+        applyViewState(activeTab, 'settings');
+        return;
+    }
+
+    const tool = onGetTool ? onGetTool(toolId) : null;
+    if (!tool) return;
+
+    activeTab.toolId = toolId;
+    activeTab.title = tool.name;
+    activeTab.icon = tool.icon;
+    activeTab.badge = getToolBadge(tool);
+    appState.currentView = toolId;
+}
+
 export function goBack() {
     const activeTab = getActiveTab();
     if (!activeTab || activeTab.historyIndex <= 0) return;
-    
+
     activeTab.historyIndex--;
-    const historyItem = activeTab.history[activeTab.historyIndex];
-    
-    // 兼容旧格式（纯 toolId）和新格式（对象）
-    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
-    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
-    
-    if (toolId === null) {
-        // 回到列表视图（工具库或收藏）
-        activeTab.viewType = viewType;
-        appState.currentView = viewType;
-        activeTab.toolId = null;
-        if (viewType === 'favorites') {
-            activeTab.title = '收藏';
-            activeTab.icon = 'ri-star-line';
-        } else {
-            activeTab.title = '工具库';
-            activeTab.icon = 'ri-apps-2-line';
-        }
-    } else {
-        const tool = onGetTool ? onGetTool(toolId) : null;
-        if (tool) {
-            activeTab.toolId = toolId;
-            activeTab.title = tool.name;
-            activeTab.icon = tool.icon;
-            appState.currentView = toolId;
-        }
-    }
-    
+    applyHistoryItem(activeTab.history[activeTab.historyIndex]);
+
     if (onRenderTabs) onRenderTabs();
     if (onUpdateContentView) onUpdateContentView();
     updateBackForwardButtons();
 }
 
-/**
- * 前进
- */
 export function goForward() {
     const activeTab = getActiveTab();
     if (!activeTab || activeTab.historyIndex >= activeTab.history.length - 1) return;
-    
+
     activeTab.historyIndex++;
-    const historyItem = activeTab.history[activeTab.historyIndex];
-    
-    // 兼容旧格式（纯 toolId）和新格式（对象）
-    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
-    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
-    
-    if (toolId === null) {
-        // 回到列表视图（工具库或收藏）
-        activeTab.viewType = viewType;
-        appState.currentView = viewType;
-        activeTab.toolId = null;
-        if (viewType === 'favorites') {
-            activeTab.title = '收藏';
-            activeTab.icon = 'ri-star-line';
-        } else {
-            activeTab.title = '工具库';
-            activeTab.icon = 'ri-apps-2-line';
-        }
-    } else {
-        const tool = onGetTool ? onGetTool(toolId) : null;
-        if (tool) {
-            activeTab.toolId = toolId;
-            activeTab.title = tool.name;
-            activeTab.icon = tool.icon;
-            appState.currentView = toolId;
-        }
-    }
-    
+    applyHistoryItem(activeTab.history[activeTab.historyIndex]);
+
     if (onRenderTabs) onRenderTabs();
     if (onUpdateContentView) onUpdateContentView();
     updateBackForwardButtons();
 }
 
-/**
- * 初始化导航事件监听
- */
 export function initNavigationListeners() {
     if (DOM.backBtn) DOM.backBtn.addEventListener('click', goBack);
     if (DOM.forwardBtn) DOM.forwardBtn.addEventListener('click', goForward);

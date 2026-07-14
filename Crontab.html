@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crontab 解释器 - Cron 表达式翻译</title>
+  <style>
+    :root{
+      --bg: #f6f9ff;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #e2e8f0;
+      --blue: #2563eb;
+      --blue2:#1d4ed8;
+      --blueSoft:#eff6ff;
+      --shadow: 0 10px 30px rgba(15, 23, 42, .08);
+      --radius: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+
+    * { box-sizing: border-box; }
+    body{
+      margin:0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(1000px 500px at 20% 0%, rgba(37,99,235,.14), transparent 60%),
+        radial-gradient(900px 450px at 90% 10%, rgba(29,78,216,.12), transparent 55%),
+        linear-gradient(180deg, #ffffff 0%, var(--bg) 60%, #ffffff 100%);
+      min-height: 100vh;
+    }
+
+    .wrap{
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 18px 40px;
+    }
+
+    header{
+      display:flex;
+      gap:16px;
+      align-items:center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .brand{
+      display:flex;
+      gap:12px;
+      align-items:center;
+    }
+
+    .logo{
+      width:42px;height:42px;border-radius: 12px;
+      background: linear-gradient(135deg, var(--blue) 0%, #60a5fa 60%, #93c5fd 100%);
+      box-shadow: 0 12px 28px rgba(37,99,235,.25);
+      position: relative;
+      overflow:hidden;
+    }
+    .logo:after{
+      content:"";
+      position:absolute;
+      inset:-30%;
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.85), transparent 55%);
+      transform: rotate(20deg);
+    }
+
+    h1{
+      font-size: 18px;
+      margin:0;
+      letter-spacing: .2px;
+    }
+    .subtitle{
+      margin:2px 0 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .top-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.7);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 24px rgba(15,23,42,.04);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .dot{
+      width:8px;height:8px;border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 0 4px rgba(34,197,94,.12);
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    @media (max-width: 920px){
+      .grid{ grid-template-columns: 1fr; }
+      .top-actions{ justify-content: flex-start; }
+    }
+
+    .card{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+
+    .card-head{
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap:10px;
+      background: linear-gradient(180deg, rgba(37,99,235,.06), rgba(37,99,235,0));
+    }
+
+    .card-title{
+      margin:0;
+      font-size: 14px;
+      letter-spacing:.2px;
+    }
+
+    .card-body{ padding: 16px; }
+
+    label{
+      display:block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .input-row{
+      display:flex;
+      gap:10px;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .cron-input{
+      flex: 1 1 420px;
+      min-width: 280px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 12px;
+      outline:none;
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.35;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+    }
+    .cron-input:focus{
+      border-color: rgba(37,99,235,.55);
+      box-shadow: 0 0 0 4px rgba(37,99,235,.12);
+    }
+
+    select, button{
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 11px 12px;
+      font-size: 13px;
+      cursor:pointer;
+    }
+    select{
+      min-width: 220px;
+    }
+    button.primary{
+      background: linear-gradient(135deg, var(--blue) 0%, var(--blue2) 100%);
+      color:#fff;
+      border-color: rgba(29,78,216,.6);
+      box-shadow: 0 10px 22px rgba(37,99,235,.22);
+    }
+    button.primary:hover{ filter: brightness(1.02); }
+    button.ghost:hover, select:hover{ border-color: rgba(37,99,235,.3); }
+
+    .hint{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--blueSoft);
+      border: 1px solid rgba(37,99,235,.18);
+      color: #0b2a6b;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .kvs{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    @media (max-width: 520px){
+      .kvs{ grid-template-columns: 1fr; }
+    }
+
+    .kv{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+    }
+    .kv .k{
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .badge{
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(37,99,235,.08);
+      border: 1px solid rgba(37,99,235,.18);
+      color: #0b2a6b;
+      font-family: var(--mono);
+    }
+    .kv .v{
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .output{
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .output h3{
+      margin:0 0 8px 0;
+      font-size: 13px;
+    }
+    .output .text{
+      margin: 0;
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .table{
+      width:100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      overflow:hidden;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .table th, .table td{
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align:left;
+      font-size: 12.5px;
+    }
+    .table th{
+      background: rgba(37,99,235,.06);
+      color: #0b2a6b;
+      font-weight: 600;
+    }
+    .table tr:last-child td{ border-bottom: none; }
+    .muted{ color: var(--muted); }
+
+    details{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background:#fff;
+      overflow:hidden;
+    }
+    details summary{
+      cursor:pointer;
+      list-style: none;
+      padding: 12px 14px;
+      font-weight: 600;
+      font-size: 13px;
+      background: linear-gradient(180deg, rgba(37,99,235,.06), rgba(37,99,235,0));
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details .content{
+      padding: 12px 14px 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .footer-note{
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .error{
+      border-color: rgba(220,38,38,.35) !important;
+      background: rgba(220,38,38,.04) !important;
+    }
+    .error-text{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(220,38,38,.06);
+      border: 1px solid rgba(220,38,38,.25);
+      color: #7f1d1d;
+      font-size: 12px;
+      line-height: 1.55;
+      display:none;
+    }
+
+    .btn-row{
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      align-items:center;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>Crontab 解释器</h1>
+          <p class="subtitle">将复杂 Cron/Crontab/Quartz 表达式翻译为可读中文，并拆解字段含义</p>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <div class="pill" title="自动识别 5/6/7 字段（含 @daily 等）">
+          <span class="dot" aria-hidden="true"></span>
+          自动识别模式
+        </div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- 左：输入 & 解析 -->
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">输入 Cron 表达式</h2>
+          <span class="muted" style="font-size:12px;">蓝白主题 · 单文件可离线运行</span>
+        </div>
+
+        <div class="card-body">
+          <label for="cronExpr">Cron 表达式（支持 5/6/7 字段，或 @daily/@hourly 等）</label>
+          <div class="input-row">
+            <input id="cronExpr" class="cron-input" autocomplete="off"
+                   placeholder="例如：*/10 9-18 * * MON-FRI  （或：0 0/5 * * * ?  Quartz）" />
+
+            <select id="examples" aria-label="示例表达式">
+              <option value="">选择一个示例填充…</option>
+              <option value="*/5 * * * *">每 5 分钟</option>
+              <option value="0 0 * * *">每天 00:00</option>
+              <option value="30 9 * * 1-5">工作日 09:30</option>
+              <option value="0 */2 * * *">每 2 小时整点</option>
+              <option value="15 3 1 * *">每月 1 号 03:15</option>
+              <option value="0 0 1 1 *">每年 1 月 1 日 00:00</option>
+              <option value="@weekly">@weekly（每周）</option>
+              <option value="0 0/5 * * * ?">Quartz：每 5 分钟（含秒字段）</option>
+              <option value="0 15 10 ? * MON-FRI">Quartz：周一到周五 10:15:00</option>
+            </select>
+
+            <button class="primary" id="btnParse">解析</button>
+            <button class="ghost" id="btnClear">清空</button>
+          </div>
+
+          <div class="btn-row">
+            <button class="ghost" id="btnCopy">复制中文释义</button>
+            <span class="muted" id="copyTip" style="font-size:12px;"></span>
+          </div>
+
+          <div class="hint">
+            <b>提示：</b>标准 Linux crontab 通常是 5 字段（分 时 日 月 周）。Quartz 常见 6/7 字段（秒 分 时 日 月 周 [年]）。
+            若你输入的表达式包含 <span class="badge">?</span>、<span class="badge">L</span>、<span class="badge">W</span>、<span class="badge">#</span>，
+            本工具会按 Quartz 习惯尽量解释，并同时给出“实现差异提示”。
+          </div>
+
+          <div class="error-text" id="errorBox"></div>
+
+          <div class="kvs">
+            <div class="kv">
+              <div class="k">识别结果 <span class="badge" id="modeBadge">—</span></div>
+              <div class="v" id="modeText">等待解析…</div>
+            </div>
+            <div class="kv">
+              <div class="k">字段数量 <span class="badge" id="fieldCountBadge">—</span></div>
+              <div class="v" id="fieldsRaw">—</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右：帮助 -->
+      <aside class="card">
+        <div class="card-head">
+          <h2 class="card-title">字段速查</h2>
+        </div>
+        <div class="card-body">
+          <details open>
+            <summary>Crontab（5 字段）</summary>
+            <div class="content">
+              <div><span class="badge">分</span> <span class="badge">时</span> <span class="badge">日</span> <span class="badge">月</span> <span class="badge">周</span></div>
+              <div class="footer-note">
+                范围常见：分 0-59，时 0-23，日 1-31，月 1-12，周 0-7（0/7 通常表示周日；不同实现略有差异）。
+              </div>
+            </div>
+          </details>
+
+          <div style="height:10px;"></div>
+
+          <details>
+            <summary>Quartz（6/7 字段）</summary>
+            <div class="content">
+              <div><span class="badge">秒</span> <span class="badge">分</span> <span class="badge">时</span> <span class="badge">日</span> <span class="badge">月</span> <span class="badge">周</span> <span class="badge">年(可选)</span></div>
+              <div class="footer-note">
+                Quartz 常用 <span class="badge">?</span> 表示“该字段不指定”，并支持 <span class="badge">L</span>/<span class="badge">W</span>/<span class="badge">#</span> 等扩展。
+              </div>
+            </div>
+          </details>
+
+          <div style="height:10px;"></div>
+
+          <details>
+            <summary>常见语法片段</summary>
+            <div class="content">
+              <div><span class="badge">*</span> 每个取值</div>
+              <div><span class="badge">*/n</span> 每 n 个取值</div>
+              <div><span class="badge">a-b</span> 从 a 到 b</div>
+              <div><span class="badge">a-b/n</span> 从 a 到 b 每 n 个取值</div>
+              <div><span class="badge">a,b,c</span> 列表</div>
+              <div><span class="badge">@daily</span> 等价于每天一次（不同系统映射略有差异）</div>
+            </div>
+          </details>
+        </div>
+      </aside>
+
+      <!-- 左下：输出 -->
+      <section class="card" style="grid-column: 1 / -1;">
+        <div class="card-head">
+          <h2 class="card-title">解析结果</h2>
+          <span class="muted" style="font-size:12px;">会同时输出“中文释义”与“字段拆解”</span>
+        </div>
+        <div class="card-body">
+          <div class="output">
+            <h3>中文释义</h3>
+            <p class="text" id="nlText">输入表达式后点击「解析」。</p>
+          </div>
+
+          <table class="table" aria-label="字段拆解表">
+            <thead>
+              <tr>
+                <th style="width: 120px;">字段</th>
+                <th style="width: 240px;">原值</th>
+                <th>解释</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr>
+                <td colspan="3" class="muted">暂无数据</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="footer-note" id="implNote" style="display:none;"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    // ---------- 基础映射 ----------
+    const MONTH_MAP = {
+      JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6,
+      JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12
+    };
+    // 注意：不同实现对 DOW 的数字定义存在差异。
+    // 这里用于“解释展示”的常用映射（MON=1 ... SUN=0/7）：
+    const DOW_MAP = { SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 };
+    const DOW_CN = ["周日","周一","周二","周三","周四","周五","周六"];
+
+    const SHORTCUTS = {
+      "@yearly":  "0 0 1 1 *",
+      "@annually":"0 0 1 1 *",
+      "@monthly": "0 0 1 * *",
+      "@weekly":  "0 0 * * 0",
+      "@daily":   "0 0 * * *",
+      "@midnight":"0 0 * * *",
+      "@hourly":  "0 * * * *",
+      "@reboot":  "@reboot"
+    };
+
+    // ---------- 工具函数 ----------
+    const $ = (id) => document.getElementById(id);
+
+    function escapeHtml(s){
+      return (s ?? "").replace(/[&<>"']/g, c => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+      }[c]));
+    }
+
+    function normalizeToken(token, type){
+      let t = String(token).trim();
+      if(!t) return t;
+      const up = t.toUpperCase();
+
+      // month alias
+      if(type === "month"){
+        // 替换范围里可能的 JAN-DEC
+        return up.replace(/[A-Z]{3}/g, (m) => MONTH_MAP[m] != null ? String(MONTH_MAP[m]) : m);
+      }
+      // dow alias
+      if(type === "dow"){
+        return up.replace(/[A-Z]{3}/g, (m) => DOW_MAP[m] != null ? String(DOW_MAP[m]) : m);
+      }
+      return t;
+    }
+
+    function valueLabel(v, type){
+      // v 已经尽量数字化（字符串）
+      const n = Number(v);
+      if(type === "dow"){
+        // 支持 0-7；7 视作周日
+        if(Number.isFinite(n)){
+          const idx = (n === 7) ? 0 : ((n % 7 + 7) % 7);
+          return DOW_CN[idx] + `(${v})`;
+        }
+        return `周?(${v})`;
+      }
+      if(type === "month"){
+        if(Number.isFinite(n) && n >= 1 && n <= 12){
+          return `${n}月`;
+        }
+      }
+      return String(v);
+    }
+
+    function joinCn(items){
+      // 中文顿号连接
+      return items.filter(Boolean).join("、");
+    }
+
+    // ---------- 核心描述逻辑 ----------
+    function describeField(raw, type){
+      // raw：未转义字符串（已 trim）
+      const unit = ({
+        second:"秒", minute:"分钟", hour:"小时",
+        dom:"日", month:"月", dow:"星期", year:"年"
+      })[type] || "";
+
+      const orig = raw;
+      const r = normalizeToken(raw, type);
+
+      // Quartz: ?
+      if(r === "?"){
+        return `不指定（Quartz 常用 ? 表示该字段不参与匹配）`;
+      }
+
+      // Wildcard
+      if(r === "*"){
+        if(type === "dom") return "每一天（按日期）";
+        if(type === "dow") return "每一天（按星期）";
+        if(type === "month") return "每个月";
+        if(type === "year") return "每一年";
+        return `每${unit}`;
+      }
+
+      // Quartz extensions (有限支持)
+      if(type === "dom"){
+        if(r === "L") return "本月最后一天（Quartz 扩展）";
+        if(r === "LW") return "本月最后一个工作日（Quartz 扩展）";
+        // 15W：距离 15 号最近的工作日
+        if(/^\d+W$/i.test(r)){
+          const d = r.slice(0, -1);
+          return `距离每月 ${d} 号最近的工作日（Quartz 扩展）`;
+        }
+      }
+      if(type === "dow"){
+        // 5L：本月最后一个星期四（Quartz 里：数字含义取决于实现）
+        if(/^\d+L$/i.test(r)){
+          const d = r.slice(0, -1);
+          return `本月最后一个 ${valueLabel(d, "dow")}（Quartz 扩展，DOW 数字定义可能因实现而异）`;
+        }
+        // MON#2 或 2#3：本月第 N 个星期X
+        if(/^[A-Z]{3}#\d+$/i.test(orig) || /^\d+#\d+$/i.test(r)){
+          const [left, nth] = r.split("#");
+          return `本月第 ${nth} 个 ${valueLabel(left, "dow")}（Quartz 扩展）`;
+        }
+        if(r === "L") return "最后一个星期（Quartz 中 L 在周字段含义与实现相关）";
+      }
+
+      // list
+      if(r.includes(",")){
+        const parts = r.split(",").map(x => x.trim()).filter(Boolean);
+        const descs = parts.map(p => describePart(p, type));
+        // 如果全是单值，可简化描述
+        const allSingle = parts.every(p => isSingleValue(p, type));
+        if(allSingle){
+          const labels = parts.map(p => valueLabel(p, type));
+          return `取以下${unit}：${joinCn(labels)}`;
+        }
+        return `满足任意一项：${descs.map(d => `【${d}】`).join(" ")}`;
+      }
+
+      return describePart(r, type);
+
+      function isSingleValue(p, type){
+        // 单值：纯数字 或 DOW/月别名已在 normalizeToken 中转为数字
+        return /^[0-9]+$/.test(p) || /^[0-9]+$/.test(normalizeToken(p, type));
+      }
+
+      function describePart(part, type){
+        // step
+        if(part.includes("/")){
+          const [base, step] = part.split("/");
+          if(base === "*"){
+            return `每 ${step} ${unit}`;
+          }
+          // range with step
+          if(base.includes("-")){
+            const [a,b] = base.split("-");
+            return `从 ${valueLabel(a, type)} 到 ${valueLabel(b, type)}，每 ${step} ${unit}`;
+          }
+          // single with step (如 10/5：从 10 开始每 5)
+          return `从 ${valueLabel(base, type)} 开始，每 ${step} ${unit}`;
+        }
+
+        // range
+        if(part.includes("-")){
+          const [a,b] = part.split("-");
+          return `从 ${valueLabel(a, type)} 到 ${valueLabel(b, type)}`;
+        }
+
+        // single value
+        if(/^\d+$/.test(part)){
+          if(type === "dom") return `每月 ${part} 号`;
+          if(type === "month") return `在 ${valueLabel(part, type)}`;
+          if(type === "dow") return `在 ${valueLabel(part, type)}`;
+          if(type === "hour") return `${part} 点`;
+          if(type === "minute") return `${part} 分`;
+          if(type === "second") return `${part} 秒`;
+          if(type === "year") return `${part} 年`;
+          return `${part}`;
+        }
+
+        // fallback
+        return `原样：${part}`;
+      }
+    }
+
+    function detectMode(fields){
+      // fields: string[]
+      if(fields.length === 1 && fields[0].startsWith("@")) return "shortcut";
+      if(fields.length === 5) return "crontab-5";
+      if(fields.length === 6) return "quartz-6";
+      if(fields.length === 7) return "quartz-7";
+      return "unknown";
+    }
+
+    function parseExpression(exprRaw){
+      const expr = exprRaw.trim();
+      if(!expr) throw new Error("请输入 Cron 表达式。");
+
+      // shortcut
+      if(expr.startsWith("@")){
+        const key = expr.toLowerCase();
+        if(SHORTCUTS[key] == null){
+          throw new Error("未知的快捷表达式（@xxx）。常见：@hourly/@daily/@weekly/@monthly/@yearly/@reboot");
+        }
+        if(key === "@reboot"){
+          return {
+            mode: "shortcut",
+            normalized: "@reboot",
+            fields: ["@reboot"],
+            table: [{name:"快捷", raw:"@reboot", desc:"系统启动时执行一次（实现相关）"}],
+            nl: "触发条件：系统启动时执行一次（@reboot）。\n（注意：不同系统对 @reboot 的支持情况不同。）",
+            note: "提示：@reboot 不是所有 cron 实现都支持。"
+          };
+        }
+        // 将快捷映射到 5 字段
+        const mapped = SHORTCUTS[key];
+        const fields = mapped.split(/\s+/);
+        return buildResult(fields, "crontab-5", `快捷：${expr}  →  ${mapped}`);
+      }
+
+      const fields = expr.split(/\s+/).filter(Boolean);
+      const mode = detectMode(fields);
+      if(mode === "unknown"){
+        throw new Error(`字段数量不正确：识别到 ${fields.length} 段。请使用 5/6/7 字段，或 @daily 等快捷表达式。`);
+      }
+      return buildResult(fields, mode, "自动识别");
+    }
+
+    function buildResult(fields, mode, normalizedHint){
+      const rows = [];
+      let types = [];
+      if(mode === "crontab-5"){
+        types = ["minute","hour","dom","month","dow"];
+      }else if(mode === "quartz-6"){
+        types = ["second","minute","hour","dom","month","dow"];
+      }else if(mode === "quartz-7"){
+        types = ["second","minute","hour","dom","month","dow","year"];
+      }else{
+        types = fields.map((_,i)=>`field${i+1}`);
+      }
+
+      for(let i=0;i<fields.length;i++){
+        const type = types[i];
+        const raw = fields[i];
+        rows.push({
+          name: ({
+            second:"秒", minute:"分", hour:"时", dom:"日", month:"月", dow:"周", year:"年"
+          })[type] || `字段${i+1}`,
+          raw,
+          desc: describeField(raw, type)
+        });
+      }
+
+      // 自然语言：用“条件列表”方式更稳妥（避免不同 cron 实现对 日/周 的 OR/AND 差异）
+      const bullets = rows.map(r => `- ${r.name}：${r.desc}`).join("\n");
+      let nl = `当满足以下条件时触发：\n${bullets}`;
+
+      // 实现差异提示
+      let note = "";
+      const hasQuartzTokens = fields.some(f => /[?LW#]/i.test(f));
+      if(mode === "crontab-5"){
+        note =
+          "实现差异提示：在许多 Unix/Linux cron 实现中，“日(每月)”与“周(星期)”字段可能是“或(OR)”关系；" +
+          "而部分调度器/类库可能采用不同规则。建议在目标环境实际验证。";
+      }else{
+        note =
+          "实现差异提示：Quartz 语义通常要求“日(每月)”与“周(星期)”采用 ? 来避免冲突；" +
+          "不同调度器对 L/W/# 的支持与细节可能不同，建议在目标平台验证。";
+      }
+      if(hasQuartzTokens && mode === "crontab-5"){
+        note =
+          "你输入的表达式包含 Quartz 扩展符（如 ?/L/W/#），但字段数量像 Crontab 5 段。" +
+          "请确认目标环境是否支持这些扩展。";
+      }
+
+      return { mode, normalized: normalizedHint, fields, table: rows, nl, note };
+    }
+
+    // ---------- 渲染 ----------
+    function render(result){
+      $("cronExpr").classList.remove("error");
+      $("errorBox").style.display = "none";
+      $("errorBox").textContent = "";
+
+      const modeLabel = ({
+        "shortcut":"快捷(@xxx)",
+        "crontab-5":"Crontab 5 字段",
+        "quartz-6":"Quartz 6 字段",
+        "quartz-7":"Quartz 7 字段",
+      })[result.mode] || "未知";
+
+      $("modeBadge").textContent = modeLabel;
+      $("modeText").textContent = result.normalized;
+      $("fieldCountBadge").textContent = String(result.fields.length);
+      $("fieldsRaw").textContent = result.fields.join("  ");
+
+      $("nlText").textContent = result.nl;
+
+      const tbody = $("tbody");
+      tbody.innerHTML = result.table.map(r => `
+        <tr>
+          <td><span class="badge">${escapeHtml(r.name)}</span></td>
+          <td><span style="font-family: var(--mono);">${escapeHtml(r.raw)}</span></td>
+          <td>${escapeHtml(r.desc)}</td>
+        </tr>
+      `).join("");
+
+      $("implNote").style.display = "block";
+      $("implNote").textContent = result.note || "";
+    }
+
+    function renderError(message){
+      $("cronExpr").classList.add("error");
+      $("errorBox").style.display = "block";
+      $("errorBox").textContent = message;
+
+      $("modeBadge").textContent = "—";
+      $("modeText").textContent = "等待解析…";
+      $("fieldCountBadge").textContent = "—";
+      $("fieldsRaw").textContent = "—";
+      $("nlText").textContent = "输入表达式后点击「解析」。";
+      $("tbody").innerHTML = `<tr><td colspan="3" class="muted">暂无数据</td></tr>`;
+      $("implNote").style.display = "none";
+    }
+
+    function doParse(){
+      const expr = $("cronExpr").value;
+      try{
+        const res = parseExpression(expr);
+        render(res);
+      }catch(e){
+        renderError(e.message || String(e));
+      }
+    }
+
+    // ---------- 事件 ----------
+    $("btnParse").addEventListener("click", doParse);
+    $("cronExpr").addEventListener("keydown", (e) => {
+      if(e.key === "Enter"){
+        e.preventDefault();
+        doParse();
+      }
+    });
+
+    $("btnClear").addEventListener("click", () => {
+      $("cronExpr").value = "";
+      $("examples").value = "";
+      $("copyTip").textContent = "";
+      renderError("已清空。请输入 Cron 表达式。");
+      $("cronExpr").classList.remove("error");
+      $("errorBox").style.display = "none";
+    });
+
+    $("examples").addEventListener("change", (e) => {
+      if(!e.target.value) return;
+      $("cronExpr").value = e.target.value;
+      $("copyTip").textContent = "";
+      doParse();
+    });
+
+    $("btnCopy").addEventListener("click", async () => {
+      const text = $("nlText").textContent || "";
+      if(!text.trim() || text.includes("输入表达式后点击")){
+        $("copyTip").textContent = "暂无可复制内容（请先解析）。";
+        return;
+      }
+      try{
+        await navigator.clipboard.writeText(text);
+        $("copyTip").textContent = "已复制到剪贴板。";
+        setTimeout(()=> $("copyTip").textContent = "", 1400);
+      }catch{
+        // 兼容不支持 clipboard 的环境
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        $("copyTip").textContent = "已复制（兼容模式）。";
+        setTimeout(()=> $("copyTip").textContent = "", 1400);
+      }
+    });
+
+    // 初始提示
+    renderError("请输入 Cron 表达式。示例：*/5 * * * *");
+    $("cronExpr").classList.remove("error");
+    $("errorBox").style.display = "none";
+  </script>
+</body>
+</html>

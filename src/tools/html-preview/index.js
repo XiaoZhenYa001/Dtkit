@@ -1,8 +1,10 @@
+import '../../css/tools/html-preview.css';
 /**
  * HTML 代码预览工具
  * 实时预览 HTML/CSS/JavaScript 代码效果
  */
 import { registerTool } from '../toolRegistry.js';
+import previewRunnerSource from '../../preview-runner.js?raw';
 
 // ============================================
 // 工具状态
@@ -59,13 +61,13 @@ function getTemplate() {
                             </span>
                         </div>
                         <div class="html-preview-editors">
-                            <textarea id="htmlEditor" class="html-preview-textarea active" 
+                            <textarea id="htmlEditor" class="html-preview-textarea active"
                                 placeholder="在此输入 HTML 代码..."
                                 spellcheck="false"></textarea>
-                            <textarea id="cssEditor" class="html-preview-textarea" 
+                            <textarea id="cssEditor" class="html-preview-textarea"
                                 placeholder="在此输入 CSS 样式..."
                                 spellcheck="false"></textarea>
-                            <textarea id="jsEditor" class="html-preview-textarea" 
+                            <textarea id="jsEditor" class="html-preview-textarea"
                                 placeholder="在此输入 JavaScript 代码..."
                                 spellcheck="false"></textarea>
                         </div>
@@ -85,7 +87,7 @@ function getTemplate() {
                             </div>
                         </div>
                         <div class="html-preview-frame-wrapper">
-                            <iframe id="previewFrame" class="html-preview-frame" 
+                            <iframe id="previewFrame" class="html-preview-frame"
                                 sandbox="allow-scripts allow-modals"
                                 title="代码预览"></iframe>
                         </div>
@@ -108,437 +110,7 @@ function getTemplate() {
 // ============================================
 // CSS 样式
 // ============================================
-function getStyles() {
-    return `
-        .html-preview-view {
-            display: flex;
-            flex-direction: column;
-            height: calc(100vh - 46px - 3.5rem - 2rem);
-            max-height: calc(100vh - 46px - 3.5rem - 2rem);
-            padding: 0;
-            overflow: hidden;
-            box-sizing: border-box;
-        }
 
-        .html-preview-container {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            flex-direction: column;
-            background: var(--color-bg-secondary);
-            border-radius: 16px;
-            overflow: hidden;
-            margin: var(--spacing-lg);
-            border: 1px solid var(--color-border);
-        }
-
-        /* 顶部工具栏 */
-        .html-preview-toolbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 14px 20px;
-            background: var(--color-bg-primary);
-            border-bottom: 1px solid var(--color-border);
-            flex-shrink: 0;
-        }
-
-        .html-preview-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--color-text-primary);
-        }
-
-        .html-preview-title i {
-            font-size: 20px;
-            color: #6366f1;
-        }
-
-        .html-preview-actions {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        /* 自动刷新开关 */
-        .html-preview-toggle {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .html-preview-toggle input {
-            display: none;
-        }
-
-        .toggle-slider {
-            position: relative;
-            width: 40px;
-            height: 22px;
-            background: #cbd5e1;
-            border-radius: 11px;
-            transition: background 0.3s;
-        }
-
-        .toggle-slider::after {
-            content: '';
-            position: absolute;
-            top: 3px;
-            left: 3px;
-            width: 16px;
-            height: 16px;
-            background: white;
-            border-radius: 50%;
-            transition: transform 0.3s;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-        }
-
-        .html-preview-toggle input:checked + .toggle-slider {
-            background: #6366f1;
-        }
-
-        .html-preview-toggle input:checked + .toggle-slider::after {
-            transform: translateX(18px);
-        }
-
-        .toggle-label {
-            font-size: 13px;
-            color: var(--color-text-secondary);
-        }
-
-        /* 按钮 */
-        .html-preview-btn {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .html-preview-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-
-        .html-preview-btn:active {
-            transform: translateY(0);
-        }
-
-        .html-preview-btn--secondary {
-            background: var(--color-bg-secondary);
-            color: var(--color-text-secondary);
-            border: 1px solid var(--color-border);
-        }
-
-        .html-preview-btn--secondary:hover {
-            background: var(--color-bg-tertiary);
-            color: var(--color-text-primary);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-
-        /* 主体区域 */
-        .html-preview-main {
-            flex: 1;
-            min-height: 0;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0;
-        }
-
-        /* 编辑器面板 */
-        .html-preview-editor-panel {
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid var(--color-border);
-            min-height: 0;
-        }
-
-        .html-preview-panel-header {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            padding: 12px 16px;
-            background: var(--color-bg-tertiary);
-            border-bottom: 1px solid var(--color-border);
-            flex-shrink: 0;
-            font-size: 13px;
-            color: var(--color-text-secondary);
-        }
-
-        .html-preview-panel-header i {
-            margin-right: 6px;
-        }
-
-        /* 标签页 */
-        .panel-tab {
-            display: flex;
-            align-items: center;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-weight: 500;
-        }
-
-        .panel-tab:hover {
-            background: rgba(99, 102, 241, 0.1);
-            color: #6366f1;
-        }
-
-        .panel-tab.active {
-            background: #6366f1;
-            color: white;
-        }
-
-        .panel-tab i {
-            margin-right: 6px;
-            font-size: 14px;
-        }
-
-        /* 编辑器容器 */
-        .html-preview-editors {
-            flex: 1;
-            min-height: 0;
-            position: relative;
-        }
-
-        .html-preview-textarea {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            padding: 16px;
-            border: none;
-            background: var(--color-bg-primary);
-            color: var(--color-text-primary);
-            font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
-            font-size: 13px;
-            line-height: 1.6;
-            resize: none;
-            outline: none;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s;
-        }
-
-        .html-preview-textarea.active {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        .html-preview-textarea::placeholder {
-            color: var(--color-text-tertiary);
-        }
-
-        .html-preview-textarea::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        .html-preview-textarea::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .html-preview-textarea::-webkit-scrollbar-thumb {
-            background: rgba(99, 102, 241, 0.2);
-            border-radius: 4px;
-        }
-
-        .html-preview-textarea::-webkit-scrollbar-thumb:hover {
-            background: rgba(99, 102, 241, 0.4);
-        }
-
-        /* 预览面板 */
-        .html-preview-result-panel {
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-            background: var(--color-bg-primary);
-            transition: all 0.3s ease;
-        }
-
-        .html-preview-header-actions {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-left: auto;
-        }
-
-        .html-preview-size-info {
-            font-size: 12px;
-            color: var(--color-text-tertiary);
-            padding: 4px 10px;
-            background: var(--color-bg-secondary);
-            border-radius: 4px;
-        }
-
-        .html-preview-fullscreen-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            background: var(--color-bg-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: 6px;
-            color: var(--color-text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .html-preview-fullscreen-btn:hover {
-            background: #6366f1;
-            border-color: #6366f1;
-            color: white;
-        }
-
-        .html-preview-fullscreen-btn i {
-            font-size: 16px;
-        }
-
-        /* 全屏模式 */
-        .html-preview-result-panel.fullscreen {
-            position: fixed;
-            inset: 0;
-            z-index: 9999;
-            background: white;
-            border-radius: 0;
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-panel-header {
-            padding: 16px 24px;
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: white;
-            border-bottom: none;
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-panel-header span {
-            color: white;
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-size-info {
-            background: rgba(255, 255, 255, 0.2);
-            color: rgba(255, 255, 255, 0.9);
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-fullscreen-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border-color: rgba(255, 255, 255, 0.3);
-            color: white;
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-fullscreen-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-frame-wrapper {
-            padding: 20px;
-            background: #f1f5f9;
-        }
-
-        .html-preview-result-panel.fullscreen .html-preview-frame {
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-        }
-
-        .html-preview-frame-wrapper {
-            flex: 1;
-            min-height: 0;
-            padding: 12px;
-            background: #f8fafc;
-            overflow: hidden;
-        }
-
-        .html-preview-frame {
-            width: 100%;
-            height: 100%;
-            border: none;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        }
-
-        /* 示例区域 */
-        .html-preview-examples {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 20px;
-            background: var(--color-bg-primary);
-            border-top: 1px solid var(--color-border);
-            flex-shrink: 0;
-            overflow-x: auto;
-        }
-
-        .html-preview-examples-label {
-            font-size: 13px;
-            color: var(--color-text-secondary);
-            white-space: nowrap;
-        }
-
-        .html-preview-example-btn {
-            padding: 6px 14px;
-            background: var(--color-bg-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: 6px;
-            font-size: 12px;
-            color: var(--color-text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-
-        .html-preview-example-btn:hover {
-            background: #eef2ff;
-            border-color: #6366f1;
-            color: #6366f1;
-        }
-
-        /* 响应式 */
-        @media (max-width: 900px) {
-            .html-preview-main {
-                grid-template-columns: 1fr;
-                grid-template-rows: 1fr 1fr;
-            }
-
-            .html-preview-editor-panel {
-                border-right: none;
-                border-bottom: 1px solid var(--color-border);
-            }
-        }
-
-        @media (max-width: 600px) {
-            .html-preview-toolbar {
-                flex-wrap: wrap;
-                gap: 10px;
-            }
-
-            .html-preview-actions {
-                width: 100%;
-                justify-content: flex-end;
-            }
-
-            .toggle-label {
-                display: none;
-            }
-
-            .html-preview-examples {
-                flex-wrap: wrap;
-            }
-        }
-    `;
-}
 
 // ============================================
 // 示例代码
@@ -830,15 +402,36 @@ body {
 // ============================================
 async function init() {
     console.log('[HTMLPreview] 初始化 HTML 预览工具');
-    
+
     // 清理之前的事件监听器
     if (previewState.abortController) {
         previewState.abortController.abort();
     }
     previewState.abortController = new AbortController();
-    
+
     bindEvents();
-    refreshPreview();
+    initializePreviewRunner();
+}
+
+function initializePreviewRunner() {
+    const previewFrame = document.getElementById('previewFrame');
+    if (!previewFrame) return;
+
+    const nonce = crypto.randomUUID().replaceAll('-', '');
+    const runnerDocument = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' blob:; style-src blob:; img-src data: blob: http: https:; media-src data: blob:; font-src data:">
+    <title>DtKit HTML Preview Sandbox</title>
+</head>
+<body>
+    <script nonce="${nonce}">${previewRunnerSource}</script>
+</body>
+</html>`;
+
+    previewFrame.src = `data:text/html;charset=utf-8,${encodeURIComponent(runnerDocument)}`;
 }
 
 // ============================================
@@ -846,7 +439,7 @@ async function init() {
 // ============================================
 function bindEvents() {
     const signal = previewState.abortController?.signal;
-    
+
     // 标签页切换
     document.querySelectorAll('.panel-tab').forEach(tab => {
         tab.addEventListener('click', () => switchTab(tab.dataset.tab), { signal });
@@ -905,6 +498,10 @@ function bindEvents() {
     // ESC 键退出全屏（使用 signal 管理）
     document.addEventListener('keydown', handleKeydown, { signal });
 
+    // runner 加载完成后补发当前内容，避免首次消息早于 iframe 初始化。
+    const previewFrame = document.getElementById('previewFrame');
+    previewFrame?.addEventListener('load', refreshPreview, { signal });
+
     // 示例按钮
     document.querySelectorAll('.html-preview-example-btn').forEach(btn => {
         btn.addEventListener('click', () => loadExample(btn.dataset.example), { signal });
@@ -921,7 +518,7 @@ function toggleFullscreen() {
 
     previewState.isFullscreen = !previewState.isFullscreen;
     panel.classList.toggle('fullscreen', previewState.isFullscreen);
-    
+
     // 更新按钮图标
     const icon = btn.querySelector('i');
     if (icon) {
@@ -992,33 +589,10 @@ function refreshPreview() {
     const css = cssEditor?.value || '';
     const js = jsEditor?.value || '';
 
-    // 构建完整的 HTML 文档
-    const fullHtml = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        ${css}
-    </style>
-</head>
-<body>
-    ${html}
-    <script>
-        try {
-            ${js}
-        } catch(e) {
-            console.error('JS Error:', e);
-        }
-    </script>
-</body>
-</html>
-    `.trim();
-
-    // 使用 srcdoc 加载内容
-    previewFrame.srcdoc = fullHtml;
+    previewFrame.contentWindow?.postMessage({
+        type: 'dtkit-preview-render',
+        payload: { html, css, js }
+    }, '*');
 
     // 更新代码大小显示
     updateSizeInfo(html, css, js);
@@ -1084,17 +658,18 @@ function destroy() {
         clearTimeout(previewState.refreshTimer);
         previewState.refreshTimer = null;
     }
-    
+
     // 取消所有事件监听器（包括键盘事件）
     if (previewState.abortController) {
         previewState.abortController.abort();
         previewState.abortController = null;
     }
-    
+
     // 如果在全屏状态，退出全屏
     if (previewState.isFullscreen) {
         previewState.isFullscreen = false;
     }
+
     console.log('[HTMLPreview] 工具已销毁');
 }
 
@@ -1109,7 +684,6 @@ registerTool({
     category: 'design',
     description: '实时预览 HTML/CSS/JS 代码效果',
     template: getTemplate,
-    styles: getStyles,
     init,
     destroy
 });

@@ -9,6 +9,7 @@ function createDefaultTab() {
         id: 'toolLibrary',
         title: '工具库',
         icon: 'ri-apps-2-line',
+        badge: '工作台',
         toolId: null,
         viewType: 'toolLibrary', // toolLibrary | favorites | settings
         active: true,
@@ -100,6 +101,7 @@ export function createNewTabConfig() {
         id: 'tab_' + Date.now(),
         title: '工具库',
         icon: 'ri-apps-2-line',
+        badge: '工作台',
         toolId: null,
         viewType: 'toolLibrary', // toolLibrary | favorites | settings
         active: false,

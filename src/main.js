@@ -9,14 +9,16 @@
 import appState, { getActiveTab } from './core/state.js';
 import DOM, { initDOM } from './core/dom.js';
 import { showToast } from './core/utils.js';
+import { bootstrapDesktopOrganizer } from './core/desktopOrganizer.js';
 
 // ============================================
 // 导入工具注册中心
 // ============================================
-import { 
-    getAllTools, 
-    initTool, 
-    getTool, 
+import {
+    getAllTools,
+    initTool,
+    loadTool,
+    getTool,
     destroyTool,
     hasToolTemplate,
     renderToolView,
@@ -35,12 +37,31 @@ import { updateBackForwardButtons, goBack, goForward, initNavigationListeners, s
 // ============================================
 import { renderToolLibrary, handleSearch, initSearchListener, setToolLibraryCallbacks } from './views/toolLibrary.js';
 import { renderFavoritesPage, updateClearFavoritesButton, initClearFavoritesListener, setFavoritesCallbacks } from './views/favorites.js';
-import { renderDownloadsPage, initDownloadsView } from './views/downloads.js';
-import { initSettings } from './views/settings.js';
+import { loadViewAssets } from './views/lazyAssets.js';
 
 // ============================================
 // 内容视图管理
 // ============================================
+
+let pendingToolInitFrame = null;
+const toolOpenRequests = new Map();
+let viewRenderRequest = 0;
+
+function handleViewLoadError(viewName, requestId, error) {
+    if (requestId !== viewRenderRequest) return;
+    console.error(`[DtKit] Failed to load ${viewName} view assets`, error);
+    showToast(`${viewName}页面加载失败，请重试`, 'error');
+}
+
+function showSettingsView(requestId) {
+    loadViewAssets('settings')
+        .then(settingsView => settingsView.initSettings())
+        .then(() => {
+            if (requestId !== viewRenderRequest) return;
+            DOM.settingsView?.classList.add('view--active');
+        })
+        .catch(error => handleViewLoadError('设置', requestId, error));
+}
 
 /**
  * 同步左侧导航按钮的激活状态
@@ -71,6 +92,12 @@ function syncNavButtonState() {
 function updateContentView() {
     const activeTab = getActiveTab();
     if (!activeTab) return;
+    const requestId = ++viewRenderRequest;
+
+    if (pendingToolInitFrame !== null) {
+        cancelAnimationFrame(pendingToolInitFrame);
+        pendingToolInitFrame = null;
+    }
     
     // 销毁当前工具（清理资源）
     if (appState.currentToolId && appState.currentToolId !== activeTab.toolId) {
@@ -91,9 +118,9 @@ function updateContentView() {
     
     // 判断显示哪个视图
     if (activeTab.toolId === 'settings') {
-        DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
         appState.currentView = 'settings';
+        showSettingsView(requestId);
     }
     else if (activeTab.toolId) {
         const tool = getTool(activeTab.toolId);
@@ -106,12 +133,19 @@ function updateContentView() {
                 showDynamicContainer();
             }
             appState.currentToolId = activeTab.toolId;
-            setTimeout(() => initTool(activeTab.toolId), 100);
+            const toolIdToInitialize = activeTab.toolId;
+            pendingToolInitFrame = requestAnimationFrame(() => {
+                pendingToolInitFrame = null;
+                const latestTab = getActiveTab();
+                if (latestTab?.toolId === toolIdToInitialize && appState.currentToolId === toolIdToInitialize) {
+                    initTool(toolIdToInitialize);
+                }
+            });
         }
     }
     else if (appState.currentView === 'settings') {
-        DOM.settingsView?.classList.add('view--active');
         appState.currentToolId = null;
+        showSettingsView(requestId);
     }
     else if (appState.currentView === 'favorites') {
         DOM.favoritesView?.classList.add('view--active');
@@ -120,9 +154,14 @@ function updateContentView() {
         appState.currentToolId = null;
         updateClearFavoritesButton();
     } else if (appState.currentView === 'downloads') {
-        DOM.downloadsView?.classList.add('view--active');
-        renderDownloadsPage();
         appState.currentToolId = null;
+        loadViewAssets('downloads')
+            .then(downloadsView => {
+                if (requestId !== viewRenderRequest) return;
+                DOM.downloadsView?.classList.add('view--active');
+                downloadsView.renderDownloadsPage();
+            })
+            .catch(error => handleViewLoadError('下载', requestId, error));
     } else {
         DOM.toolLibraryView?.classList.add('view--active');
         if (DOM.navbar) DOM.navbar.style.display = 'flex';
@@ -136,33 +175,91 @@ function updateContentView() {
 // ============================================
 // 打开工具
 // ============================================
-function openTool(toolId, toolName, toolIcon) {
+function getTabBadgeByView(view) {
+    const badgeMap = {
+        toolLibrary: '工作台',
+        favorites: '收藏夹',
+        downloads: '下载',
+        settings: '设置'
+    };
+
+    return badgeMap[view] || '界面';
+}
+
+function getTabBadgeByTool(toolId) {
+    const tool = getTool(toolId);
+    const badgeMap = {
+        dev: '开发',
+        design: '设计',
+        utility: '日常',
+        other: '其他'
+    };
+
+    return badgeMap[tool?.category] || '工具';
+}
+
+async function openTool(toolId, toolName, toolIcon) {
+    const requestedTool = getTool(toolId);
+    if (requestedTool?.status === 'planned') {
+        showToast(`${requestedTool.name}正在开发中，敬请期待`, 'info');
+        return;
+    }
+
     // 检查是否已有标签打开了该工具
-    const existingTab = appState.tabs.find(t => t.toolId === toolId);
+    let existingTab = appState.tabs.find(t => t.toolId === toolId);
     
     if (existingTab) {
         switchTab(existingTab.id);
         return;
     }
     
-    // 在当前标签打开
-    const activeTab = getActiveTab();
-    if (!activeTab) return;
+    const targetTabId = appState.activeTabId;
+    const requestToken = Symbol(toolId);
+    toolOpenRequests.set(targetTabId, requestToken);
+
+    try {
+        await loadTool(toolId);
+    } catch (error) {
+        if (toolOpenRequests.get(targetTabId) !== requestToken) return;
+        toolOpenRequests.delete(targetTabId);
+        console.error(`[DtKit] 工具加载失败: ${toolId}`, error);
+        showToast(`工具加载失败：${toolName}`, 'error');
+        return;
+    }
+
+    if (toolOpenRequests.get(targetTabId) !== requestToken) return;
+    toolOpenRequests.delete(targetTabId);
+
+    // 加载期间可能发生了第二次打开请求。
+    existingTab = appState.tabs.find(t => t.toolId === toolId);
+    if (existingTab) {
+        switchTab(existingTab.id);
+        return;
+    }
+
+    // 将结果写回发起请求时的标签，避免异步加载期间切换标签导致串页。
+    const targetTab = appState.tabs.find(tab => tab.id === targetTabId);
+    if (!targetTab) return;
+
+    const loadedTool = getTool(toolId);
     
-    activeTab.toolId = toolId;
-    activeTab.title = toolName;
-    activeTab.icon = toolIcon;
+    targetTab.toolId = toolId;
+    targetTab.title = loadedTool?.name || toolName;
+    targetTab.icon = loadedTool?.icon || toolIcon;
+    targetTab.badge = getTabBadgeByTool(toolId);
     
     // 添加到历史栈（保存 toolId 和 viewType）
-    const historyIndex = activeTab.historyIndex + 1;
-    activeTab.history = activeTab.history.slice(0, historyIndex);
-    activeTab.history.push({ toolId: toolId, viewType: activeTab.viewType });
-    activeTab.historyIndex = activeTab.history.length - 1;
+    const historyIndex = targetTab.historyIndex + 1;
+    targetTab.history = targetTab.history.slice(0, historyIndex);
+    targetTab.history.push({ toolId: toolId, viewType: targetTab.viewType });
+    targetTab.historyIndex = targetTab.history.length - 1;
     
     appState.currentView = toolId;
     renderTabs();
-    updateContentView();
-    updateBackForwardButtons();
+    if (appState.activeTabId === targetTabId) {
+        updateContentView();
+        updateBackForwardButtons();
+    }
 }
 
 // ============================================
@@ -186,6 +283,7 @@ function initNavButtonListeners() {
                     activeTab.viewType = 'toolLibrary';
                     activeTab.title = '工具库';
                     activeTab.icon = 'ri-apps-2-line';
+                    activeTab.badge = getTabBadgeByView('toolLibrary');
                 }
             } else if (view === 'favorites') {
                 appState.currentView = 'favorites';
@@ -194,6 +292,7 @@ function initNavButtonListeners() {
                     activeTab.viewType = 'favorites';
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
+                    activeTab.badge = getTabBadgeByView('favorites');
                 }
             } else if (view === 'downloads') {
                 appState.currentView = 'downloads';
@@ -202,6 +301,7 @@ function initNavButtonListeners() {
                     activeTab.viewType = 'downloads';
                     activeTab.title = '下载';
                     activeTab.icon = 'ri-download-2-line';
+                    activeTab.badge = getTabBadgeByView('downloads');
                 }
             } else if (view === 'settings') {
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
@@ -214,10 +314,11 @@ function initNavButtonListeners() {
                         id: newTabId,
                         title: '设置',
                         icon: 'ri-settings-3-line',
+                        badge: getTabBadgeByView('settings'),
                         toolId: 'settings',
                         viewType: 'settings',
                         active: false,
-                        history: ['settings'],
+                        history: [{ toolId: 'settings', viewType: 'settings' }],
                         historyIndex: 0
                     });
                     appState.currentView = 'settings';
@@ -295,8 +396,10 @@ function initializeApp() {
     initAddTabListener();
     initClearFavoritesListener();
     
-    // 初始化设置（下载路径、镜像源、快捷键）
-    initSettings();
+    // 已启用的桌面整理热区需要在设置页面尚未打开时也能工作。
+    bootstrapDesktopOrganizer().catch(error => {
+        console.error('[DtKit] 桌面整理启动失败', error);
+    });
 }
 
 // DOM 加载完成后初始化

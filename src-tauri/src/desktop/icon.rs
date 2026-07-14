@@ -11,8 +11,8 @@ use base64::Engine;
 use image::{ImageBuffer, Rgba};
 use lazy_static::lazy_static;
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject,
-    BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject, BITMAP,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
 };
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
@@ -79,11 +79,14 @@ impl IconCache {
 
 /// 将路径字符串转换为宽字符
 fn to_wide_string(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// 从文件中提取图标并转换为 Base64 PNG
-/// 
+///
 /// # 内存安全
 /// - 所有 GDI 资源在函数结束前都会被正确释放
 /// - 使用 RAII 风格的清理
@@ -118,7 +121,7 @@ fn extract_icon_internal(file_path: &str) -> Option<String> {
 
     let wide_path = to_wide_string(file_path);
     let mut shfi = SHFILEINFOW::default();
-    
+
     // 获取文件图标
     let result = unsafe {
         SHGetFileInfoW(
@@ -147,7 +150,9 @@ struct IconGuard(windows::Win32::UI::WindowsAndMessaging::HICON);
 impl Drop for IconGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
-            unsafe { let _ = DestroyIcon(self.0); }
+            unsafe {
+                let _ = DestroyIcon(self.0);
+            }
         }
     }
 }
@@ -158,7 +163,9 @@ struct DcGuard(windows::Win32::Graphics::Gdi::HDC);
 impl Drop for DcGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
-            unsafe { let _ = DeleteDC(self.0); }
+            unsafe {
+                let _ = DeleteDC(self.0);
+            }
         }
     }
 }
@@ -169,7 +176,9 @@ struct GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ);
 impl Drop for GdiObjGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
-            unsafe { let _ = DeleteObject(self.0); }
+            unsafe {
+                let _ = DeleteObject(self.0);
+            }
         }
     }
 }
@@ -179,19 +188,23 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
     // 获取图标信息
     let mut icon_info = ICONINFO::default();
     let success = unsafe { GetIconInfo(hicon, &mut icon_info) };
-    
+
     if success.is_err() {
         return None;
     }
 
     // 确保位图被释放
     let _mask_guard = if !icon_info.hbmMask.is_invalid() {
-        Some(GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ(icon_info.hbmMask.0)))
+        Some(GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ(
+            icon_info.hbmMask.0,
+        )))
     } else {
         None
     };
     let _color_guard = if !icon_info.hbmColor.is_invalid() {
-        Some(GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ(icon_info.hbmColor.0)))
+        Some(GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ(
+            icon_info.hbmColor.0,
+        )))
     } else {
         None
     };
@@ -216,7 +229,7 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
             Some(&mut bitmap as *mut _ as *mut _),
         )
     };
-    
+
     if obj_size == 0 {
         return None;
     }
@@ -284,13 +297,13 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
     }
 
     // 创建图像
-    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_raw(width as u32, height as u32, pixels)?;
 
     // 编码为 PNG
     let mut png_data = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png_data);
-    
+
     if img.write_to(&mut cursor, image::ImageFormat::Png).is_err() {
         return None;
     }
@@ -298,19 +311,6 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
     // 转换为 Base64
     let base64_str = base64::engine::general_purpose::STANDARD.encode(&png_data);
     Some(format!("data:image/png;base64,{}", base64_str))
-}
-
-/// 批量提取图标（用于初始加载）
-/// 限制并发数量避免内存峰值
-pub fn extract_icons_batch(file_paths: &[String]) -> HashMap<String, Option<String>> {
-    let mut results = HashMap::new();
-    
-    for path in file_paths {
-        let icon = extract_file_icon(path);
-        results.insert(path.clone(), icon);
-    }
-    
-    results
 }
 
 /// 清理图标缓存（可在需要时调用）

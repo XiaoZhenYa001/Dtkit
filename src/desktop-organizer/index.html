@@ -19,7 +19,7 @@
                 <span class="search-icon">🔍</span>
                 <input type="text" class="search-input" id="searchInput" placeholder="搜索文件或输入 / 命令...">
                 <span class="search-shortcut">Ctrl+F</span>
-                <span class="search-clear" id="searchClear" style="display: none;">✕</span>
+                <span class="search-clear is-initially-hidden" id="searchClear">✕</span>
             </div>
             <div class="command-hint" id="commandHint">
                 命令: <code>/d</code>文档 <code>/p</code>图片 <code>/v</code>视频 <code>/f</code>文件夹 <code>/a</code>程序 <code>/z</code>压缩包
@@ -32,7 +32,7 @@
         </div>
 
         <!-- 搜索结果 -->
-        <div class="search-results" id="searchResults" style="display: none;">
+        <div class="search-results is-initially-hidden" id="searchResults">
             <div class="search-results-header">
                 <span class="search-results-title">搜索结果</span>
                 <span class="search-results-count" id="searchResultsCount">0</span>
@@ -59,7 +59,7 @@
     </div>
 
     <!-- 右键菜单 - 文件 -->
-    <div class="context-menu" id="contextMenu" style="display: none;">
+    <div class="context-menu is-initially-hidden" id="contextMenu">
         <div class="menu-item" data-action="open">
             <span class="menu-icon">📂</span>
             <span class="menu-text">打开</span>
@@ -99,7 +99,7 @@
     </div>
 
     <!-- 右键菜单 - 空白区域 -->
-    <div class="context-menu" id="blankContextMenu" style="display: none;">
+    <div class="context-menu is-initially-hidden" id="blankContextMenu">
         <div class="menu-item" data-action="create-category">
             <span class="menu-icon">➕</span>
             <span class="menu-text">创建分类</span>
@@ -117,7 +117,7 @@
     </div>
 
     <!-- 创建分类对话框 -->
-    <div class="rename-dialog" id="createCategoryDialog" style="display: none;">
+    <div class="rename-dialog is-initially-hidden" id="createCategoryDialog">
         <div class="rename-dialog-content">
             <div class="rename-dialog-title">创建分类</div>
             <div class="category-form">
@@ -151,7 +151,7 @@
     </div>
 
     <!-- 管理分类对话框 -->
-    <div class="rename-dialog" id="manageCategoriesDialog" style="display: none;">
+    <div class="rename-dialog is-initially-hidden" id="manageCategoriesDialog">
         <div class="rename-dialog-content manage-categories-content">
             <div class="rename-dialog-title">管理自定义分类</div>
             <div class="custom-categories-list" id="customCategoriesList">
@@ -164,7 +164,7 @@
     </div>
 
     <!-- 重命名对话框 -->
-    <div class="rename-dialog" id="renameDialog" style="display: none;">
+    <div class="rename-dialog is-initially-hidden" id="renameDialog">
         <div class="rename-dialog-content">
             <div class="rename-dialog-title">重命名</div>
             <input type="text" class="rename-input" id="renameInput">

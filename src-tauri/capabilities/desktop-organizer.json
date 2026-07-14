@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-organizer",
+  "description": "Window controls required by the desktop organizer panel",
+  "windows": ["desktop-organizer"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-inner-size",
+    "core:window:allow-inner-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus"
+  ]
+}

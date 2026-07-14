@@ -1,40 +1,166 @@
-/* ============================================
-   响应式设计
-   ============================================ */
+@media (max-width: 1200px) {
+    .page-hero,
+    .page-hero__stats {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 1024px) {
+    .main-container {
+        margin: 0.6rem;
+        margin-left: 0;
+    }
+
     .tool-grid {
-        grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    }
+
+    .downloads-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
 @media (max-width: 768px) {
     .sidebar {
-        width: 4.5rem;
-        padding: var(--spacing-md) 0;
+        width: 4.9rem;
+        padding: 1rem 0.55rem;
     }
-    
+
+    .sidebar-logo {
+        width: 2.8rem;
+        height: 2.8rem;
+        font-size: 1rem;
+    }
+
+    .nav-btn__icon {
+        width: 2.7rem;
+        height: 2.7rem;
+    }
+
     .nav-btn__label {
-        font-size: 0.625rem;
+        font-size: 0.65rem;
     }
-    
+
+    .main-container {
+        border-radius: 1.5rem;
+    }
+
+    .tab-container {
+        padding-inline: 0.7rem;
+    }
+
+    .navbar {
+        height: auto;
+        flex-wrap: wrap;
+        padding: 0.9rem 1rem;
+    }
+
+    .search-container {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .view-container,
+    .settings-content,
+    .downloads-page {
+        padding: 1rem;
+    }
+
     .tool-panel {
         max-width: 100%;
-        padding: var(--spacing-lg);
+        padding: 1.4rem;
     }
-    
-    .view-container {
-        padding: var(--spacing-lg);
+
+    .page-hero {
+        padding: 1.25rem;
+    }
+
+    .page-hero__title,
+    .downloads-header__left h1,
+    .settings-hero-title {
+        font-size: 1.65rem;
+    }
+
+    .favorites-header,
+    .downloads-header,
+    .downloads-toolbar,
+    .add-download-header,
+    .settings-hero-content,
+    .settings-shortcut-item,
+    .settings-toggle-item,
+    .settings-footer-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .input-container,
+    .advanced-options-grid,
+    .path-input-group {
+        flex-direction: column;
+        grid-template-columns: 1fr;
+    }
+
+    .downloads-stats,
+    .tool-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .btn-start-download,
+    .toggle-advanced-btn,
+    .filter-btn,
+    .task-btn,
+    .settings-btn--primary,
+    .settings-btn--secondary {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .task-info {
+        flex-direction: column;
+    }
+
+    .task-controls,
+    .settings-quick-nav,
+    .settings-shortcut-keys {
+        width: 100%;
+    }
+
+    .settings-section-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
     }
 }
 
-@media (max-width: 640px) {
-    .tab {
-        padding: 0 0.75rem;
+@media (max-width: 560px) {
+    .sidebar {
+        width: 4.4rem;
     }
-    
-    .toolbar {
-        flex-wrap: wrap;
-        height: auto;
-        padding: var(--spacing-md);
+
+    .nav-btn__label {
+        display: none;
+    }
+
+    .tab {
+        min-width: 7rem;
+        padding-inline: 0.8rem;
+    }
+
+    .nav-btn-icon,
+    .tab-add-btn {
+        width: 2.4rem;
+        height: 2.4rem;
+    }
+
+    .page-hero,
+    .settings-hero,
+    .downloads-header__left,
+    .add-download-section,
+    .task-card,
+    .settings-section-content {
+        padding: 1rem;
+    }
+
+    .settings-sub-item {
+        margin-left: 0;
     }
 }

@@ -1,13 +1,24 @@
 {
   "name": "dtkit",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "icons:build": "python scripts/build-remixicon-subset.py",
+    "csp:hash": "node scripts/update-preview-csp-hash.mjs",
+    "check:js": "node scripts/check-js.mjs",
+    "test:js": "node --test tests/csp.test.js tests/crontab-explainer.test.js tests/desktop-organizer.test.js tests/html.test.js tests/icons.test.js tests/settings-model.test.js tests/tool-registry.test.js tests/tool-styles.test.js tests/unit-converter.test.js tests/url-encoder.test.js",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "test": "npm run test:js && npm run test:rust",
+    "check": "npm run check:js && npm run test"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "vite": "^8.1.4"
   },
   "dependencies": {
     "qr-code-styling": "^1.9.2"

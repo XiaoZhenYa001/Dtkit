@@ -1,3 +1,4 @@
+import '../../css/tools/qr-generator.css';
 /**
  * 二维码生成工具
  * 使用 qr-code-styling 库实现高度可定制的二维码生成
@@ -5,6 +6,7 @@
  */
 import { registerTool } from '../toolRegistry.js';
 import { getDownloadPath } from '../../core/state.js';
+import { escapeHtml } from '../../core/html.js';
 import { showToast } from '../../core/utils.js';
 
 // 工具状态
@@ -51,8 +53,8 @@ function getTemplate() {
                             <h4 class="qr-section-title">
                                 <i class="ri-text"></i> 二维码内容
                             </h4>
-                            <textarea id="qrDataInput" class="input qr-data-input" 
-                                placeholder="输入网址、文本或其他内容..." 
+                            <textarea id="qrDataInput" class="input qr-data-input"
+                                placeholder="输入网址、文本或其他内容..."
                                 rows="3">https://github.com</textarea>
                         </div>
 
@@ -142,11 +144,11 @@ function getTemplate() {
                                     <button id="uploadLogoBtn" class="btn btn--secondary qr-upload-btn">
                                         <i class="ri-upload-2-line"></i> 上传 Logo
                                     </button>
-                                    <button id="clearLogoBtn" class="btn btn--ghost qr-clear-logo-btn" style="display: none;">
+                                    <button id="clearLogoBtn" class="btn btn--ghost qr-clear-logo-btn is-initially-hidden">
                                         <i class="ri-close-line"></i>
                                     </button>
                                 </div>
-                                <div id="logoPreview" class="qr-logo-preview" style="display: none;"></div>
+                                <div id="logoPreview" class="qr-logo-preview is-initially-hidden"></div>
                             </div>
                             <div class="qr-option-group">
                                 <label class="qr-label">Logo 大小</label>
@@ -179,7 +181,7 @@ function getTemplate() {
                         <div class="qr-preview-box">
                             <div id="qrCodePreview" class="qr-preview-canvas"></div>
                         </div>
-                        
+
                         <div class="qr-actions">
                             <button id="generateQrBtn" class="btn btn--primary qr-action-btn">
                                 <i class="ri-refresh-line"></i> 生成二维码
@@ -211,441 +213,16 @@ function getTemplate() {
 /**
  * 获取工具的 CSS 样式
  */
-function getStyles() {
-    return `
-        .qr-generator-container {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            padding: 0.5rem 1.5rem 1.5rem 1.5rem;
-            max-width: 1100px;
-            margin: 1vh auto;
-            height: calc(100vh - 60px);
-        }
 
-        .qr-generator-header {
-            text-align: center;
-            flex-shrink: 0;
-        }
-
-        .qr-generator-title {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--color-text-primary);
-            margin: 0 0 0.5rem 0;
-            letter-spacing: -0.02em;
-        }
-
-        .qr-generator-desc {
-            font-size: 0.875rem;
-            color: var(--color-text-secondary);
-            margin: 0;
-        }
-
-        .qr-generator-content {
-            display: grid;
-            grid-template-columns: 1fr 360px;
-            gap: 2rem;
-            flex: 1;
-            min-height: 0;
-        }
-
-        /* 设置面板 */
-        .qr-settings-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            overflow-y: auto;
-            padding: 0.25rem 0.5rem 1rem 0.25rem;
-        }
-
-        .qr-settings-panel::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        .qr-settings-panel::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .qr-settings-panel::-webkit-scrollbar-thumb {
-            background: var(--color-border);
-            border-radius: 4px;
-        }
-
-        .qr-settings-panel::-webkit-scrollbar-thumb:hover {
-            background: var(--color-text-tertiary);
-        }
-
-        .qr-section {
-            background: #ffffff;
-            border: 1px solid var(--color-border);
-            border-radius: 1rem;
-            padding: 1.25rem;
-            transition: all 0.2s ease;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
-        }
-
-        .qr-section:hover {
-            border-color: var(--color-primary);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            transform: translateY(-1px);
-        }
-
-        .qr-section-title {
-            font-size: var(--font-size-sm);
-            font-weight: 600;
-            color: var(--color-text-primary);
-            margin: 0 0 var(--spacing-md) 0;
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            padding-bottom: var(--spacing-sm);
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .qr-section-title i {
-            color: var(--color-primary);
-            font-size: 1.1em;
-        }
-
-        .qr-option-group {
-            margin-bottom: var(--spacing-md);
-        }
-
-        .qr-option-group:last-child {
-            margin-bottom: 0;
-        }
-
-        .qr-label {
-            display: block;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            margin-bottom: 0.375rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        /* 美化输入框和选择框 */
-        .qr-data-input,
-        .qr-select,
-        .qr-color-text,
-        .qr-size-input {
-            width: 100%;
-            padding: 0.625rem 0.875rem;
-            font-size: 0.875rem;
-            color: var(--color-text-primary);
-            background: #f8fafc;
-            border: 1px solid var(--color-border);
-            border-radius: 0.5rem;
-            transition: all 0.2s ease;
-            outline: none;
-        }
-
-        .qr-data-input:hover,
-        .qr-select:hover,
-        .qr-color-text:hover,
-        .qr-size-input:hover {
-            border-color: var(--color-text-tertiary);
-        }
-
-        .qr-data-input:focus,
-        .qr-select:focus,
-        .qr-color-text:focus,
-        .qr-size-input:focus {
-            border-color: var(--color-primary);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-            background: var(--color-bg-primary);
-        }
-
-        .qr-data-input {
-            resize: vertical;
-            font-family: var(--font-mono);
-            min-height: 80px;
-            line-height: 1.5;
-        }
-
-        .qr-select {
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 12px center;
-            padding-right: 36px;
-        }
-
-        .qr-select:focus {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%233b82f6' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-        }
-
-        /* 颜色选择器 */
-        .qr-color-picker {
-            display: flex;
-            gap: var(--spacing-sm);
-            align-items: center;
-        }
-
-        .qr-color-input {
-            width: 52px;
-            height: 42px;
-            padding: 3px;
-            border: 2px solid var(--color-border);
-            border-radius: var(--radius-md);
-            cursor: pointer;
-            background: var(--color-bg-primary);
-            transition: all 0.2s ease;
-        }
-
-        .qr-color-input:hover {
-            border-color: var(--color-text-tertiary);
-            transform: scale(1.05);
-        }
-
-        .qr-color-input:focus {
-            border-color: var(--color-primary);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-        }
-
-        .qr-color-input::-webkit-color-swatch-wrapper {
-            padding: 2px;
-        }
-
-        .qr-color-input::-webkit-color-swatch {
-            border-radius: var(--radius-sm);
-            border: none;
-            box-shadow: inset 0 0 1px rgba(0,0,0,0.1);
-        }
-
-        .qr-color-text {
-            flex: 1;
-            font-family: var(--font-mono);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        /* Logo 上传 */
-        .qr-logo-upload {
-            display: flex;
-            gap: var(--spacing-sm);
-            align-items: center;
-        }
-
-        .qr-file-input {
-            display: none;
-        }
-
-        .qr-upload-btn {
-            flex: 1;
-            padding: 10px 16px;
-            border-radius: var(--radius-md);
-            transition: all 0.2s ease;
-        }
-
-        .qr-upload-btn:hover {
-            transform: translateY(-1px);
-        }
-
-        .qr-clear-logo-btn {
-            padding: 10px 12px;
-            border-radius: var(--radius-md);
-        }
-
-        .qr-logo-preview {
-            margin-top: var(--spacing-sm);
-            padding: var(--spacing-md);
-            background: var(--color-bg-tertiary);
-            border: 1px dashed var(--color-border);
-            border-radius: var(--radius-md);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .qr-logo-preview img {
-            max-width: 80px;
-            max-height: 80px;
-            border-radius: var(--radius-sm);
-            box-shadow: var(--shadow-sm);
-        }
-
-        /* 范围滑块 */
-        .qr-range-group {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-md);
-            padding: var(--spacing-sm) 0;
-        }
-
-        .qr-range {
-            flex: 1;
-            height: 6px;
-            -webkit-appearance: none;
-            background: linear-gradient(to right, var(--color-primary) 0%, var(--color-border) 0%);
-            border-radius: 3px;
-            outline: none;
-            transition: background 0.15s ease;
-        }
-
-        .qr-range::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 20px;
-            height: 20px;
-            background: var(--color-primary);
-            border: 3px solid var(--color-bg-primary);
-            border-radius: 50%;
-            cursor: pointer;
-            box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .qr-range::-webkit-slider-thumb:hover {
-            transform: scale(1.15);
-            box-shadow: 0 3px 10px rgba(59, 130, 246, 0.4);
-        }
-
-        .qr-range-value {
-            font-size: var(--font-size-sm);
-            font-weight: 600;
-            color: var(--color-primary);
-            min-width: 45px;
-            text-align: center;
-            background: var(--color-bg-tertiary);
-            padding: 4px 8px;
-            border-radius: var(--radius-sm);
-        }
-
-        /* 尺寸输入 */
-        .qr-size-inputs {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-        }
-
-        .qr-size-input {
-            width: 90px;
-            text-align: center;
-            font-weight: 500;
-        }
-
-        .qr-size-separator {
-            color: var(--color-text-tertiary);
-            font-weight: 600;
-            font-size: 1.1em;
-        }
-
-        .qr-size-unit {
-            font-size: var(--font-size-sm);
-            color: var(--color-text-tertiary);
-            font-weight: 500;
-            margin-left: var(--spacing-xs);
-        }
-
-        /* 预览面板 */
-        .qr-preview-panel {
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-md);
-            position: sticky;
-            top: var(--spacing-lg);
-        }
-
-        .qr-preview-box {
-            background: var(--color-bg-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg);
-            padding: var(--spacing-lg);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 350px;
-        }
-
-        .qr-preview-canvas {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .qr-preview-canvas canvas,
-        .qr-preview-canvas svg {
-            max-width: 100%;
-            height: auto;
-            border-radius: var(--radius-md);
-            box-shadow: var(--shadow-lg);
-        }
-
-        /* 操作按钮 */
-        .qr-actions {
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-sm);
-        }
-
-        .qr-action-btn {
-            width: 100%;
-        }
-
-        .qr-download-group {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: var(--spacing-sm);
-        }
-
-        /* 下载路径显示 */
-        .qr-download-path {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            padding: var(--spacing-sm) var(--spacing-md);
-            background: var(--color-bg-tertiary);
-            border-radius: var(--radius-md);
-            font-size: var(--font-size-xs);
-            color: var(--color-text-secondary);
-        }
-
-        .qr-download-path i {
-            color: var(--color-primary);
-        }
-
-        /* 响应式 */
-        @media (max-width: 900px) {
-            .qr-generator-content {
-                grid-template-columns: 1fr;
-            }
-
-            .qr-settings-panel {
-                max-height: none;
-                overflow-y: visible;
-            }
-
-            .qr-preview-panel {
-                position: static;
-            }
-        }
-    `;
-}
 
 /**
  * 动态加载 QRCodeStyling 库
  */
-async function loadQRCodeStyling() {
-    if (window.QRCodeStyling) {
-        return window.QRCodeStyling;
-    }
+let qrCodeStylingPromise = null;
 
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = './tools/qr-generator/qr-code-styling.js';
-        script.onload = () => {
-            if (window.QRCodeStyling) {
-                resolve(window.QRCodeStyling);
-            } else {
-                reject(new Error('QRCodeStyling 未能正确加载'));
-            }
-        };
-        script.onerror = () => reject(new Error('加载 qr-code-styling.js 失败'));
-        document.head.appendChild(script);
-    });
+async function loadQRCodeStyling() {
+    qrCodeStylingPromise ||= import('qr-code-styling').then(module => module.default);
+    return qrCodeStylingPromise;
 }
 
 /**
@@ -658,7 +235,7 @@ async function generateQRCode(showSuccessToast = true) {
 
     try {
         const QRCodeStyling = await loadQRCodeStyling();
-        
+
         const options = {
             width: qrState.currentOptions.width,
             height: qrState.currentOptions.height,
@@ -704,9 +281,9 @@ async function generateQRCode(showSuccessToast = true) {
         }
     } catch (error) {
         console.error('[QRGenerator] 生成二维码失败:', error);
-        container.innerHTML = `<div style="color: var(--color-text-secondary); text-align: center;">
-            <i class="ri-error-warning-line" style="font-size: 48px; display: block; margin-bottom: 8px;"></i>
-            生成失败: ${error.message}
+        container.innerHTML = `<div class="qr-error">
+            <i class="ri-error-warning-line qr-error__icon"></i>
+            生成失败: ${escapeHtml(error.message)}
         </div>`;
         showToast('生成二维码失败: ' + error.message, 'error');
     }
@@ -739,19 +316,15 @@ async function downloadQRCode(format) {
             try {
                 const arrayBuffer = await blob.arrayBuffer();
                 const uint8Array = new Uint8Array(arrayBuffer);
-                
-                // 构建完整路径
-                const filePath = downloadPath.endsWith('\\') || downloadPath.endsWith('/') 
-                    ? downloadPath + fullFilename 
-                    : downloadPath + '\\' + fullFilename;
-                
+
                 // 将 Uint8Array 转换为普通数组以便 JSON 序列化
                 const dataArray = Array.from(uint8Array);
-                
-                // 直接使用 Tauri invoke 调用 Rust 命令写入文件
-                await window.__TAURI__.core.invoke('write_binary_file', { 
-                    path: filePath, 
-                    data: dataArray 
+
+                // 使用用途明确且带路径校验的 Rust 命令写入文件
+                const filePath = await window.__TAURI__.core.invoke('write_qr_code', {
+                    directory: downloadPath,
+                    filename: fullFilename,
+                    data: dataArray
                 });
                 showToast(`已保存到: ${filePath}`, 'success');
             } catch (tauriError) {
@@ -788,7 +361,7 @@ function browserDownload(blob, filename, format) {
 function syncColorInput(colorInputId, textInputId, signal) {
     const colorInput = document.getElementById(colorInputId);
     const textInput = document.getElementById(textInputId);
-    
+
     if (!colorInput || !textInput) return;
 
     colorInput.addEventListener('input', () => {
@@ -931,18 +504,18 @@ async function initQRGeneratorTool() {
             const reader = new FileReader();
             reader.onload = (event) => {
                 qrState.currentOptions.logoImage = event.target.result;
-                
+
                 // 显示预览
                 if (logoPreview) {
                     logoPreview.innerHTML = `<img src="${event.target.result}" alt="Logo">`;
                     logoPreview.style.display = 'flex';
                 }
-                
+
                 // 显示清除按钮
                 if (clearLogoBtn) {
                     clearLogoBtn.style.display = 'block';
                 }
-                
+
                 showToast('Logo 已上传', 'success');
             };
             reader.readAsDataURL(file);
@@ -1005,21 +578,21 @@ async function initQRGeneratorTool() {
  */
 function destroyQRGeneratorTool() {
     console.log('[QRGenerator] 销毁中...');
-    
+
     // 清理事件监听器
     if (qrState.abortController) {
         qrState.abortController.abort();
         qrState.abortController = null;
     }
-    
+
     // 清理二维码实例
     if (qrState.qrCode) {
         qrState.qrCode = null;
     }
-    
+
     // 重置状态
     qrState.currentOptions.logoImage = null;
-    
+
     console.log('[QRGenerator] 已销毁');
 }
 
@@ -1032,7 +605,6 @@ registerTool({
     category: 'dev',
     description: '生成自定义样式二维码，支持 Logo、多种格式下载',
     template: getTemplate,
-    styles: getStyles,
     init: initQRGeneratorTool,
     destroy: destroyQRGeneratorTool
 });

@@ -257,7 +257,7 @@ function renderFolderChildren(children) {
     `).join('');
     
     const moreCount = children.length - 5;
-    const moreHtml = moreCount > 0 ? `<div class="file-item" style="color: var(--text-tertiary);">还有 ${moreCount} 个项目...</div>` : '';
+    const moreHtml = moreCount > 0 ? `<div class="file-item file-item--more">还有 ${moreCount} 个项目...</div>` : '';
     
     return `<div class="folder-children">${items}${moreHtml}</div>`;
 }

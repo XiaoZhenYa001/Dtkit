@@ -3,16 +3,25 @@
  * 管理所有工具的注册、获取、初始化和模板管理
  * 
  * 新架构特性：
- * - 每个工具包含自己的 HTML 模板和 CSS 样式
+ * - 每个工具包含自己的 HTML 模板和外部 CSS 模块
  * - 动态注入工具视图到 DOM
- * - 自动管理样式注入/移除
+ * - 工具样式随动态 import 由构建系统按需加载
  */
 
 // 工具存储
 const toolsRegistry = new Map();
 
-// 已注入的样式表 ID 追踪
-const injectedStyles = new Set();
+export const TOOL_STATUSES = Object.freeze({
+    READY: 'ready',
+    BETA: 'beta',
+    PLANNED: 'planned'
+});
+
+const VALID_TOOL_STATUSES = new Set(Object.values(TOOL_STATUSES));
+
+function normalizeToolStatus(status, fallback = TOOL_STATUSES.READY) {
+    return VALID_TOOL_STATUSES.has(status) ? status : fallback;
+}
 
 // 工具分类配置
 const toolCategories = {
@@ -25,6 +34,65 @@ const toolCategories = {
 // 动态工具容器 ID
 const DYNAMIC_CONTAINER_ID = 'dynamicToolContainer';
 
+function addToolToCategory(tool) {
+    const category = toolCategories[tool.category];
+    if (!category) return;
+
+    const categoryTool = {
+        id: tool.id,
+        name: tool.name,
+        icon: tool.icon,
+        colorClass: tool.colorClass,
+        description: tool.description || '点击查看详情',
+        status: tool.status
+    };
+    const existingIndex = category.findIndex(item => item.id === tool.id);
+
+    if (existingIndex >= 0) {
+        category[existingIndex] = categoryTool;
+    } else {
+        category.push(categoryTool);
+    }
+}
+
+/**
+ * 注册轻量工具清单。loader 只会在用户首次打开工具时执行。
+ * @param {Object} manifest - 工具元数据；非 planned 工具必须提供动态导入函数
+ * @returns {boolean} 是否注册成功
+ */
+export function registerToolManifest(manifest) {
+    const { id, name, loader } = manifest;
+    const status = normalizeToolStatus(manifest.status);
+    const hasValidStatus = VALID_TOOL_STATUSES.has(manifest.status ?? status);
+    const hasRequiredLoader = status === TOOL_STATUSES.PLANNED || typeof loader === 'function';
+    if (!id || !name || !hasRequiredLoader || !hasValidStatus) {
+        console.error(`[ToolRegistry] 工具清单注册失败: ${id || 'unknown'}`);
+        return false;
+    }
+
+    const existing = toolsRegistry.get(id);
+    const tool = {
+        id,
+        name,
+        icon: manifest.icon,
+        colorClass: manifest.colorClass,
+        category: manifest.category,
+        description: manifest.description || '点击查看详情',
+        status,
+        template: existing?.template || null,
+        init: existing?.init || null,
+        destroy: existing?.destroy || null,
+        initialized: existing?.initialized || false,
+        loaded: existing?.loaded || false,
+        loader,
+        loadPromise: existing?.loadPromise || null
+    };
+
+    toolsRegistry.set(id, tool);
+    addToolToCategory(tool);
+    return true;
+}
+
 /**
  * 注册工具
  * @param {Object} toolConfig - 工具配置
@@ -35,50 +103,76 @@ const DYNAMIC_CONTAINER_ID = 'dynamicToolContainer';
  * @param {string} toolConfig.category - 分类 (dev/design/other)
  * @param {string} [toolConfig.description] - 工具描述
  * @param {Function} [toolConfig.template] - HTML 模板函数（返回 HTML 字符串）
- * @param {Function} [toolConfig.styles] - CSS 样式函数（返回 CSS 字符串）
  * @param {Function} toolConfig.init - 工具初始化函数
  * @param {Function} [toolConfig.destroy] - 工具销毁函数（可选）
  */
 export function registerTool(toolConfig) {
-    const { id, name, icon, colorClass, category, description, template, styles, init, destroy } = toolConfig;
+    const { id, name, icon, colorClass, category, description, template, init, destroy } = toolConfig;
     
     if (!id || !name || !init) {
         console.error(`[ToolRegistry] 工具注册失败，缺少必要参数: ${id || 'unknown'}`);
         return false;
     }
     
-    // 注册到工具存储
-    toolsRegistry.set(id, {
+    const existing = toolsRegistry.get(id);
+    const tool = {
         id,
         name,
         icon,
         colorClass,
         category,
         description: description || '点击查看详情',
+        status: normalizeToolStatus(toolConfig.status, existing?.status),
         template: template || null,
-        styles: styles || null,
         init,
         destroy: destroy || null,
-        initialized: false
-    });
-    
-    // 添加到对应分类
-    if (category && toolCategories[category]) {
-        // 检查是否已存在，避免重复添加
-        const exists = toolCategories[category].some(t => t.id === id);
-        if (!exists) {
-            toolCategories[category].push({
-                id,
-                name,
-                icon,
-                colorClass,
-                description: description || '点击查看详情'
-            });
-        }
-    }
+        initialized: existing?.initialized || false,
+        loaded: true,
+        loader: existing?.loader || null,
+        loadPromise: existing?.loadPromise || null
+    };
+
+    toolsRegistry.set(id, tool);
+    addToolToCategory(tool);
     
     console.log(`[ToolRegistry] 工具注册成功: ${name} (${id})`);
     return true;
+}
+
+/**
+ * 首次使用时加载工具模块；并发请求共享同一个 Promise。
+ * @param {string} toolId - 工具 ID
+ * @returns {Promise<Object>} 完整工具配置
+ */
+export async function loadTool(toolId) {
+    const tool = toolsRegistry.get(toolId);
+    if (!tool) throw new Error(`工具未找到: ${toolId}`);
+    if (tool.status === TOOL_STATUSES.PLANNED) throw new Error(`工具尚未开放: ${toolId}`);
+    if (tool.loaded) return tool;
+    if (tool.loadPromise) return tool.loadPromise;
+    if (typeof tool.loader !== 'function') throw new Error(`工具缺少加载器: ${toolId}`);
+
+    tool.loadPromise = (async () => {
+        try {
+            await tool.loader();
+            const loadedTool = toolsRegistry.get(toolId);
+            if (!loadedTool?.loaded || typeof loadedTool.init !== 'function') {
+                throw new Error(`工具模块未完成注册: ${toolId}`);
+            }
+            loadedTool.loadPromise = null;
+            return loadedTool;
+        } catch (error) {
+            const failedTool = toolsRegistry.get(toolId);
+            if (failedTool) failedTool.loadPromise = null;
+            throw error;
+        }
+    })();
+
+    return tool.loadPromise;
+}
+
+export function isToolLoaded(toolId) {
+    return toolsRegistry.get(toolId)?.loaded === true;
 }
 
 /**
@@ -98,46 +192,6 @@ export function getTool(toolId) {
 export function hasToolTemplate(toolId) {
     const tool = toolsRegistry.get(toolId);
     return tool && typeof tool.template === 'function';
-}
-
-/**
- * 注入工具样式到 head
- * @param {string} toolId - 工具ID
- */
-function injectToolStyles(toolId) {
-    const tool = toolsRegistry.get(toolId);
-    if (!tool || !tool.styles) return;
-    
-    const styleId = `tool-style-${toolId}`;
-    
-    // 检查是否已注入
-    if (document.getElementById(styleId)) return;
-    
-    try {
-        const cssContent = tool.styles();
-        const styleEl = document.createElement('style');
-        styleEl.id = styleId;
-        styleEl.textContent = cssContent;
-        document.head.appendChild(styleEl);
-        injectedStyles.add(styleId);
-        console.log(`[ToolRegistry] 样式已注入: ${toolId}`);
-    } catch (error) {
-        console.error(`[ToolRegistry] 样式注入失败: ${toolId}`, error);
-    }
-}
-
-/**
- * 移除工具样式
- * @param {string} toolId - 工具ID
- */
-function removeToolStyles(toolId) {
-    const styleId = `tool-style-${toolId}`;
-    const styleEl = document.getElementById(styleId);
-    if (styleEl) {
-        styleEl.remove();
-        injectedStyles.delete(styleId);
-        console.log(`[ToolRegistry] 样式已移除: ${toolId}`);
-    }
 }
 
 /**
@@ -173,9 +227,6 @@ export function renderToolView(toolId) {
     // 如果工具有模板，渲染它
     if (typeof tool.template === 'function') {
         try {
-            // 注入样式
-            injectToolStyles(toolId);
-            
             // 渲染 HTML
             const html = tool.template();
             container.innerHTML = html;
@@ -198,7 +249,6 @@ export function renderToolView(toolId) {
 export function clearDynamicContainer() {
     const container = document.getElementById(DYNAMIC_CONTAINER_ID);
     if (container) {
-        const toolId = container.dataset.toolId;
         container.innerHTML = '';
         container.classList.remove('view--active');
         delete container.dataset.toolId;

@@ -3,6 +3,7 @@
  * 管理文件下载列表、下载进度、下载历史等功能
  */
 import { getDownloadPath } from '../core/state.js';
+import { escapeAttribute, escapeHtml } from '../core/html.js';
 import { showToast } from '../core/utils.js';
 import { 
     mirrorDetector, 
@@ -30,6 +31,8 @@ let unlistenProgress = null;
 let unlistenStatusChanged = null;
 let unlistenStarted = null;
 let unlistenRetry = null;
+
+const DOWNLOAD_STATUS_CLASSES = new Set(['downloading', 'completed', 'error', 'cancelled']);
 
 /**
  * 初始化下载视图
@@ -198,7 +201,7 @@ export function renderDownloadsPage() {
                         <input 
                             type="url" 
                             id="downloadUrlInput" 
-                            placeholder="粘贴下载链接（支持 http/https/magnet 等）" 
+                            placeholder="粘贴下载链接（支持 HTTP/HTTPS）"
                             class="url-input"
                         >
                     </div>
@@ -209,7 +212,7 @@ export function renderDownloadsPage() {
                 </div>
                 
                 <!-- 镜像源提示（动态显示） -->
-                <div class="mirror-tip" id="mirrorTip" style="display: none;">
+                <div class="mirror-tip is-initially-hidden" id="mirrorTip">
                     <i class="ri-flashlight-line"></i>
                     <span id="mirrorTipText"></span>
                 </div>
@@ -260,7 +263,7 @@ export function renderDownloadsPage() {
             </div>
             
             <!-- 空状态提示 -->
-            <div class="empty-state" id="emptyState" style="display: none;">
+            <div class="empty-state is-initially-hidden" id="emptyState">
                 <i class="ri-download-cloud-line"></i>
                 <p>暂无下载任务</p>
                 <span>在上方输入URL开始下载文件</span>
@@ -291,7 +294,6 @@ export function renderDownloadsPage() {
     updateEmptyState();
     updateStats();
 }
-
 /**
  * 绑定下载页面事件
  */
@@ -349,42 +351,17 @@ function bindDownloadsEvents() {
             const size = Math.max(rect.width, rect.height);
             const x = e.clientX - rect.left - size / 2;
             const y = e.clientY - rect.top - size / 2;
-            
-            ripple.style.cssText = `
-                position: absolute;
-                width: ${size}px;
-                height: ${size}px;
-                left: ${x}px;
-                top: ${y}px;
-                background: rgba(255, 255, 255, 0.3);
-                border-radius: 50%;
-                transform: scale(0);
-                animation: ripple 0.6s ease-out;
-                pointer-events: none;
-            `;
-            
-            this.style.position = 'relative';
-            this.style.overflow = 'hidden';
+
+            ripple.className = 'task-btn__ripple';
+            ripple.style.width = `${size}px`;
+            ripple.style.height = `${size}px`;
+            ripple.style.left = `${x}px`;
+            ripple.style.top = `${y}px`;
             this.appendChild(ripple);
             
             setTimeout(() => ripple.remove(), 600);
         });
     });
-    
-    // 添加波纹动画样式
-    if (!document.getElementById('ripple-style')) {
-        const style = document.createElement('style');
-        style.id = 'ripple-style';
-        style.textContent = `
-            @keyframes ripple {
-                to {
-                    transform: scale(2);
-                    opacity: 0;
-                }
-            }
-        `;
-        document.head.appendChild(style);
-    }
 }
 
 /**
@@ -473,7 +450,7 @@ async function handleStartDownload() {
     }
     
     // 简单的 URL 验证
-    if (!url.match(/^(https?|ftp):/i)) {
+    if (!url.match(/^https?:/i)) {
         urlInput?.classList.add('error');
         setTimeout(() => urlInput?.classList.remove('error'), 1000);
         showToast('请输入有效的下载链接', 'error');
@@ -850,6 +827,10 @@ function renderTaskList() {
     if (!listContainer) return;
     
     listContainer.innerHTML = downloadTasks.map(task => renderTaskCard(task)).join('');
+
+    listContainer.querySelectorAll('.progress-bar[data-progress]').forEach(progressBar => {
+        progressBar.style.width = `${progressBar.dataset.progress}%`;
+    });
     
     // 绑定任务按钮事件
     bindTaskButtonEvents();
@@ -864,8 +845,12 @@ function renderTaskCard(task) {
         : 0;
     
     const fileIcon = getFileIcon(task.filename);
-    const statusClass = task.status;
+    const statusClass = DOWNLOAD_STATUS_CLASSES.has(task.status) ? task.status : 'error';
     const badgeText = getBadgeText(task.status, percentage);
+    const safeTaskId = escapeAttribute(task.id);
+    const safePath = escapeAttribute(task.save_path);
+    const safeUrl = escapeAttribute(task.url);
+    const safeFilename = escapeAttribute(task.filename);
     
     let statusInfo = '';
     let progressSection = '';
@@ -891,17 +876,17 @@ function renderTaskCard(task) {
                     <span class="progress-percentage">${percentage}%</span>
                 </div>
                 <div class="progress-container">
-                    <div class="progress-bar" style="width: ${percentage}%"></div>
+                    <div class="progress-bar" data-progress="${percentage}"></div>
                 </div>
             </div>
         `;
         
         controlButtons = `
-            <button class="task-btn btn-open-folder" data-path="${task.save_path}">
+            <button class="task-btn btn-open-folder" data-path="${safePath}">
                 <i class="ri-folder-open-line"></i>
                 打开目录
             </button>
-            <button class="task-btn danger btn-cancel" data-id="${task.id}">
+            <button class="task-btn danger btn-cancel" data-id="${safeTaskId}">
                 <i class="ri-close-line"></i>
                 取消
             </button>
@@ -913,27 +898,27 @@ function renderTaskCard(task) {
         progressSection = `
             <div class="progress-section">
                 <div class="progress-container">
-                    <div class="progress-bar completed" style="width: 100%"></div>
+                    <div class="progress-bar completed" data-progress="100"></div>
                 </div>
             </div>
         `;
         
         controlButtons = `
-            <button class="task-btn success btn-open-file" data-path="${task.save_path}">
+            <button class="task-btn success btn-open-file" data-path="${safePath}">
                 <i class="ri-play-line"></i>
                 打开文件
             </button>
-            <button class="task-btn btn-open-folder" data-path="${task.save_path}">
+            <button class="task-btn btn-open-folder" data-path="${safePath}">
                 <i class="ri-folder-open-line"></i>
                 打开目录
             </button>
-            <button class="task-btn danger btn-remove" data-id="${task.id}">
+            <button class="task-btn danger btn-remove" data-id="${safeTaskId}">
                 <i class="ri-delete-bin-line"></i>
                 删除记录
             </button>
         `;
     } else if (task.status === 'error') {
-        statusInfo = `<span>${task.error_message || '下载失败'}</span>`;
+        statusInfo = `<span>${escapeHtml(task.error_message || '下载失败')}</span>`;
         
         const downloadedStr = formatFileSize(task.downloaded);
         progressSection = `
@@ -943,21 +928,21 @@ function renderTaskCard(task) {
                     <span class="progress-percentage">${percentage}%</span>
                 </div>
                 <div class="progress-container">
-                    <div class="progress-bar error" style="width: ${percentage}%"></div>
+                    <div class="progress-bar error" data-progress="${percentage}"></div>
                 </div>
             </div>
         `;
         
         controlButtons = `
-            <button class="task-btn primary btn-retry" data-task-id="${task.id}" data-url="${task.url}" data-path="${task.save_path}" data-filename="${task.filename}">
+            <button class="task-btn primary btn-retry" data-task-id="${safeTaskId}" data-url="${safeUrl}" data-path="${safePath}" data-filename="${safeFilename}">
                 <i class="ri-refresh-line"></i>
                 重试
             </button>
-            <button class="task-btn btn-copy-link" data-url="${task.url}">
+            <button class="task-btn btn-copy-link" data-url="${safeUrl}">
                 <i class="ri-file-copy-line"></i>
                 复制链接
             </button>
-            <button class="task-btn danger btn-remove" data-id="${task.id}">
+            <button class="task-btn danger btn-remove" data-id="${safeTaskId}">
                 <i class="ri-delete-bin-line"></i>
                 删除
             </button>
@@ -965,7 +950,7 @@ function renderTaskCard(task) {
     }
     
     return `
-        <div class="task-card ${statusClass}" data-task-id="${task.id}">
+        <div class="task-card ${statusClass}" data-task-id="${safeTaskId}">
             <div class="task-header">
                 <div class="task-info">
                     <div class="file-icon">
@@ -1250,14 +1235,4 @@ function formatTime(seconds) {
         const minutes = Math.round((seconds % 3600) / 60);
         return `约 ${hours} 小时 ${minutes} 分钟`;
     }
-}
-
-/**
- * HTML 转义
- */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
