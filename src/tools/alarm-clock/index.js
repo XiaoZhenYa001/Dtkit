@@ -6,13 +6,19 @@ import '../../css/tools/alarm-clock.css';
  */
 import { registerTool } from '../toolRegistry.js';
 import { showToast } from '../../core/utils.js';
+import {
+    ALARM_TRIGGER_EVENT,
+    getCountdownRemainingSeconds,
+    pauseAlarmTaskSchedule,
+    prepareAlarmTaskSchedule,
+    syncAlarmTasks
+} from '../../core/alarmService.js';
 
 // ============================================
 // 工具状态
 // ============================================
 let alarmState = {
     tasks: [],              // 任务列表
-    timers: {},             // 定时器映射 { taskId: intervalId }
     completedToday: 0,      // 今日完成数
     nextAlarmTime: null,    // 下一个提醒时间
     countdownInterval: null, // 全局倒计时更新定时器
@@ -400,13 +406,12 @@ async function init() {
     }
     alarmState.abortController = new AbortController();
 
-    // 只有首次加载时才从 localStorage 加载任务并启动定时器
-    // 切换标签页回来时，任务和定时器已经在后台运行，只需刷新 UI
+    // 只有首次加载时才从 localStorage 加载任务；调度由 Rust 后台负责。
     if (!isToolInitialized) {
         // 首次加载：加载音频文件列表
         await loadAvailableAudioFiles();
 
-        // 加载任务并启动定时器
+        // 加载任务并同步到 Rust 调度器
         loadTasks();
         isToolInitialized = true;
         showToast('定时闹钟工具已加载', 'success');
@@ -883,11 +888,11 @@ function addTask() {
     // 添加到任务列表顶部（新任务在最前面）
     alarmState.tasks.unshift(task);
 
-    // 保存任务
-    saveTasks();
-
-    // 启动任务
+    // 计算下一次触发时间并交给 Rust 调度器
     startTask(task);
+
+    // 保存并同步任务
+    saveTasks();
 
     // 重新渲染列表
     renderTaskList();
@@ -929,148 +934,9 @@ function resetForm() {
 // ============================================
 // 启动任务
 // ============================================
-async function startTask(task) {
+function startTask(task, options) {
     if (!task.enabled) return;
-
-    // 清除之前的定时器
-    if (alarmState.timers[task.id]) {
-        clearInterval(alarmState.timers[task.id]);
-    }
-
-    // 智能预加载音频（只为即将触发的任务预加载）
-    if (shouldPreloadAudio(task)) {
-        cleanupPreloadedAudio(task.id); // 先清理旧的
-        const preloadedAudio = await preloadAudio(task);
-        if (preloadedAudio) {
-            addToPreloadCache(task.id, preloadedAudio);
-        }
-    }
-
-    switch (task.type) {
-        case 'countdown':
-            // 倒计时任务 - 每秒更新
-            alarmState.timers[task.id] = setInterval(async () => {
-                // 检查暂停状态
-                if (!task.paused) {
-                    task.config.remainingSeconds--;
-
-                    // 当接近触发时间时预加载音频
-                    if (task.action === 'sound' &&
-                        task.config.remainingSeconds === 60 &&
-                        !alarmState.preloadedAudios.has(task.id)) {
-                        console.log(`[AlarmClock] 倒计时即将触发，提前预加载音频: ${task.name}`);
-                        const preloadedAudio = await preloadAudio(task);
-                        if (preloadedAudio) {
-                            addToPreloadCache(task.id, preloadedAudio);
-                        }
-                    }
-
-                    if (task.config.remainingSeconds <= 0) {
-                        // 时间到，先停止定时器，再执行动作
-                        // 这里只清除定时器，不清理音频（因为音频即将播放）
-                        if (alarmState.timers[task.id]) {
-                            clearInterval(alarmState.timers[task.id]);
-                            delete alarmState.timers[task.id];
-                            console.log(`[AlarmClock] 倒计时完成，清除定时器: ${task.id}`);
-                        }
-
-                        task.enabled = false;
-                        alarmState.completedToday++;
-
-                        // 执行动作（播放音频/显示通知等）
-                        executeAction(task);
-
-                        saveTasks();
-                        renderTaskList();
-                        updateStats();
-                    }
-                }
-            }, 1000);
-            break;
-
-        case 'fixed':
-            // 固定时间任务 - 每秒检查
-            alarmState.timers[task.id] = setInterval(async () => {
-                // 检查暂停状态
-                if (task.paused) return;
-
-                const now = new Date();
-                const currentDay = now.getDay();
-                const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-                // 提前1分钟预加载音频
-                if (task.action === 'sound' && !alarmState.preloadedAudios.has(task.id)) {
-                    const [hours, minutes] = task.config.time.split(':').map(Number);
-                    const target = new Date();
-                    target.setHours(hours, minutes, 0, 0);
-                    if (target <= now) {
-                        target.setDate(target.getDate() + 1);
-                    }
-                    const diffSeconds = Math.floor((target - now) / 1000);
-                    if (diffSeconds <= 60 && diffSeconds > 0) {
-                        console.log(`[AlarmClock] 固定时间即将触发，提前预加载音频: ${task.name}`);
-                        const preloadedAudio = await preloadAudio(task);
-                        if (preloadedAudio) {
-                            addToPreloadCache(task.id, preloadedAudio);
-                        }
-                    }
-                }
-
-                if (task.config.repeatDays.includes(currentDay) &&
-                    currentTime === task.config.time &&
-                    now.getSeconds() === 0) {
-                    executeAction(task);
-                    alarmState.completedToday++;
-                    updateStats();
-                }
-            }, 1000);
-            break;
-
-        case 'hourly':
-            // 整点报时 - 每秒检查
-            alarmState.timers[task.id] = setInterval(async () => {
-                // 检查暂停状态
-                if (task.paused) return;
-
-                const now = new Date();
-                const currentDay = now.getDay();
-
-                // 提前1分钟预加载音频
-                if (task.action === 'sound' && !alarmState.preloadedAudios.has(task.id)) {
-                    const nextHour = new Date();
-                    nextHour.setHours(now.getHours() + 1, 0, 0, 0);
-                    const diffSeconds = Math.floor((nextHour - now) / 1000);
-                    if (diffSeconds <= 60 && diffSeconds > 0) {
-                        console.log(`[AlarmClock] 整点报时即将触发，提前预加载音频: ${task.name}`);
-                        const preloadedAudio = await preloadAudio(task);
-                        if (preloadedAudio) {
-                            addToPreloadCache(task.id, preloadedAudio);
-                        }
-                    }
-                }
-
-                if (task.config.repeatDays.includes(currentDay) &&
-                    now.getMinutes() === 0 &&
-                    now.getSeconds() === 0) {
-                    executeAction(task);
-                    alarmState.completedToday++;
-                    updateStats();
-                }
-            }, 1000);
-            break;
-
-        case 'interval':
-            // 间隔提醒 - 使用 setInterval
-            alarmState.timers[task.id] = setInterval(() => {
-                // 检查暂停状态
-                if (!task.paused) {
-                    executeAction(task);
-                    alarmState.completedToday++;
-                    updateStats();
-                }
-            }, task.config.intervalMs);
-            break;
-    }
+    prepareAlarmTaskSchedule(task, options);
 }
 
 // ============================================
@@ -1078,13 +944,6 @@ async function startTask(task) {
 // ============================================
 function stopTask(taskId) {
     console.log(`[AlarmClock] 停止任务: ${taskId}`);
-
-    // 清除定时器
-    if (alarmState.timers[taskId]) {
-        clearInterval(alarmState.timers[taskId]);
-        delete alarmState.timers[taskId];
-        console.log(`[AlarmClock] 已清除定时器: ${taskId}`);
-    }
 
     // 清理预加载的音频
     cleanupPreloadedAudio(taskId);
@@ -1127,17 +986,7 @@ function pauseTask(taskId) {
 
     task.paused = true;
     task.pausedAt = Date.now();
-
-    // 对于间隔提醒，需要停止定时器
-    if (task.type === 'interval') {
-        if (alarmState.timers[taskId]) {
-            clearInterval(alarmState.timers[taskId]);
-            delete alarmState.timers[taskId];
-        }
-    }
-
-    // 其他类型的任务不需要停止定时器，只需要标记暂停状态
-    // 在定时器回调中会检查paused状态
+    pauseAlarmTaskSchedule(task);
 
     saveTasks();
     renderTaskList();
@@ -1154,19 +1003,7 @@ function resumeTask(taskId) {
 
     task.paused = false;
     delete task.pausedAt;
-
-    // 对于间隔提醒，需要重新启动定时器
-    if (task.type === 'interval') {
-        alarmState.timers[task.id] = setInterval(() => {
-            if (!task.paused) {
-                executeAction(task);
-                alarmState.completedToday++;
-                updateStats();
-            }
-        }, task.config.intervalMs);
-    }
-
-    // 其他类型的任务会在定时器回调中自动恢复
+    prepareAlarmTaskSchedule(task, { restart: true });
 
     saveTasks();
     renderTaskList();
@@ -1192,7 +1029,7 @@ function toggleTask(taskId) {
                 task.config.remainingSeconds = task.config.totalSeconds;
             }
         }
-        startTask(task);
+        startTask(task, { restart: true });
     } else {
         stopTask(taskId);
     }
@@ -1212,36 +1049,6 @@ function deleteTask(taskId) {
     renderTaskList();
     updateStats();
     showToast('任务已删除', 'info');
-}
-
-// ============================================
-// 执行动作
-// ============================================
-async function executeAction(task) {
-    console.log(`[AlarmClock] 执行任务: ${task.name}, 动作: ${task.action}`);
-
-    switch (task.action) {
-        case 'notify':
-            showNotification(task);
-            break;
-
-        case 'sound':
-            // 使用队列机制播放音频（playAudioLoop 内部已包含通知逻辑）
-            await playAudioWithQueue(task);
-            break;
-
-        case 'run':
-            await runProgram(task.config.filePath);
-            break;
-
-        case 'shutdown':
-            await shutdownComputer();
-            break;
-
-        case 'lock':
-            await lockScreen();
-            break;
-    }
 }
 
 // ============================================
@@ -1515,8 +1322,9 @@ async function playAudioLoop(task) {
     alarmState.currentPlayingAudio = controller;
     alarmState.activeLoopControllers.set(task.id, controller);
 
-    // 显示带控制按钮的通知
-    showNotification(task, controller);
+    // Rust 已发送系统通知时，只保留应用内停止控件，避免重复通知。
+    if (task.__backendTriggered) showToastWithAudioControl(task, controller);
+    else showNotification(task, controller);
 
     // 使用原生 loop 属性实现无缝循环播放
     audio.loop = true;
@@ -1798,44 +1606,6 @@ function playAlarmSound(soundId) {
 }
 
 // ============================================
-// 运行程序
-// ============================================
-async function runProgram(filePath) {
-    try {
-        await window.__TAURI__.core.invoke('run_program', { filePath });
-        showToast('程序已启动', 'success');
-    } catch (err) {
-        console.error('[AlarmClock] 运行程序失败:', err);
-        showToast('运行程序失败: ' + err, 'error');
-    }
-}
-
-// ============================================
-// 关闭电脑
-// ============================================
-async function shutdownComputer() {
-    try {
-        await window.__TAURI__.core.invoke('schedule_shutdown');
-        showToast('电脑将在60秒后关机', 'warning');
-    } catch (err) {
-        console.error('[AlarmClock] 关机失败:', err);
-        showToast('执行关机命令失败', 'error');
-    }
-}
-
-// ============================================
-// 锁定屏幕
-// ============================================
-async function lockScreen() {
-    try {
-        await window.__TAURI__.core.invoke('lock_screen');
-    } catch (err) {
-        console.error('[AlarmClock] 锁屏失败:', err);
-        showToast('执行锁屏命令失败', 'error');
-    }
-}
-
-// ============================================
 // 保存任务到 localStorage
 // ============================================
 function saveTasks() {
@@ -1845,6 +1615,9 @@ function saveTasks() {
         lastDate: new Date().toDateString()
     };
     localStorage.setItem('alarm_clock_data', JSON.stringify(data));
+    syncAlarmTasks(alarmState.tasks).catch(error => {
+        console.error('[AlarmClock] 同步 Rust 调度器失败', error);
+    });
 }
 
 // ============================================
@@ -1864,12 +1637,13 @@ function loadTasks() {
                 alarmState.completedToday = 0;
             }
 
-            // 重启启用的任务
+            // 为旧数据补齐绝对截止时间；不在前端启动任何后台计时器。
             alarmState.tasks.forEach(task => {
                 if (task.enabled) {
                     startTask(task);
                 }
             });
+            saveTasks();
         }
     } catch (err) {
         console.error('[AlarmClock] 加载任务失败:', err);
@@ -2075,7 +1849,7 @@ function getTaskCountdown(task) {
 
     switch (task.type) {
         case 'countdown':
-            return formatSeconds(task.config.remainingSeconds);
+            return formatSeconds(getCountdownRemainingSeconds(task));
 
         case 'fixed':
             return getTimeUntilFixed(task.config.time);
@@ -2161,8 +1935,9 @@ function updateNextAlarmCountdown() {
     alarmState.tasks.forEach(task => {
         if (!task.enabled) return;
 
-        if (task.type === 'countdown' && task.config.remainingSeconds < minSeconds) {
-            minSeconds = task.config.remainingSeconds;
+        if (task.type === 'countdown') {
+            const remainingSeconds = getCountdownRemainingSeconds(task);
+            if (remainingSeconds < minSeconds) minSeconds = remainingSeconds;
         }
     });
 
@@ -2193,6 +1968,50 @@ function startGlobalCountdown() {
         // 更新统计区域的倒计时
         updateNextAlarmCountdown();
     }, 1000);
+}
+
+function applyTriggeredTaskState(triggeredTask) {
+    const task = alarmState.tasks.find(item => item.id === triggeredTask.id);
+    if (task?.type === 'countdown') {
+        task.enabled = false;
+        task.config.remainingSeconds = 0;
+        delete task.config.deadlineAt;
+    } else if (task?.type === 'interval') {
+        task.config.nextTriggerAt = Date.now() + Math.max(1, Number(task.config.intervalMs) || 1);
+    }
+
+    alarmState.completedToday++;
+    if (document.getElementById('alarmTaskList')) renderTaskList();
+    updateStats();
+}
+
+window.addEventListener(ALARM_TRIGGER_EVENT, event => {
+    applyTriggeredTaskState(event.detail);
+});
+
+window.addEventListener('dtkit:power-state', event => {
+    if (event.detail?.suspended) {
+        if (alarmState.countdownInterval) {
+            clearInterval(alarmState.countdownInterval);
+            alarmState.countdownInterval = null;
+        }
+        if (previewAudio) {
+            previewAudio.pause();
+            previewAudio.src = '';
+            previewAudio = null;
+        }
+        alarmState.preloadedAudios.forEach((_, taskId) => cleanupPreloadedAudio(taskId));
+    } else if (document.getElementById('alarmTaskList')) {
+        startGlobalCountdown();
+        updateStats();
+    }
+});
+
+export async function handleBackgroundAlarmTrigger(task) {
+    if (task.action !== 'sound') return;
+    if (alarmState.availableAudioFiles.length === 0) await loadAvailableAudioFiles();
+    task.__backendTriggered = true;
+    await playAudioWithQueue(task);
 }
 
 // ============================================

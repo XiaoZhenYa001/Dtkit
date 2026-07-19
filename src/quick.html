@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DtKit 快捷窗口</title>
+    <link rel="stylesheet" href="./assets/remixicon-subset.css">
+    <link rel="stylesheet" href="./css/base.css">
+    <link rel="stylesheet" href="./quick/style.css">
+</head>
+<body>
+    <main class="quick-shell">
+        <header class="quick-titlebar" data-tauri-drag-region>
+            <div class="quick-brand" data-tauri-drag-region>
+                <span class="quick-brand__mark">DT</span>
+                <span id="quickTitle">快捷窗口</span>
+            </div>
+            <button id="quickClose" class="quick-close" type="button" aria-label="关闭快捷窗口">×</button>
+        </header>
+        <section class="quick-content" id="quickContent">
+            <div class="quick-status" id="quickStatus" aria-live="polite">
+                <div class="quick-content__icon ri-flashlight-line" aria-hidden="true"></div>
+                <h1 id="quickHeading">正在准备快捷内容</h1>
+                <p id="quickDescription">这里只加载当前操作需要的最小界面。</p>
+            </div>
+            <div id="quickPalette" class="command-palette" hidden>
+                <label class="command-search" for="commandInput">
+                    <i class="ri-search-line" aria-hidden="true"></i>
+                    <input id="commandInput" type="text" autocomplete="off" spellcheck="false"
+                        placeholder="搜索工具，或输入“计算 128*36”" aria-label="命令或搜索内容">
+                    <kbd>Esc</kbd>
+                </label>
+                <div class="command-examples" aria-label="命令示例">
+                    <span>倒计时 5分钟</span><span>编码 这段文本</span><span>&gt; 本地文件名</span>
+                </div>
+                <div id="commandResults" class="command-results" role="listbox" aria-label="命令结果"></div>
+                <p id="paletteHint" class="command-hint" aria-live="polite"></p>
+            </div>
+            <div id="dynamicToolContainer" class="quick-tool" aria-live="polite"></div>
+        </section>
+        <footer class="quick-footer">
+            <span>↑↓ 选择 · Enter 执行 · Esc 关闭</span>
+            <span>单窗口 · 按需加载</span>
+        </footer>
+    </main>
+    <script type="module" src="./quick/main.js"></script>
+</body>
+</html>

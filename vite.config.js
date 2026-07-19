@@ -19,6 +19,7 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 main: `${projectRoot}src/index.html`,
+                quick: `${projectRoot}src/quick.html`,
                 desktopOrganizer: `${projectRoot}src/desktop-organizer/index.html`
             }
         }

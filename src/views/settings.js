@@ -1,6 +1,8 @@
 import { initDesktopOrganizerSettings } from './settings/desktop-organizer.js';
 import { initDownloadPathSettings } from './settings/download-path.js';
+import { initCleanupSettings } from './settings/cleanup.js';
 import { initMirrorSourceSettings } from './settings/mirror-source.js';
+import { initMinimizeModeSettings } from './settings/minimize-mode.js';
 import { initSettingsNavigation } from './settings/navigation.js';
 import { shortcutManager } from './settings/shortcuts.js';
 
@@ -13,12 +15,16 @@ export function initSettings() {
     if (initializationPromise) return initializationPromise;
 
     initializationPromise = Promise.resolve()
-        .then(() => {
+        .then(async () => {
             initSettingsNavigation();
             initDownloadPathSettings();
             initMirrorSourceSettings();
-            shortcutManager.init();
-            return initDesktopOrganizerSettings();
+            initMinimizeModeSettings();
+            await Promise.all([
+                shortcutManager.init(),
+                initCleanupSettings(),
+                initDesktopOrganizerSettings()
+            ]);
         })
         .catch(error => {
             initializationPromise = null;

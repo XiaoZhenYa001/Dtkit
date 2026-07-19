@@ -330,8 +330,21 @@ function initTimestampTool() {
     });
 
     // 初始化
-    updateCurrentTime();
-    updateInterval = setInterval(updateCurrentTime, 1000);
+    const startVisibleClock = () => {
+        if (updateInterval) clearInterval(updateInterval);
+        updateCurrentTime();
+        updateInterval = setInterval(updateCurrentTime, 1000);
+    };
+    const stopVisibleClock = () => {
+        if (updateInterval) clearInterval(updateInterval);
+        updateInterval = null;
+    };
+
+    startVisibleClock();
+    window.addEventListener('dtkit:power-state', event => {
+        if (event.detail?.suspended) stopVisibleClock();
+        else startVisibleClock();
+    }, { signal });
 
     // 回车键触发转换
     timestampInput.addEventListener('keypress', (e) => {

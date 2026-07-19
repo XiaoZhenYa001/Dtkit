@@ -16,25 +16,6 @@
         "title": "DtKit",
         "width": 1000,
         "height": 600
-      },
-      {
-        "label": "desktop-organizer",
-        "title": "桌面整理",
-        "url": "desktop-organizer/index.html",
-        "width": 550,
-        "height": 450,
-        "minWidth": 400,
-        "minHeight": 300,
-        "resizable": true,
-        "transparent": false,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true,
-        "center": false,
-        "shadow": false,
-        "x": 1350,
-        "y": 10
       }
     ],
     "security": {

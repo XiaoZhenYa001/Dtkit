@@ -31,6 +31,14 @@ let unlistenProgress = null;
 let unlistenStatusChanged = null;
 let unlistenStarted = null;
 let unlistenRetry = null;
+let renderingSuspended = false;
+
+window.addEventListener('dtkit:power-state', event => {
+    renderingSuspended = Boolean(event.detail?.suspended);
+    if (!renderingSuspended && document.getElementById('downloadsList')) {
+        loadExistingTasks();
+    }
+});
 
 const DOWNLOAD_STATUS_CLASSES = new Set(['downloading', 'completed', 'error', 'cancelled']);
 
@@ -715,6 +723,7 @@ function addTaskToList(task) {
     } else {
         downloadTasks.unshift(task); // 添加到开头
     }
+    if (renderingSuspended) return;
     renderTaskList();
     updateStats();
     updateEmptyState();
@@ -727,6 +736,7 @@ function updateTaskFromBackend(task) {
     const index = downloadTasks.findIndex(t => t.id === task.id);
     if (index >= 0) {
         downloadTasks[index] = task;
+        if (renderingSuspended) return;
         renderTaskList();
         updateStats();
         
@@ -743,6 +753,7 @@ function updateTaskFromBackend(task) {
  * 更新任务重试状态
  */
 function updateTaskRetryStatus(taskId, attempt) {
+    if (renderingSuspended) return;
     const taskCard = document.querySelector(`[data-task-id="${taskId}"]`);
     if (!taskCard) return;
     
@@ -768,9 +779,6 @@ function updateTaskRetryStatus(taskId, attempt) {
  * 更新任务进度
  */
 function updateTaskProgress(progress) {
-    const taskCard = document.querySelector(`[data-task-id="${progress.id}"]`);
-    if (!taskCard) return;
-    
     // 更新本地状态
     const task = downloadTasks.find(t => t.id === progress.id);
     if (task) {
@@ -778,6 +786,10 @@ function updateTaskProgress(progress) {
         task.total_size = progress.total_size;
         task.speed = progress.speed;
     }
+
+    if (renderingSuspended) return;
+    const taskCard = document.querySelector(`[data-task-id="${progress.id}"]`);
+    if (!taskCard) return;
     
     // 更新 UI
     const progressBar = taskCard.querySelector('.progress-bar');

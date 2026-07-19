@@ -497,6 +497,7 @@ function bindEvents() {
 
     // ESC 键退出全屏（使用 signal 管理）
     document.addEventListener('keydown', handleKeydown, { signal });
+    window.addEventListener('dtkit:power-state', handlePowerState, { signal });
 
     // runner 加载完成后补发当前内容，避免首次消息早于 iframe 初始化。
     const previewFrame = document.getElementById('previewFrame');
@@ -506,6 +507,17 @@ function bindEvents() {
     document.querySelectorAll('.html-preview-example-btn').forEach(btn => {
         btn.addEventListener('click', () => loadExample(btn.dataset.example), { signal });
     });
+}
+
+function handlePowerState(event) {
+    const previewFrame = document.getElementById('previewFrame');
+    if (!previewFrame) return;
+
+    if (event.detail?.suspended) {
+        previewFrame.src = 'about:blank';
+    } else {
+        initializePreviewRunner();
+    }
 }
 
 // ============================================

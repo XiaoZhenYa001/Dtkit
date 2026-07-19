@@ -10,6 +10,9 @@ import appState, { getActiveTab } from './core/state.js';
 import DOM, { initDOM } from './core/dom.js';
 import { showToast } from './core/utils.js';
 import { bootstrapDesktopOrganizer } from './core/desktopOrganizer.js';
+import { initializeAlarmService } from './core/alarmService.js';
+import { initializePowerLifecycle } from './core/powerLifecycle.js';
+import { initializeMinimizeMode } from './core/minimizeMode.js';
 
 // ============================================
 // 导入工具注册中心
@@ -399,6 +402,19 @@ function initializeApp() {
     // 已启用的桌面整理热区需要在设置页面尚未打开时也能工作。
     bootstrapDesktopOrganizer().catch(error => {
         console.error('[DtKit] 桌面整理启动失败', error);
+    });
+
+    // 后台提醒由 Rust 调度；前端只监听触发结果并展示。
+    initializeAlarmService().catch(error => {
+        console.error('[DtKit] 闹钟后台服务启动失败', error);
+    });
+
+    initializePowerLifecycle().catch(error => {
+        console.error('[DtKit] 节能生命周期启动失败', error);
+    });
+
+    initializeMinimizeMode().catch(error => {
+        console.error('[DtKit] 最小化策略同步失败', error);
     });
 }
 

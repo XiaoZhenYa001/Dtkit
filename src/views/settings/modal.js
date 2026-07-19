@@ -97,13 +97,20 @@ function ensureConfirmController() {
     return confirmController;
 }
 
-export function showConfirmDialog(title, message) {
+export function showConfirmDialog(title, message, options = {}) {
     const controller = ensureConfirmController();
     if (!controller) return Promise.resolve(globalThis.confirm?.(message) ?? false);
 
     if (resolveConfirmation) controller.close('replaced');
     document.getElementById('desktopOrganizerDialogTitle').textContent = title;
     document.getElementById('desktopOrganizerDialogMessage').textContent = message;
+    const confirmButton = document.getElementById('confirmDesktopOrganizer');
+    confirmButton.classList.toggle('modal-btn--danger', options.danger === true);
+    confirmButton.classList.toggle('modal-btn--primary', options.danger !== true);
+    confirmButton.replaceChildren();
+    const icon = document.createElement('i');
+    icon.className = options.danger ? 'ri-delete-bin-6-line' : 'ri-check-line';
+    confirmButton.append(icon, document.createTextNode(` ${options.confirmLabel || '确定'}`));
 
     return new Promise(resolve => {
         resolveConfirmation = resolve;

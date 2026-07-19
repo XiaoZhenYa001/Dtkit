@@ -75,15 +75,15 @@ export function renderTabs() {
         const tabEl = document.createElement('div');
         tabEl.className = `tab ${tab.id === appState.activeTabId ? 'tab--active' : ''}`;
         tabEl.dataset.tabId = tab.id;
+        tabEl.setAttribute('role', 'tab');
+        tabEl.setAttribute('aria-selected', String(tab.id === appState.activeTabId));
+        tabEl.tabIndex = tab.id === appState.activeTabId ? 0 : -1;
         
         const label = document.createElement('div');
         label.className = 'tab__label';
         label.innerHTML = `
             <span class="tab__icon"><i class="${tab.icon}"></i></span>
-            <span class="tab__text">
-                <span class="tab__title">${tab.title}</span>
-                <span class="tab__badge">${tab.badge || '界面'}</span>
-            </span>
+            <span class="tab__title">${tab.title}</span>
         `;
         tabEl.appendChild(label);
         
@@ -91,6 +91,8 @@ export function renderTabs() {
         const closeBtn = document.createElement('button');
         closeBtn.className = 'tab__close';
         closeBtn.innerHTML = '<i class="ri-close-line"></i>';
+        closeBtn.title = `关闭“${tab.title}”`;
+        closeBtn.setAttribute('aria-label', `关闭“${tab.title}”`);
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             closeTab(tab.id);
@@ -102,6 +104,13 @@ export function renderTabs() {
         tabEl.addEventListener('click', (e) => {
             if (e.target.closest('.tab__close')) return;
             switchTab(tab.id);
+        });
+
+        tabEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                switchTab(tab.id);
+            }
         });
         
         // 中键点击关闭标签

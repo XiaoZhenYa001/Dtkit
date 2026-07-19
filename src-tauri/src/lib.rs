@@ -5,15 +5,23 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::Command;
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 // 桌面整理模块
+mod alarm_scheduler;
 mod desktop;
 mod download;
 mod file_output;
+mod infrastructure;
 mod path_safety;
 mod system_actions;
 
+use alarm_scheduler::{
+    create_quick_countdown, sync_alarm_tasks, take_missed_alarm_triggers, AlarmScheduler,
+};
 use desktop::commands::*;
 use desktop::hotzone::{
     get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos, HotZoneConfig,
@@ -21,7 +29,125 @@ use desktop::hotzone::{
 };
 use download::{cancel_download, get_download_tasks, remove_download_record, start_download};
 use file_output::write_qr_code;
+use infrastructure::cleanup::{
+    get_cleanup_status, restore_latest_cleanup, run_storage_cleanup, schedule_automatic_cleanup,
+    set_automatic_cleanup_enabled, set_cleanup_retention_days, CleanupManager,
+};
+use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_file_batch};
+use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
+use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
+use infrastructure::quick_host::{dismiss_quick_host, open_quick_host, QuickHostManager};
+use infrastructure::resources::{
+    get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
+    set_resource_policy, MinimizeMode, ResourceGovernor,
+};
+use infrastructure::shortcuts::{
+    get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
+};
+use infrastructure::storage::{get_storage_layout, get_storage_usage, StorageManager};
+use infrastructure::transfer_station::{
+    export_transfer_item, get_lan_share, import_transfer_files, list_transfer_items,
+    open_transfer_item, remove_transfer_item, restore_transfer_item,
+    schedule_transfer_expiry_check, start_lan_share, stop_lan_share, TransferStationManager,
+};
 use system_actions::{lock_screen, run_program, schedule_shutdown};
+
+static APP_SUSPENDED: AtomicBool = AtomicBool::new(false);
+static DEEP_SLEEP_CLOSING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+fn set_webview_memory_target(window: &WebviewWindow, low_memory: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    };
+    use windows_webview2::core::Interface;
+
+    let _ = window.with_webview(move |platform_webview| {
+        let controller = platform_webview.controller();
+        let result = unsafe {
+            controller
+                .CoreWebView2()
+                .and_then(|webview| webview.cast::<ICoreWebView2_19>())
+                .and_then(|webview| {
+                    webview.SetMemoryUsageTargetLevel(if low_memory {
+                        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                    } else {
+                        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                    })
+                })
+        };
+
+        if let Err(error) = result {
+            eprintln!("[PowerLifecycle] 设置 WebView2 内存目标失败: {error}");
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_webview_memory_target(_window: &WebviewWindow, _low_memory: bool) {}
+
+fn ensure_desktop_organizer_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("desktop-organizer") {
+        return Ok(window);
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        "desktop-organizer",
+        WebviewUrl::App("desktop-organizer/index.html".into()),
+    )
+    .title("桌面整理")
+    .inner_size(550.0, 450.0)
+    .min_inner_size(400.0, 300.0)
+    .resizable(true)
+    .transparent(false)
+    .decorations(false)
+    .always_on_top(true)
+    .visible(false)
+    .skip_taskbar(true)
+    .shadow(false)
+    .position(1350.0, 10.0)
+    .build()
+    .map_err(|error| format!("创建桌面整理窗口失败: {error}"))
+}
+
+fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    APP_SUSPENDED.store(false, Ordering::Relaxed);
+    DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        set_webview_memory_target(&window, false);
+        return Ok(window);
+    }
+
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("DtKit")
+        .inner_size(1000.0, 600.0)
+        .min_inner_size(760.0, 480.0)
+        .build()
+        .map_err(|error| format!("恢复 DtKit 主窗口失败: {error}"))
+}
+
+fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "show-main", "显示 DtKit", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let mut builder = TrayIconBuilder::with_id("dtkit-tray")
+        .tooltip("DtKit")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+
+    builder.build(app)?;
+    Ok(())
+}
 
 // 哈希计算相关
 use md5::Md5;
@@ -368,8 +494,11 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
 
     let app_handle = app.clone();
     monitor.start(move |show| {
-        if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
-            if show {
+        if show {
+            if APP_SUSPENDED.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
                 // 获取主显示器信息
                 let monitor_info = window
                     .primary_monitor()
@@ -394,6 +523,10 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                 }
                 let _ = window.show();
                 let _ = window.set_focus();
+            }
+        } else if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
+            if APP_SUSPENDED.load(Ordering::Relaxed) {
+                let _ = window.close();
             } else {
                 let _ = window.hide();
             }
@@ -412,8 +545,11 @@ fn update_hotzone_position(x: i32, width: i32) -> Result<(), String> {
 
 // 停止桌面整理热区监听
 #[tauri::command]
-fn stop_hotzone() -> Result<(), String> {
+fn stop_hotzone(app: AppHandle) -> Result<(), String> {
     stop_hotzone_monitor();
+    if let Some(window) = app.get_webview_window("desktop-organizer") {
+        let _ = window.close();
+    }
     Ok(())
 }
 
@@ -426,10 +562,13 @@ fn get_hotzone_status() -> bool {
 // 显示/隐藏桌面整理窗口
 #[tauri::command]
 fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("desktop-organizer") {
-        if show {
-            window.show().map_err(|e| e.to_string())?;
-            window.set_focus().map_err(|e| e.to_string())?;
+    if show {
+        let window = ensure_desktop_organizer_window(&app)?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    } else if let Some(window) = app.get_webview_window("desktop-organizer") {
+        if APP_SUSPENDED.load(Ordering::Relaxed) {
+            window.close().map_err(|e| e.to_string())?;
         } else {
             window.hide().map_err(|e| e.to_string())?;
         }
@@ -440,20 +579,135 @@ fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(AlarmScheduler::default())
+        .manage(StorageManager::default())
+        .manage(CleanupManager::default())
+        .manage(JobManager::default())
+        .manage(LocalSearchManager::default())
+        .manage(TransferStationManager::default())
+        .manage(ResourceGovernor::default())
+        .manage(ShortcutRegistry::default())
+        .manage(QuickHostManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    handle_shortcut(app, shortcut, event.state());
+                })
+                .build(),
+        )
         .setup(|app| {
+            setup_tray(app)?;
+            app.state::<StorageManager>()
+                .initialize(app.handle())
+                .map_err(std::io::Error::other)?;
+            if let Err(error) = app.state::<ResourceGovernor>().restore(app.handle()) {
+                eprintln!("[ResourceGovernor] 忽略无效的已保存策略: {error}");
+            }
+            if let Err(error) = app.state::<CleanupManager>().restore(app.handle()) {
+                eprintln!("[CleanupManager] 忽略无效的已保存策略: {error}");
+            }
+            if let Err(error) = app.state::<ShortcutRegistry>().restore(app.handle()) {
+                eprintln!("[ShortcutRegistry] 忽略无效的已保存配置: {error}");
+            }
+            schedule_automatic_cleanup(app.handle());
+            schedule_transfer_expiry_check(app.handle());
             // 注意：热区监听现在通过前端调用 start_hotzone_monitor 命令启动
             // 不再在启动时自动启动，由用户设置控制
             // 这样可以避免不必要的资源消耗
             let _ = app; // 消除未使用警告
             Ok(())
         })
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show-main" => {
+                if let Err(error) = ensure_main_window(app) {
+                    eprintln!("[PowerLifecycle] {error}");
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|app, event| {
+            let should_restore = matches!(
+                event,
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } | TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            );
+            if should_restore {
+                if let Err(error) = ensure_main_window(app) {
+                    eprintln!("[PowerLifecycle] {error}");
+                }
+            }
+        })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
+                let minimized = window.is_minimized().unwrap_or(false);
+                let mode = window.state::<ResourceGovernor>().mode();
+                let suspended = minimized && mode != MinimizeMode::Standard;
+                let was_suspended = APP_SUSPENDED.swap(suspended, Ordering::Relaxed);
+                if suspended != was_suspended {
+                    let _ = window.emit(
+                        "app-power-state",
+                        serde_json::json!({
+                            "suspended": suspended,
+                            "mode": mode,
+                            "closing": minimized && mode == MinimizeMode::Deep
+                        }),
+                    );
+
+                    if let Some(main_window) = window.app_handle().get_webview_window("main") {
+                        set_webview_memory_target(
+                            &main_window,
+                            minimized && mode == MinimizeMode::Efficient,
+                        );
+                    }
+                }
+
+                if minimized {
+                    if mode != MinimizeMode::Standard {
+                        stop_hotzone_monitor();
+                        window
+                            .state::<QuickHostManager>()
+                            .release_now(window.app_handle());
+                    }
+                    if let Some(organizer_window) =
+                        window.app_handle().get_webview_window("desktop-organizer")
+                    {
+                        if mode == MinimizeMode::Standard {
+                            let _ = organizer_window.hide();
+                        } else {
+                            let _ = organizer_window.close();
+                        }
+                    }
+
+                    if mode == MinimizeMode::Deep
+                        && !DEEP_SLEEP_CLOSING.swap(true, Ordering::Relaxed)
+                    {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                            if let Some(main_window) = app.get_webview_window("main") {
+                                let _ = main_window.close();
+                            }
+                        });
+                    }
+                }
+            }
+
             // 当主窗口关闭时，停止热区监听并退出程序
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
+                    if DEEP_SLEEP_CLOSING.swap(false, Ordering::Relaxed) {
+                        return;
+                    }
                     // 停止热区监听线程
                     stop_hotzone_monitor();
 
@@ -488,6 +742,41 @@ pub fn run() {
             open_file,
             scan_audio_files,
             open_audio_folder,
+            sync_alarm_tasks,
+            create_quick_countdown,
+            search_local_files,
+            open_local_search_result,
+            take_missed_alarm_triggers,
+            set_minimize_mode,
+            get_storage_layout,
+            get_storage_usage,
+            get_cleanup_status,
+            set_automatic_cleanup_enabled,
+            set_cleanup_retention_days,
+            run_storage_cleanup,
+            restore_latest_cleanup,
+            preview_file_batch,
+            start_file_batch,
+            restore_file_batch,
+            list_transfer_items,
+            import_transfer_files,
+            export_transfer_item,
+            open_transfer_item,
+            remove_transfer_item,
+            restore_transfer_item,
+            get_lan_share,
+            start_lan_share,
+            stop_lan_share,
+            get_jobs,
+            cancel_job,
+            get_resource_policy,
+            set_resource_policy,
+            get_resource_snapshot,
+            release_idle_resources,
+            get_shortcut_bindings,
+            replace_shortcut_bindings,
+            open_quick_host,
+            dismiss_quick_host,
             // 桌面整理命令
             desktop_scan,
             desktop_search,
@@ -505,6 +794,16 @@ pub fn run() {
             get_screen_bounds,
             set_user_interacting
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                if APP_SUSPENDED.load(Ordering::Relaxed) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

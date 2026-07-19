@@ -137,6 +137,36 @@ export const toolManifests = Object.freeze([
         status: 'ready',
         description: '创建倒计时、固定时间、整点报时、间隔提醒等定时任务',
         loader: () => import('./alarm-clock/index.js')
+    },
+    {
+        id: 'file-batch',
+        name: '文件批处理',
+        icon: 'ri-file-list-3-line',
+        colorClass: 'tool-card__icon--cyan',
+        category: 'utility',
+        status: 'ready',
+        description: '安全预检后批量重命名、复制、移动或删除文件。',
+        loader: () => import('./file-batch/index.js')
+    },
+    {
+        id: 'transfer-station',
+        name: '临时文件中转站',
+        icon: 'ri-box-3-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'utility',
+        status: 'ready',
+        description: '本地临时保存文件，并按需通过局域网安全分享。',
+        loader: () => import('./transfer-station/index.js')
+    },
+    {
+        id: 'resource-center',
+        name: '资源控制中心',
+        icon: 'ri-dashboard-line',
+        colorClass: 'tool-card__icon--green',
+        category: 'utility',
+        status: 'ready',
+        description: '按需查看资源快照并配置低能耗策略。',
+        loader: () => import('./resource-center/index.js')
     }
 ]);
 

@@ -57,10 +57,10 @@
     <div class="main-container">
         <!-- 标签栏 -->
         <div class="tab-container">
-            <div id="tabBar" class="tab-bar">
+            <div id="tabBar" class="tab-bar" role="tablist" aria-label="已打开的页面">
                 <!-- 标签页动态生成 -->
             </div>
-            <button id="addTabBtn" class="tab-add-btn" title="新增标签页">
+            <button id="addTabBtn" class="tab-add-btn" title="新增标签页" aria-label="新增标签页">
                 <i class="ri-add-line"></i>
             </button>
         </div>
@@ -268,14 +268,6 @@
                                         </div>
                                         <div class="storage-options">
                                             <div class="settings-checkbox-wrapper">
-                                                <input type="checkbox" id="clean-files" class="settings-checkbox-input" disabled>
-                                                <label for="clean-files" class="settings-checkbox-label">
-                                                    <i class="ri-delete-bin-line"></i>
-                                                    <span>退出时自动清理临时文件</span>
-                                                    <small>规划中</small>
-                                                </label>
-                                            </div>
-                                            <div class="settings-checkbox-wrapper">
                                                 <input type="checkbox" id="auto-open-folder" class="settings-checkbox-input" disabled>
                                                 <label for="auto-open-folder" class="settings-checkbox-label">
                                                     <i class="ri-folder-open-line"></i>
@@ -354,6 +346,92 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <div class="storage-card storage-card--cleanup" id="storageCleanupCard">
+                                    <div class="storage-card-header">
+                                        <div class="storage-card-icon storage-card-icon--cleanup">
+                                            <i class="ri-delete-bin-6-line"></i>
+                                        </div>
+                                        <div class="storage-card-info">
+                                            <h3 class="storage-card-title">缓存与日志清理</h3>
+                                            <p class="storage-card-desc">普通清理可恢复；自动清理仅在启动时按条件运行一次</p>
+                                        </div>
+                                        <button class="settings-btn-icon" id="refreshCleanupUsage" type="button" title="刷新占用">
+                                            <i class="ri-refresh-line"></i>
+                                        </button>
+                                    </div>
+                                    <div class="storage-card-body cleanup-card-body">
+                                        <div class="cleanup-usage-grid" aria-label="受管目录占用">
+                                            <div class="cleanup-usage-item">
+                                                <span><i class="ri-archive-line"></i> 缓存</span>
+                                                <strong id="cleanupCacheUsage">--</strong>
+                                            </div>
+                                            <div class="cleanup-usage-item">
+                                                <span><i class="ri-file-list-3-line"></i> 日志</span>
+                                                <strong id="cleanupLogUsage">--</strong>
+                                            </div>
+                                            <div class="cleanup-usage-item">
+                                                <span><i class="ri-history-line"></i> 恢复区</span>
+                                                <strong id="cleanupRecoveryUsage">--</strong>
+                                            </div>
+                                        </div>
+
+                                        <div class="cleanup-options">
+                                            <label class="cleanup-option">
+                                                <input type="checkbox" id="cleanupTargetCache" checked>
+                                                <span>缓存</span>
+                                            </label>
+                                            <label class="cleanup-option">
+                                                <input type="checkbox" id="cleanupTargetLogs" checked>
+                                                <span>日志</span>
+                                            </label>
+                                            <label class="cleanup-option cleanup-option--recovery">
+                                                <input type="checkbox" id="cleanupTargetRecovery" disabled>
+                                                <span>同时清空恢复区</span>
+                                            </label>
+                                        </div>
+
+                                        <div class="cleanup-policy-row">
+                                            <div>
+                                                <strong>启动时自动安全清理</strong>
+                                                <span id="cleanupPolicyHint">最多每天检查一次，不启动后台计时器</span>
+                                            </div>
+                                            <label class="settings-toggle">
+                                                <input type="checkbox" id="automaticCleanupEnabled" class="settings-toggle-input" disabled>
+                                                <span class="settings-toggle-slider"></span>
+                                            </label>
+                                        </div>
+
+                                        <div class="cleanup-retention-row">
+                                            <label>缓存保留
+                                                <input id="cleanupCacheRetention" type="number" min="1" max="365" value="7" disabled>
+                                                <span>天</span>
+                                            </label>
+                                            <label>日志保留
+                                                <input id="cleanupLogRetention" type="number" min="1" max="365" value="7" disabled>
+                                                <span>天</span>
+                                            </label>
+                                        </div>
+
+                                        <label class="cleanup-permanent-option">
+                                            <input type="checkbox" id="permanentCleanupEnabled">
+                                            <span>
+                                                <strong>彻底删除</strong>
+                                                <small>跳过恢复区，删除后无法恢复</small>
+                                            </span>
+                                        </label>
+
+                                        <div class="cleanup-actions">
+                                            <button class="settings-btn settings-btn--secondary" id="restoreLatestCleanup" type="button" disabled>
+                                                <i class="ri-arrow-go-back-line"></i> 恢复最近清理
+                                            </button>
+                                            <button class="settings-btn settings-btn--primary" id="runStorageCleanup" type="button" disabled>
+                                                <i class="ri-brush-2-line"></i> 安全清理
+                                            </button>
+                                        </div>
+                                        <p class="cleanup-status" id="cleanupStatus" role="status">正在读取存储占用…</p>
+                                    </div>
+                                </div>
                             </div>
                         </section>
                         <!-- 快捷键绑定 -->
@@ -361,34 +439,11 @@
                             <div class="settings-section-header">
                                 <i class="ri-keyboard-box-line"></i>
                                 <h2 class="settings-section-title">快捷键绑定</h2>
-                                <span class="settings-section-hint">双击键位可修改</span>
+                                <span class="settings-section-hint">默认全部未绑定 · 点击键位录入</span>
                             </div>
-                            <div class="settings-section-content" id="shortcutBindings">
-                                <div class="settings-shortcut-item" data-shortcut-id="toggleApp" data-default="Alt+Space">
-                                    <span class="settings-shortcut-label">呼出/隐藏工具箱</span>
-                                    <div class="settings-shortcut-keys">
-                                        <span class="settings-key">Alt</span> <span class="settings-key-plus">+</span> <span class="settings-key">Space</span>
-                                    </div>
-                                </div>
-                                <div class="settings-shortcut-item" data-shortcut-id="screenshot" data-default="Ctrl+F1">
-                                    <span class="settings-shortcut-label">截图</span>
-                                    <div class="settings-shortcut-keys">
-                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">F1</span>
-                                    </div>
-                                </div>
-                                <div class="settings-shortcut-item" data-shortcut-id="colorPicker" data-default="Ctrl+Shift+C">
-                                    <span class="settings-shortcut-label">截图并提取颜色</span>
-                                    <div class="settings-shortcut-keys">
-                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">Shift</span> <span class="settings-key-plus">+</span> <span class="settings-key">C</span>
-                                    </div>
-                                </div>
-                                <div class="settings-shortcut-item" data-shortcut-id="recentTool" data-default="Ctrl+E">
-                                    <span class="settings-shortcut-label">打开最近使用的工具</span>
-                                    <div class="settings-shortcut-keys">
-                                        <span class="settings-key">Ctrl</span> <span class="settings-key-plus">+</span> <span class="settings-key">E</span>
-                                    </div>
-                                </div>
-                            </div>
+                            <p class="settings-shortcut-note">快捷键由 Rust 后台直接监听，只在触发时创建一个轻量快捷窗口，不会唤醒完整主界面。</p>
+                            <div class="settings-section-content" id="shortcutBindings" aria-label="工具快捷键列表"></div>
+                            <div class="settings-shortcut-status" id="shortcutStatus" role="status">正在读取快捷键…</div>
                         </section>
 
                         <!-- 配置规则管理 -->
@@ -466,9 +521,52 @@
                             <div class="settings-section-header">
                                 <i class="ri-toggle-line"></i>
                                 <h2 class="settings-section-title">常规选项</h2>
-                                <span class="settings-section-badge settings-section-badge--muted">规划中</span>
+                                <span class="settings-section-badge settings-section-badge--blue">性能</span>
                             </div>
                             <div class="settings-section-content">
+                                <div class="minimize-mode-setting">
+                                    <div class="minimize-mode-setting__intro">
+                                        <div>
+                                            <div class="settings-item-title">最小化时的资源策略</div>
+                                            <div class="settings-item-desc">选择恢复速度与内存占用之间的平衡。新安装默认使用节能模式。</div>
+                                        </div>
+                                        <i class="ri-speed-line" aria-hidden="true"></i>
+                                    </div>
+                                    <fieldset class="minimize-mode-options" id="minimizeModeOptions">
+                                        <legend class="sr-only">最小化时的资源策略</legend>
+                                        <label class="minimize-mode-option" data-minimize-mode="standard">
+                                            <input type="radio" name="minimizeMode" value="standard">
+                                            <span class="minimize-mode-option__icon"><i class="ri-flashlight-line"></i></span>
+                                            <span class="minimize-mode-option__content">
+                                                <strong>标准</strong>
+                                                <small>仅最小化窗口，页面继续保留，恢复最快。</small>
+                                            </span>
+                                            <span class="minimize-mode-option__mark"><i class="ri-check-line"></i></span>
+                                        </label>
+                                        <label class="minimize-mode-option" data-minimize-mode="efficient">
+                                            <input type="radio" name="minimizeMode" value="efficient">
+                                            <span class="minimize-mode-option__icon"><i class="ri-shield-check-line"></i></span>
+                                            <span class="minimize-mode-option__content">
+                                                <span class="minimize-mode-option__title"><strong>节能</strong><em>推荐</em></span>
+                                                <small>暂停渲染并降低 WebView2 内存目标，兼顾占用与恢复速度。</small>
+                                            </span>
+                                            <span class="minimize-mode-option__mark"><i class="ri-check-line"></i></span>
+                                        </label>
+                                        <label class="minimize-mode-option" data-minimize-mode="deep">
+                                            <input type="radio" name="minimizeMode" value="deep">
+                                            <span class="minimize-mode-option__icon"><i class="ri-contrast-2-line"></i></span>
+                                            <span class="minimize-mode-option__content">
+                                                <strong>深度休眠</strong>
+                                                <small>关闭全部 WebView，通过托盘重新创建界面，内存最低。</small>
+                                            </span>
+                                            <span class="minimize-mode-option__mark"><i class="ri-check-line"></i></span>
+                                        </label>
+                                    </fieldset>
+                                    <div class="settings-info-text minimize-mode-setting__note">
+                                        <i class="ri-information-line"></i>
+                                        <span>提醒始终由后台调度。深度休眠时请从系统托盘恢复；自定义铃声会回退为系统通知音。</span>
+                                    </div>
+                                </div>
                                 <div class="settings-toggle-item">
                                     <span class="settings-toggle-label">开机自动启动</span>
                                     <label class="settings-toggle">

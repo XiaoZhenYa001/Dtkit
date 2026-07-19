@@ -91,6 +91,13 @@ html {
     color-scheme: light;
 }
 
+html.app-is-suspended *,
+html.app-is-suspended *::before,
+html.app-is-suspended *::after {
+    animation-play-state: paused !important;
+    caret-color: transparent !important;
+}
+
 body {
     display: flex;
     font-family: var(--font-family);

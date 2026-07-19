@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = Object.freeze({
 
 let monitorStartPromise = null;
 let monitorStarted = false;
+let lifecycleInitialized = false;
 
 export function getDesktopOrganizerSettings() {
     const savedSettings = globalThis.localStorage?.getItem(STORAGE_KEY);
@@ -59,6 +60,22 @@ export async function stopDesktopOrganizerMonitor() {
 }
 
 export async function bootstrapDesktopOrganizer() {
+    if (!lifecycleInitialized && typeof globalThis.window?.addEventListener === 'function') {
+        lifecycleInitialized = true;
+        globalThis.window.addEventListener('dtkit:power-state', event => {
+            const suspended = Boolean(event.detail?.suspended);
+            if (suspended) {
+                stopDesktopOrganizerMonitor().catch(error => {
+                    console.error('[DesktopOrganizer] 暂停热区监听失败', error);
+                });
+            } else if (getDesktopOrganizerSettings().enabled) {
+                startDesktopOrganizerMonitor().catch(error => {
+                    console.error('[DesktopOrganizer] 恢复热区监听失败', error);
+                });
+            }
+        });
+    }
+
     const settings = getDesktopOrganizerSettings();
     if (!settings.enabled) return false;
     return startDesktopOrganizerMonitor();

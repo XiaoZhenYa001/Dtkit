@@ -1,22 +1,25 @@
 export const SETTINGS_STORAGE_KEYS = Object.freeze({
     SHORTCUTS: 'dtkit_shortcuts',
-    CUSTOM_MIRROR: 'dtkit_custom_mirror_source'
+    CUSTOM_MIRROR: 'dtkit_custom_mirror_source',
+    MINIMIZE_MODE: 'dtkit_minimize_mode'
 });
 
-export const DEFAULT_SHORTCUTS = Object.freeze({
-    toggleApp: 'Alt+Space',
-    screenshot: 'Ctrl+F1',
-    colorPicker: 'Ctrl+Shift+C',
-    recentTool: 'Ctrl+E'
-});
+export const MINIMIZE_MODES = Object.freeze(['standard', 'efficient', 'deep']);
+export const DEFAULT_MINIMIZE_MODE = 'efficient';
+
+export function parseMinimizeMode(value) {
+    return MINIMIZE_MODES.includes(value) ? value : DEFAULT_MINIMIZE_MODE;
+}
+
+export const DEFAULT_SHORTCUTS = Object.freeze({});
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 const KEY_LABELS = Object.freeze({
     ' ': 'Space',
-    ArrowUp: '↑',
-    ArrowDown: '↓',
-    ArrowLeft: '←',
-    ArrowRight: '→'
+    ArrowUp: 'ArrowUp',
+    ArrowDown: 'ArrowDown',
+    ArrowLeft: 'ArrowLeft',
+    ArrowRight: 'ArrowRight'
 });
 
 export function parseStoredShortcuts(serialized, defaults = DEFAULT_SHORTCUTS) {
@@ -44,7 +47,7 @@ export function shortcutFromKeyboardEvent(event) {
     if (event.ctrlKey) keys.push('Ctrl');
     if (event.shiftKey) keys.push('Shift');
     if (event.altKey) keys.push('Alt');
-    if (event.metaKey) keys.push('Win');
+    if (event.metaKey) keys.push('Super');
 
     let keyName = KEY_LABELS[event.key] || event.key;
     if (keyName.length === 1) keyName = keyName.toUpperCase();
