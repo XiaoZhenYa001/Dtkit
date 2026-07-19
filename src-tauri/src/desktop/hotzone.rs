@@ -3,7 +3,7 @@
 //
 // 修复说明：
 // 1. GetDC 需要配对 ReleaseDC 释放资源
-// 2. 降低检测频率到 50ms（20fps）减少 CPU 占用
+// 2. 隐藏时采用 250ms、显示时采用 100ms 的自适应频率，减少常驻 CPU 占用
 // 3. 添加全局停止机制
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -220,12 +220,14 @@ impl HotZoneMonitor {
         F: Fn(bool) + Send + 'static,
     {
         // 如果已经在运行，不要重复启动
-        if HOTZONE_RUNNING.load(Ordering::SeqCst) {
+        if HOTZONE_RUNNING
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return;
         }
 
         let config = self.config.clone();
-        HOTZONE_RUNNING.store(true, Ordering::SeqCst);
 
         thread::spawn(move || {
             let mut in_hotzone_since: Option<Instant> = None;
@@ -288,8 +290,12 @@ impl HotZoneMonitor {
                     }
                 }
 
-                // 优化检测频率：100ms（10fps），在响应性和性能间取得平衡
-                thread::sleep(Duration::from_millis(100));
+                // 隐藏时降低至 4Hz；显示时短暂提高到 10Hz，兼顾低能耗和离开响应。
+                thread::sleep(Duration::from_millis(if is_panel_visible {
+                    100
+                } else {
+                    250
+                }));
             }
 
             // 线程结束时隐藏面板

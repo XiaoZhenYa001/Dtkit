@@ -95,8 +95,8 @@ with sync_playwright() as playwright:
     page.locator(".settings-content").wait_for(state="visible")
     if not page.locator("#downloadPathInput").input_value().strip():
         raise AssertionError("Lazy settings initialization did not populate download path")
-    if page.locator(".settings-shortcut-keys .settings-key").count() == 0:
-        raise AssertionError("Lazy settings initialization did not render shortcut keys")
+    if page.locator("#shortcutBindings .shortcut-binding__record").count() != 1:
+        raise AssertionError("Settings should retain only the command-palette shortcut")
 
     settings_resources = page.evaluate(
         "performance.getEntriesByType('resource').map(entry => entry.name)"

@@ -6,6 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+const FOLDER_PREVIEW_LIMIT: usize = 5;
+const SEARCH_RESULT_LIMIT: usize = 200;
+
 /// 文件分类类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileCategory {
@@ -87,6 +90,7 @@ pub struct DesktopFile {
     pub modified_time: u64,                 // 修改时间（时间戳）
     pub accessed_time: u64,                 // 访问时间（时间戳）
     pub children: Option<Vec<DesktopFile>>, // 子文件（仅文件夹有，一级）
+    pub children_truncated: bool,           // 文件夹预览是否已截断
     pub icon: Option<String>,               // 文件图标（Base64 PNG）
 }
 
@@ -140,10 +144,10 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
     let category = FileCategory::from_extension(&extension, is_folder);
 
     // 获取子文件（仅一级）
-    let children = if is_folder && include_children {
+    let (children, children_truncated) = if is_folder && include_children {
         scan_folder_children(path)
     } else {
-        None
+        (None, false)
     };
 
     // 提取文件图标（仅对程序和快捷方式）
@@ -170,18 +174,27 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
         modified_time: get_timestamp(metadata.modified()),
         accessed_time: get_timestamp(metadata.accessed()),
         children,
+        children_truncated,
         icon,
     })
 }
 
 /// 扫描文件夹的一级子内容
-fn scan_folder_children(folder_path: &PathBuf) -> Option<Vec<DesktopFile>> {
-    let entries = fs::read_dir(folder_path).ok()?;
+fn scan_folder_children(folder_path: &PathBuf) -> (Option<Vec<DesktopFile>>, bool) {
+    let entries = match fs::read_dir(folder_path) {
+        Ok(entries) => entries,
+        Err(_) => return (None, false),
+    };
     let mut children = Vec::new();
+    let mut truncated = false;
 
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(file) = scan_file_info(&path, false) {
+            if children.len() == FOLDER_PREVIEW_LIMIT {
+                truncated = true;
+                break;
+            }
             children.push(file);
         }
     }
@@ -189,7 +202,7 @@ fn scan_folder_children(folder_path: &PathBuf) -> Option<Vec<DesktopFile>> {
     // 按名称排序
     children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    Some(children)
+    (Some(children), truncated)
 }
 
 /// 扫描桌面所有文件
@@ -283,6 +296,9 @@ pub fn search_desktop_files(
             }
 
             results.push(file);
+            if results.len() >= SEARCH_RESULT_LIMIT {
+                break;
+            }
         }
     }
 

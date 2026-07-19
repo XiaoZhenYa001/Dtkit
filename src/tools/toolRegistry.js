@@ -8,8 +8,11 @@
  * - 工具样式随动态 import 由构建系统按需加载
  */
 
+import { mountShortcutBinding } from '../core/shortcutBindingControl.js';
+
 // 工具存储
 const toolsRegistry = new Map();
+let disposeActiveShortcut = null;
 
 export const TOOL_STATUSES = Object.freeze({
     READY: 'ready',
@@ -228,9 +231,20 @@ export function renderToolView(toolId) {
     if (typeof tool.template === 'function') {
         try {
             // 渲染 HTML
+            disposeActiveShortcut?.();
+            disposeActiveShortcut = null;
             const html = tool.template();
             container.innerHTML = html;
             container.dataset.toolId = toolId;
+            const shortcutSlot = document.createElement('div');
+            shortcutSlot.className = 'tool-shortcut-slot';
+            container.prepend(shortcutSlot);
+            disposeActiveShortcut = mountShortcutBinding(shortcutSlot, {
+                label: tool.name,
+                icon: tool.icon,
+                compact: true,
+                target: { kind: 'tool', toolId }
+            });
             
             console.log(`[ToolRegistry] 工具视图已渲染: ${toolId}`);
             return container;
@@ -249,6 +263,8 @@ export function renderToolView(toolId) {
 export function clearDynamicContainer() {
     const container = document.getElementById(DYNAMIC_CONTAINER_ID);
     if (container) {
+        disposeActiveShortcut?.();
+        disposeActiveShortcut = null;
         container.innerHTML = '';
         container.classList.remove('view--active');
         delete container.dataset.toolId;
@@ -272,6 +288,8 @@ export function hideDynamicContainer() {
     const container = document.getElementById(DYNAMIC_CONTAINER_ID);
     if (container) {
         container.classList.remove('view--active');
+        disposeActiveShortcut?.();
+        disposeActiveShortcut = null;
     }
 }
 
@@ -314,6 +332,11 @@ export function destroyTool(toolId) {
         } catch (error) {
             console.error(`[ToolRegistry] 工具销毁失败: ${toolId}`, error);
         }
+    }
+    const container = document.getElementById(DYNAMIC_CONTAINER_ID);
+    if (container?.dataset.toolId === toolId) {
+        disposeActiveShortcut?.();
+        disposeActiveShortcut = null;
     }
 }
 

@@ -1,4 +1,5 @@
 import { detectCommand, evaluateExpression, formatNumber, transformText } from './commandEngine.js';
+import '../css/tool-shortcut.css';
 
 const TOOL_LABELS = Object.freeze({
     'timestamp-converter': '时间戳转换', 'json-formatter': 'JSON 格式化',

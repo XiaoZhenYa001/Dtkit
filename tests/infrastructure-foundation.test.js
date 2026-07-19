@@ -52,3 +52,37 @@ test('portable storage and resource policy have explicit managed boundaries', ()
     assert.match(resources, /cache_limit_bytes: 100 \* 1024 \* 1024/);
     assert.match(resources, /RESOURCE_POLICY_FILE: &str = "resource-policy\.json"/);
 });
+
+test('desktop organizer bounds file access and avoids expensive unbounded scans', () => {
+    const commands = read('src-tauri/src/desktop/commands.rs');
+    const scanner = read('src-tauri/src/desktop/scanner.rs');
+    const hotzone = read('src-tauri/src/desktop/hotzone.rs');
+    const nativeWindow = read('src-tauri/src/lib.rs');
+    const organizerUi = read('src/desktop-organizer/main.js');
+
+    assert.match(commands, /validated_desktop_entry/);
+    assert.match(commands, /validate_leaf_filename/);
+    assert.match(commands, /spawn_blocking/);
+    assert.match(scanner, /FOLDER_PREVIEW_LIMIT: usize = 5/);
+    assert.match(scanner, /SEARCH_RESULT_LIMIT: usize = 200/);
+    assert.match(hotzone, /compare_exchange\(false, true/);
+    assert.match(hotzone, /if is_panel_visible \{\s*100\s*\} else \{\s*250/);
+    assert.doesNotMatch(nativeWindow, /\.position\(1350\.0/);
+    assert.match(nativeWindow, /fn fit_window_rect/);
+    assert.match(nativeWindow, /clamp_desktop_organizer_window/);
+    assert.match(commands, /pub x: i32/);
+    assert.match(commands, /pub y: i32/);
+    assert.match(organizerUi, /invoke\('clamp_desktop_organizer_window'\)/);
+    assert.match(organizerUi, /screenBounds\.x/);
+    assert.match(organizerUi, /screenBounds\.y/);
+});
+
+test('tool shortcuts are mounted from tool metadata instead of a centralized tool list', () => {
+    const registry = read('src/tools/toolRegistry.js');
+    const settings = read('src/views/settings/shortcuts.js');
+
+    assert.match(registry, /mountShortcutBinding/);
+    assert.match(registry, /target: \{ kind: 'tool', toolId \}/);
+    assert.doesNotMatch(settings, /timestamp-converter|json-formatter|transfer-station/);
+    assert.match(settings, /target: \{ kind: 'palette' \}/);
+});

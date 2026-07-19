@@ -8,7 +8,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 // 桌面整理模块
 mod alarm_scheduler;
@@ -92,7 +95,7 @@ fn ensure_desktop_organizer_window(app: &AppHandle) -> Result<WebviewWindow, Str
         return Ok(window);
     }
 
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         "desktop-organizer",
         WebviewUrl::App("desktop-organizer/index.html".into()),
@@ -107,9 +110,95 @@ fn ensure_desktop_organizer_window(app: &AppHandle) -> Result<WebviewWindow, Str
     .visible(false)
     .skip_taskbar(true)
     .shadow(false)
-    .position(1350.0, 10.0)
     .build()
-    .map_err(|error| format!("创建桌面整理窗口失败: {error}"))
+    .map_err(|error| format!("创建桌面整理窗口失败: {error}"))?;
+    position_desktop_organizer_at_top_right(&window)?;
+    Ok(window)
+}
+
+fn fit_window_rect(
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: PhysicalSize<u32>,
+    margin: u32,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    let max_width = monitor_size
+        .width
+        .saturating_sub(margin.saturating_mul(2))
+        .max(1);
+    let max_height = monitor_size
+        .height
+        .saturating_sub(margin.saturating_mul(2))
+        .max(1);
+    let fitted_size = PhysicalSize::new(size.width.min(max_width), size.height.min(max_height));
+    let min_x = monitor_position.x.saturating_add(margin as i32);
+    let min_y = monitor_position.y.saturating_add(margin as i32);
+    let max_x = monitor_position
+        .x
+        .saturating_add(monitor_size.width as i32)
+        .saturating_sub(fitted_size.width as i32)
+        .saturating_sub(margin as i32)
+        .max(min_x);
+    let max_y = monitor_position
+        .y
+        .saturating_add(monitor_size.height as i32)
+        .saturating_sub(fitted_size.height as i32)
+        .saturating_sub(margin as i32)
+        .max(min_y);
+    (
+        PhysicalPosition::new(
+            position.x.clamp(min_x, max_x),
+            position.y.clamp(min_y, max_y),
+        ),
+        fitted_size,
+    )
+}
+
+fn organizer_monitor(window: &WebviewWindow) -> Result<tauri::Monitor, String> {
+    window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "无法获取桌面整理所在显示器".to_string())
+}
+
+fn fit_desktop_organizer_to_screen(window: &WebviewWindow) -> Result<(), String> {
+    let monitor = organizer_monitor(window)?;
+    let position = window
+        .outer_position()
+        .map_err(|error| format!("读取桌面整理位置失败: {error}"))?;
+    let size = window
+        .outer_size()
+        .map_err(|error| format!("读取桌面整理尺寸失败: {error}"))?;
+    let (position, size) =
+        fit_window_rect(position, size, *monitor.position(), *monitor.size(), 12);
+    window
+        .set_size(size)
+        .map_err(|error| format!("调整桌面整理尺寸失败: {error}"))?;
+    window
+        .set_position(position)
+        .map_err(|error| format!("调整桌面整理位置失败: {error}"))
+}
+
+fn position_desktop_organizer_at_top_right(window: &WebviewWindow) -> Result<(), String> {
+    let monitor = organizer_monitor(window)?;
+    let size = window
+        .outer_size()
+        .map_err(|error| format!("读取桌面整理尺寸失败: {error}"))?;
+    let preferred = PhysicalPosition::new(
+        monitor.position().x + monitor.size().width as i32 - size.width as i32 - 12,
+        monitor.position().y + 12,
+    );
+    let (position, size) =
+        fit_window_rect(preferred, size, *monitor.position(), *monitor.size(), 12);
+    window
+        .set_size(size)
+        .map_err(|error| format!("调整桌面整理尺寸失败: {error}"))?;
+    window
+        .set_position(position)
+        .map_err(|error| format!("设置桌面整理初始位置失败: {error}"))
 }
 
 fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -482,8 +571,6 @@ fn open_file(path: String) -> Result<(), String> {
 // 桌面整理热区监听启动命令
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
-    use tauri::PhysicalPosition;
-
     // 如果已经在运行，不要重复启动
     if is_hotzone_running() {
         return Ok(());
@@ -499,28 +586,17 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                 return;
             }
             if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
-                // 获取主显示器信息
-                let monitor_info = window
-                    .primary_monitor()
-                    .ok()
-                    .flatten()
-                    .or_else(|| window.current_monitor().ok().flatten());
-
-                if let Some(monitor) = monitor_info {
+                if let Ok(monitor) = organizer_monitor(&window) {
                     let monitor_pos = monitor.position();
                     let scale_factor = monitor.scale_factor();
                     let margin_top = (10.0 * scale_factor) as i32;
-
-                    // 检查是否有保存的位置
                     let (stored_x, _stored_width) = get_hotzone_pos();
-
                     if stored_x >= 0 {
-                        // 使用保存的位置，不修改尺寸（前端会根据localStorage恢复）
                         let panel_y = monitor_pos.y + margin_top;
                         let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
                     }
-                    // 如果没有保存的位置，窗口会使用上次的位置（前端loadUserPreferences处理）
                 }
+                let _ = fit_desktop_organizer_to_screen(&window);
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -541,6 +617,14 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
 fn update_hotzone_position(x: i32, width: i32) -> Result<(), String> {
     update_hotzone_pos(x, width);
     Ok(())
+}
+
+#[tauri::command]
+fn clamp_desktop_organizer_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("desktop-organizer")
+        .ok_or_else(|| "桌面整理窗口尚未创建".to_string())?;
+    fit_desktop_organizer_to_screen(&window)
 }
 
 // 停止桌面整理热区监听
@@ -564,6 +648,7 @@ fn get_hotzone_status() -> bool {
 fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
     if show {
         let window = ensure_desktop_organizer_window(&app)?;
+        fit_desktop_organizer_to_screen(&window)?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else if let Some(window) = app.get_webview_window("desktop-organizer") {
@@ -791,6 +876,7 @@ pub fn run() {
             get_hotzone_status,
             toggle_desktop_organizer,
             update_hotzone_position,
+            clamp_desktop_organizer_window,
             get_screen_bounds,
             set_user_interacting
         ])
@@ -806,4 +892,38 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod window_bounds_tests {
+    use super::fit_window_rect;
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn organizer_is_pulled_back_inside_a_small_primary_monitor() {
+        let (position, size) = fit_window_rect(
+            PhysicalPosition::new(1350, 10),
+            PhysicalSize::new(550, 450),
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1366, 768),
+            12,
+        );
+
+        assert_eq!(position, PhysicalPosition::new(804, 12));
+        assert_eq!(size, PhysicalSize::new(550, 450));
+    }
+
+    #[test]
+    fn organizer_supports_negative_monitor_origins_and_oversized_preferences() {
+        let (position, size) = fit_window_rect(
+            PhysicalPosition::new(-2100, -50),
+            PhysicalSize::new(2200, 1200),
+            PhysicalPosition::new(-1920, 0),
+            PhysicalSize::new(1920, 1080),
+            12,
+        );
+
+        assert_eq!(position, PhysicalPosition::new(-1908, 12));
+        assert_eq!(size, PhysicalSize::new(1896, 1056));
+    }
 }

@@ -86,7 +86,6 @@
     .downloads-toolbar,
     .add-download-header,
     .settings-hero-content,
-    .settings-shortcut-item,
     .settings-toggle-item,
     .settings-footer-card {
         flex-direction: column;
@@ -120,8 +119,7 @@
     }
 
     .task-controls,
-    .settings-quick-nav,
-    .settings-shortcut-keys {
+    .settings-quick-nav {
         width: 100%;
     }
 

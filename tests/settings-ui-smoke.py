@@ -101,10 +101,10 @@ with sync_playwright() as playwright:
     page.locator("#changeDownloadPathBtn").click()
     assert page.evaluate("localStorage.getItem('dtkit_downloadPath')") == download_path
 
-    shortcut = page.locator('[data-shortcut-record="palette"]')
-    page.locator('#shortcutStatus').filter(has_text='默认不绑定任何快捷键').wait_for()
+    shortcut = page.locator('#shortcutBindings .shortcut-binding__record')
+    page.locator('#shortcutStatus').filter(has_text='各工具的专属快捷键').wait_for()
     shortcut.click()
-    assert "recording" in (shortcut.get_attribute("class") or "")
+    assert "is-recording" in (shortcut.get_attribute("class") or "")
     page.keyboard.press("Control+Alt+K")
     assert "Ctrl" in shortcut.inner_text()
     shortcuts = page.evaluate("window.__shortcutBindings")

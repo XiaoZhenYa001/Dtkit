@@ -10,15 +10,15 @@ const { getCurrentWindow } = window.__TAURI__.window;
 // 分类配置
 // ============================================
 const CATEGORIES = {
-    recent: { icon: '⏱️', name: '最近使用', key: 'recent' },
-    document: { icon: '📄', name: '文档', key: 'documents' },
-    image: { icon: '🖼️', name: '图片', key: 'images' },
-    video: { icon: '🎬', name: '视频', key: 'videos' },
-    audio: { icon: '🎵', name: '音频', key: 'audios' },
-    archive: { icon: '📦', name: '压缩包', key: 'archives' },
-    program: { icon: '💻', name: '程序', key: 'programs' },
-    folder: { icon: '📂', name: '文件夹', key: 'folders' },
-    other: { icon: '📎', name: '其他', key: 'others' },
+    recent: { icon: 'ri-history-line', name: '最近使用', key: 'recent' },
+    document: { icon: 'ri-file-text-line', name: '文档', key: 'documents' },
+    image: { icon: 'ri-image-line', name: '图片', key: 'images' },
+    video: { icon: 'ri-video-line', name: '视频', key: 'videos' },
+    audio: { icon: 'ri-music-2-line', name: '音频', key: 'audios' },
+    archive: { icon: 'ri-archive-line', name: '压缩包', key: 'archives' },
+    program: { icon: 'ri-apps-2-line', name: '程序', key: 'programs' },
+    folder: { icon: 'ri-folder-2-line', name: '文件夹', key: 'folders' },
+    other: { icon: 'ri-attachment-2', name: '其他', key: 'others' },
 };
 
 // 命令模式映射
@@ -98,18 +98,18 @@ function getFileIcon(file) {
         return `<img src="${file.icon}" class="file-icon-img" alt="" loading="lazy">`;
     }
     
-    if (file.is_folder) return '📂';
+    if (file.is_folder) return '<i class="ri-folder-2-line"></i>';
     
     const iconMap = {
-        document: '📄',
-        image: '🖼️',
-        video: '🎬',
-        audio: '🎵',
-        archive: '📦',
-        program: '💻',
-        other: '📎',
+        document: '<i class="ri-file-text-line"></i>',
+        image: '<i class="ri-image-line"></i>',
+        video: '<i class="ri-video-line"></i>',
+        audio: '<i class="ri-music-2-line"></i>',
+        archive: '<i class="ri-archive-line"></i>',
+        program: '<i class="ri-apps-2-line"></i>',
+        other: '<i class="ri-attachment-2"></i>',
     };
-    return iconMap[file.category] || '📄';
+    return iconMap[file.category] || iconMap.document;
 }
 
 function escapeHtml(text) {
@@ -207,7 +207,7 @@ function renderCategoryList() {
         html += `
             <div class="category-item ${isExpanded ? 'expanded' : ''}" data-category="${catKey}">
                 <div class="category-header" data-category="${catKey}">
-                    <span class="category-icon">${catConfig.icon}</span>
+                    <span class="category-icon"><i class="${catConfig.icon}"></i></span>
                     <span class="category-name">${catConfig.name}</span>
                     <span class="category-count">${files.length}</span>
                     <span class="category-arrow">▶</span>
@@ -241,12 +241,12 @@ function renderFileList(files) {
             <span class="file-icon${isImgIcon ? ' file-icon-real' : ''}">${iconContent}</span>
             <span class="file-name">${escapeHtml(file.name)}</span>
             <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
-            ${file.is_folder && file.children ? renderFolderChildren(file.children) : ''}
+            ${file.is_folder && file.children ? renderFolderChildren(file.children, file.children_truncated) : ''}
         </div>
     `}).join('');
 }
 
-function renderFolderChildren(children) {
+function renderFolderChildren(children, truncated = false) {
     if (!children || children.length === 0) return '';
     
     const items = children.slice(0, 5).map(child => `
@@ -256,8 +256,7 @@ function renderFolderChildren(children) {
         </div>
     `).join('');
     
-    const moreCount = children.length - 5;
-    const moreHtml = moreCount > 0 ? `<div class="file-item file-item--more">还有 ${moreCount} 个项目...</div>` : '';
+    const moreHtml = truncated ? '<div class="file-item file-item--more">打开文件夹查看其余项目</div>' : '';
     
     return `<div class="folder-children">${items}${moreHtml}</div>`;
 }
@@ -292,15 +291,25 @@ function renderSearchResults() {
 // ============================================
 const CUSTOM_CATEGORIES_KEY = 'desktop_organizer_custom_categories';
 const FILE_CATEGORIES_KEY = 'desktop_organizer_file_categories';
+const CATEGORY_ICONS = new Set(['📁', '⭐', '💼', '🎮', '🛠️', '📚', '🎨', '💡', '🔧', '📝', '🎯', '🚀']);
 
 // 加载自定义分类
 function loadCustomCategories() {
     try {
         const saved = localStorage.getItem(CUSTOM_CATEGORIES_KEY);
-        state.customCategories = saved ? JSON.parse(saved) : [];
+        const parsedCategories = saved ? JSON.parse(saved) : [];
+        state.customCategories = (Array.isArray(parsedCategories) ? parsedCategories : [])
+            .filter(category => category && /^custom_\d+$/.test(category.key) && typeof category.name === 'string')
+            .slice(0, 50)
+            .map(category => ({ key: category.key, name: category.name.trim().slice(0, 40), icon: CATEGORY_ICONS.has(category.icon) ? category.icon : '📁' }))
+            .filter(category => category.name);
         
         const fileCategories = localStorage.getItem(FILE_CATEGORIES_KEY);
-        state.fileCategories = fileCategories ? JSON.parse(fileCategories) : {};
+        const parsedAssignments = fileCategories ? JSON.parse(fileCategories) : {};
+        const validKeys = new Set(state.customCategories.map(category => category.key));
+        state.fileCategories = Object.fromEntries(Object.entries(parsedAssignments || {})
+            .filter(([path, key]) => typeof path === 'string' && path.length <= 1024 && validKeys.has(key))
+            .slice(0, 1000));
     } catch (e) {
         console.error('加载自定义分类失败:', e);
         state.customCategories = [];
@@ -320,8 +329,10 @@ function saveCustomCategories() {
 
 // 创建新分类
 function createCategory(name, icon) {
+    name = name.trim().slice(0, 40);
+    if (!name || state.customCategories.some(category => category.name === name)) return null;
     const key = `custom_${Date.now()}`;
-    const newCategory = { key, name, icon };
+    const newCategory = { key, name, icon: CATEGORY_ICONS.has(icon) ? icon : '📁' };
     state.customCategories.push(newCategory);
     saveCustomCategories();
     renderCategoryList();
@@ -384,10 +395,13 @@ function updateCategorySubmenu() {
 // ============================================
 // 数据加载
 // ============================================
+let scanPromise = null;
 async function loadDesktopFiles() {
+    if (scanPromise) return scanPromise;
+    scanPromise = invoke('desktop_scan');
     try {
         elements.statusText.textContent = '扫描中...';
-        state.files = await invoke('desktop_scan');
+        state.files = await scanPromise;
         loadCustomCategories();
         renderCategoryList();
     } catch (error) {
@@ -396,13 +410,17 @@ async function loadDesktopFiles() {
         elements.categoryList.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">⚠️</div>
-                <div class="empty-state-text">加载失败: ${error}</div>
+                <div class="empty-state-text">加载失败: ${escapeHtml(String(error))}</div>
             </div>
         `;
+    } finally {
+        scanPromise = null;
     }
 }
 
+let searchGeneration = 0;
 async function searchFiles(query) {
+    const generation = ++searchGeneration;
     // 解析命令模式
     let categoryFilter = null;
     let searchTerm = query;
@@ -422,12 +440,15 @@ async function searchFiles(query) {
     }
 
     try {
-        state.searchResults = await invoke('desktop_search', {
+        const results = await invoke('desktop_search', {
             query: searchTerm,
             categoryFilter: categoryFilter,
         });
+        if (generation !== searchGeneration) return;
+        state.searchResults = results;
         renderSearchResults();
     } catch (error) {
+        if (generation !== searchGeneration) return;
         console.error('搜索失败:', error);
         state.searchResults = [];
         renderSearchResults();
@@ -762,10 +783,6 @@ elements.contextMenu.addEventListener('click', async (e) => {
         case 'copy':
             await copyToClipboard(path);
             break;
-        case 'cut':
-            // 剪切需要配合粘贴功能，这里先复制路径
-            await copyToClipboard(path);
-            break;
         case 'rename':
             showRenameDialog(path, name);
             break;
@@ -865,7 +882,12 @@ elements.createCategoryConfirmBtn?.addEventListener('click', () => {
         return;
     }
     
-    createCategory(name, selectedCategoryIcon);
+    if (!createCategory(name, selectedCategoryIcon)) {
+        elements.categoryNameInput.setCustomValidity('分类名称已存在');
+        elements.categoryNameInput.reportValidity();
+        elements.categoryNameInput.addEventListener('input', () => elements.categoryNameInput.setCustomValidity(''), { once: true });
+        return;
+    }
     hideCreateCategoryDialog();
 });
 
@@ -1006,6 +1028,8 @@ elements.searchInput.addEventListener('input', (e) => {
             searchFiles(query);
         }, 200);
     } else {
+        searchGeneration++;
+        clearTimeout(searchTimeout);
         state.isSearching = false;
         elements.categoryList.style.display = 'block';
         elements.searchResults.style.display = 'none';
@@ -1030,6 +1054,8 @@ elements.refreshBtn.addEventListener('click', () => {
 // 监听窗口显示/隐藏事件，隐藏时关闭右键菜单并清除拖动状态
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
+        clearTimeout(searchTimeout);
+        searchGeneration++;
         hideContextMenu();
         hideRenameDialog();
         
@@ -1065,8 +1091,9 @@ let resizeDirection = '';
 let startX, startY, startWidth, startHeight, startWindowX, startWindowY;
 let resizeEndTimeout = null;
 const appWindow = getCurrentWindow();
-let screenBounds = { width: 1920, height: 1080 }; // 缓存屏幕尺寸
+let screenBounds = { x: 0, y: 0, width: 1920, height: 1080 }; // 当前显示器物理边界
 let lastUpdateTime = 0; // 节流控制
+let resizeUpdatePending = false;
 
 // 通知 Rust 端用户正在交互（拖动中）
 async function notifyUserInteracting(interacting) {
@@ -1101,6 +1128,8 @@ async function updateScreenBounds() {
     } catch (e) {
         // 使用 DOM API 作为后备
         screenBounds = {
+            x: (window.screen.availLeft || 0) * window.devicePixelRatio,
+            y: (window.screen.availTop || 0) * window.devicePixelRatio,
             width: window.screen.width * window.devicePixelRatio,
             height: window.screen.height * window.devicePixelRatio
         };
@@ -1110,9 +1139,13 @@ async function updateScreenBounds() {
 // 限制窗口位置在屏幕边界内
 function clampPosition(x, y, width, height) {
     const margin = 10; // 边缘安全距离
+    const left = (screenBounds.x || 0) + margin;
+    const top = (screenBounds.y || 0) + margin;
+    const right = (screenBounds.x || 0) + screenBounds.width - width - margin;
+    const bottom = (screenBounds.y || 0) + screenBounds.height - height - margin;
     return {
-        x: Math.max(margin, Math.min(screenBounds.width - width - margin, x)),
-        y: Math.max(margin, Math.min(screenBounds.height - height - margin, y))
+        x: Math.max(left, Math.min(Math.max(left, right), x)),
+        y: Math.max(top, Math.min(Math.max(top, bottom), y))
     };
 }
 
@@ -1165,11 +1198,11 @@ document.querySelectorAll('.resize-handle').forEach(handle => {
 });
 
 document.addEventListener('mousemove', async (e) => {
-    if (!isResizing) return;
+    if (!isResizing || resizeUpdatePending) return;
     
     // 节流：限制更新频率为60fps
     const now = Date.now();
-    if (now - lastUpdateTime < 16) return;
+    if (now - lastUpdateTime < 32) return;
     lastUpdateTime = now;
     
     const deltaX = e.screenX - startX;
@@ -1223,6 +1256,7 @@ document.addEventListener('mousemove', async (e) => {
     
     // 使用 Tauri API 调整窗口（批量操作）
     try {
+        resizeUpdatePending = true;
         // 先设置尺寸，再设置位置，避免闪烁
         await appWindow.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) });
         
@@ -1231,6 +1265,8 @@ document.addEventListener('mousemove', async (e) => {
         }
     } catch (err) {
         console.error('调整窗口失败:', err);
+    } finally {
+        resizeUpdatePending = false;
     }
 });
 
@@ -1266,18 +1302,19 @@ async function loadUserPreferences() {
         const prefs = localStorage.getItem('desktopOrganizerPrefs');
         if (prefs) {
             const { width, height, positionX, expandedCategories } = JSON.parse(prefs);
-            // 使用 Tauri API 设置窗口尺寸和位置
-            if (width && height) {
-                await appWindow.setSize({ type: 'Physical', width, height });
+            if (Number.isFinite(width) && Number.isFinite(height) && width >= 400 && height >= 300) {
+                await appWindow.setSize({ type: 'Physical', width: Math.round(width), height: Math.round(height) });
             }
-            if (positionX !== undefined) {
+            if (Number.isFinite(positionX)) {
                 const position = await appWindow.innerPosition();
-                await appWindow.setPosition({ type: 'Physical', x: positionX, y: position.y });
+                await appWindow.setPosition({ type: 'Physical', x: Math.round(positionX), y: position.y });
             }
-            if (expandedCategories) {
-                state.expandedCategories = new Set(expandedCategories);
+            if (Array.isArray(expandedCategories)) {
+                state.expandedCategories = new Set(expandedCategories.filter(value => typeof value === 'string').slice(0, 64));
             }
         }
+        await invoke('clamp_desktop_organizer_window');
+        await saveUserPreferences();
     } catch (error) {
         console.error('加载偏好失败:', error);
     }
@@ -1320,6 +1357,7 @@ let dragStartWindowY = 0;
 let dragStartWindowWidth = 0;
 let dragStartWindowHeight = 0;
 let dragLastUpdateTime = 0;
+let dragUpdatePending = false;
 let dragMoved = false; // 用于区分点击和拖动
 
 elements.dragHandle?.addEventListener('mousedown', async (e) => {
@@ -1354,7 +1392,7 @@ elements.dragHandle?.addEventListener('mousedown', async (e) => {
 });
 
 document.addEventListener('mousemove', async (e) => {
-    if (!isDraggingPosition) return;
+    if (!isDraggingPosition || dragUpdatePending) return;
     
     const moveDistX = Math.abs(e.screenX - dragStartX);
     const moveDistY = Math.abs(e.screenY - dragStartY);
@@ -1368,7 +1406,7 @@ document.addEventListener('mousemove', async (e) => {
     
     // 节流：限制更新频率为60fps
     const now = Date.now();
-    if (now - dragLastUpdateTime < 16) return;
+    if (now - dragLastUpdateTime < 32) return;
     dragLastUpdateTime = now;
     
     const deltaX = e.screenX - dragStartX;
@@ -1384,16 +1422,21 @@ document.addEventListener('mousemove', async (e) => {
     
     // 磁吸效果：接近屏幕边缘时自动吸附
     const snapDistance = 15;
-    if (Math.abs(newX) < snapDistance) newX = 0;
-    if (Math.abs(newY) < snapDistance) newY = 0;
-    if (Math.abs(newX + dragStartWindowWidth - screenBounds.width) < snapDistance) {
-        newX = screenBounds.width - dragStartWindowWidth;
+    const screenLeft = screenBounds.x || 0;
+    const screenTop = screenBounds.y || 0;
+    const screenRight = screenLeft + screenBounds.width;
+    const screenBottom = screenTop + screenBounds.height;
+    if (Math.abs(newX - screenLeft) < snapDistance) newX = screenLeft;
+    if (Math.abs(newY - screenTop) < snapDistance) newY = screenTop;
+    if (Math.abs(newX + dragStartWindowWidth - screenRight) < snapDistance) {
+        newX = screenRight - dragStartWindowWidth;
     }
-    if (Math.abs(newY + dragStartWindowHeight - screenBounds.height) < snapDistance) {
-        newY = screenBounds.height - dragStartWindowHeight;
+    if (Math.abs(newY + dragStartWindowHeight - screenBottom) < snapDistance) {
+        newY = screenBottom - dragStartWindowHeight;
     }
     
     try {
+        dragUpdatePending = true;
         await appWindow.setPosition({ 
             type: 'Physical', 
             x: Math.round(newX), 
@@ -1401,6 +1444,8 @@ document.addEventListener('mousemove', async (e) => {
         });
     } catch (err) {
         console.error('移动窗口失败:', err);
+    } finally {
+        dragUpdatePending = false;
     }
 });
 

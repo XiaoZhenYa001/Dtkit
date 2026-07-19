@@ -965,123 +965,12 @@
     background: rgba(255, 255, 255, 0.7);
 }
 
-#shortcutBindings {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.55rem;
-}
-
-.settings-shortcut-item {
-    min-width: 0;
-    min-height: 3.6rem;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.7rem;
-    padding: 0.72rem 0.8rem;
-    border: 1px solid var(--color-border);
-    border-radius: 0.85rem;
-    background: rgba(255, 255, 255, 0.56);
-    transition: transform var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.settings-shortcut-item:hover,
-.settings-shortcut-item:focus-visible {
-    outline: 0;
-    transform: translateY(-1px);
-    border-color: rgba(216, 111, 61, 0.22);
-    background: rgba(255, 255, 255, 0.88);
-    box-shadow: var(--shadow-xs);
-}
-
-.settings-shortcut-record.recording {
-    border-color: rgba(216, 111, 61, 0.38);
-    background: rgba(216, 111, 61, 0.07);
-    box-shadow: 0 0 0 4px rgba(216, 111, 61, 0.09);
-}
-
 .settings-shortcut-note {
     margin: 0 1rem 0.65rem;
     color: var(--color-text-secondary);
     font-size: 0.7rem;
     line-height: 1.55;
 }
-
-.settings-shortcut-identity,
-.settings-shortcut-controls,
-.settings-shortcut-record {
-    display: flex;
-    align-items: center;
-}
-
-.settings-shortcut-identity { min-width: 0; gap: 0.48rem; }
-.settings-shortcut-identity > i { color: var(--color-primary); font-size: 0.9rem; }
-.settings-shortcut-controls { flex: 0 0 auto; gap: 0.35rem; }
-
-.settings-shortcut-record {
-    min-height: 2rem;
-    justify-content: flex-end;
-    gap: 0.2rem;
-    padding: 0.18rem 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.6rem;
-    background: transparent;
-    cursor: pointer;
-}
-
-.settings-shortcut-record:disabled { cursor: not-allowed; opacity: 0.65; }
-.settings-shortcut-record:not(:disabled):hover { background: rgba(216, 111, 61, 0.06); }
-
-.settings-shortcut-clear {
-    width: 1.75rem;
-    height: 1.75rem;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    border-radius: 0.5rem;
-    color: var(--color-text-light);
-    background: transparent;
-    cursor: pointer;
-}
-
-.settings-shortcut-clear:not(:disabled):hover { color: var(--color-danger); background: rgba(181, 68, 50, 0.08); }
-.settings-shortcut-clear:disabled { opacity: 0.25; cursor: default; }
-
-.settings-shortcut-label {
-    color: var(--color-text-primary);
-    font-size: 0.74rem;
-    font-weight: 650;
-}
-
-.settings-shortcut-keys {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.2rem;
-    flex-wrap: wrap;
-}
-
-.settings-key {
-    min-width: 1.65rem;
-    min-height: 1.65rem;
-    display: inline-grid;
-    place-items: center;
-    padding: 0.15rem 0.38rem;
-    border: 1px solid rgba(118, 93, 63, 0.14);
-    border-radius: 0.48rem;
-    color: var(--color-text-secondary);
-    background: linear-gradient(180deg, #fff, #f4eee6);
-    box-shadow: 0 2px 0 rgba(118, 93, 63, 0.12);
-    font-family: "Cascadia Code", "Consolas", monospace;
-    font-size: 0.62rem;
-    font-weight: 700;
-}
-
-.settings-key-plus { color: var(--color-text-light); font-size: 0.62rem; }
-.settings-key--recording-prompt { min-width: 6.8rem; color: var(--color-primary); }
-.settings-key--unbound { min-width: 3.7rem; color: var(--color-text-light); box-shadow: none; }
 
 .settings-shortcut-status {
     margin: 0.6rem 1rem 0;
@@ -1297,8 +1186,7 @@
     .settings-hero-content { flex-direction: row; align-items: center; }
     .settings-hero-meta { width: 100%; }
     #storageSection .settings-section-content,
-    #configSection .settings-section-content,
-    #shortcutBindings { grid-template-columns: 1fr; }
+    #configSection .settings-section-content { grid-template-columns: 1fr; }
     .settings-footer-meta { display: none; }
 }
 
@@ -1313,7 +1201,6 @@
     .settings-btn-group { width: 100%; border-top: 1px solid var(--color-border); border-left: 0; }
     .settings-btn-group .settings-btn { flex: 1; }
     .settings-mirror-controls { flex-direction: column; }
-    .settings-shortcut-item { align-items: flex-start; flex-direction: column; }
     .cleanup-usage-grid { grid-template-columns: 1fr; }
     .cleanup-actions { flex-direction: column-reverse; }
     .cleanup-actions .settings-btn { width: 100%; }
@@ -1324,6 +1211,5 @@
     .modal-dialog,
     .settings-spin { animation: none; }
     .settings-side-nav__item,
-    .settings-shortcut-item,
     .settings-btn { transition: none; }
 }

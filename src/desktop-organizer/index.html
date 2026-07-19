@@ -4,175 +4,84 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>桌面整理</title>
+    <link rel="stylesheet" href="../assets/remixicon-subset.css">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="panel" id="panel">
-        <!-- 拖动条 - 用于拖动改变弹窗位置 -->
-        <div class="drag-handle" id="dragHandle">
-            <div class="drag-indicator"></div>
-        </div>
-        
-        <!-- 搜索框 -->
-        <div class="search-container">
-            <div class="search-box">
-                <span class="search-icon">🔍</span>
-                <input type="text" class="search-input" id="searchInput" placeholder="搜索文件或输入 / 命令...">
-                <span class="search-shortcut">Ctrl+F</span>
-                <span class="search-clear is-initially-hidden" id="searchClear">✕</span>
+    <main class="panel" id="panel">
+        <div class="drag-handle" id="dragHandle" title="拖动窗口"><span class="drag-indicator"></span></div>
+        <header class="organizer-header">
+            <div class="organizer-brand">
+                <span class="organizer-brand__icon"><i class="ri-layout-grid-line"></i></span>
+                <div><span>DESKTOP SPACE</span><h1>桌面整理</h1></div>
             </div>
+            <button class="header-action" id="refreshBtn" type="button" title="重新扫描桌面" aria-label="重新扫描桌面"><i class="ri-refresh-line"></i></button>
+        </header>
+
+        <section class="search-container" aria-label="桌面搜索">
+            <label class="search-box" for="searchInput">
+                <i class="ri-search-line search-icon"></i>
+                <input type="text" class="search-input" id="searchInput" placeholder="搜索桌面项目，或输入 / 筛选…" autocomplete="off">
+                <kbd class="search-shortcut">Ctrl F</kbd>
+                <button class="search-clear is-initially-hidden" id="searchClear" type="button" aria-label="清除搜索"><i class="ri-close-line"></i></button>
+            </label>
             <div class="command-hint" id="commandHint">
-                命令: <code>/d</code>文档 <code>/p</code>图片 <code>/v</code>视频 <code>/f</code>文件夹 <code>/a</code>程序 <code>/z</code>压缩包
+                <span><code>/d</code> 文档</span><span><code>/p</code> 图片</span><span><code>/v</code> 视频</span>
+                <span><code>/f</code> 文件夹</span><span><code>/a</code> 程序</span><span><code>/z</code> 压缩包</span>
             </div>
-        </div>
+        </section>
 
-        <!-- 分类列表 -->
-        <div class="category-list" id="categoryList">
-            <!-- 动态生成 -->
-        </div>
-
-        <!-- 搜索结果 -->
-        <div class="search-results is-initially-hidden" id="searchResults">
-            <div class="search-results-header">
-                <span class="search-results-title">搜索结果</span>
-                <span class="search-results-count" id="searchResultsCount">0</span>
+        <section class="organizer-content">
+            <div class="category-list" id="categoryList" aria-live="polite"></div>
+            <div class="search-results is-initially-hidden" id="searchResults">
+                <div class="search-results-header"><span class="search-results-title">搜索结果</span><span class="search-results-count" id="searchResultsCount">0</span></div>
+                <div class="search-results-list" id="searchResultsList"></div>
             </div>
-            <div class="search-results-list" id="searchResultsList">
-                <!-- 动态生成 -->
-            </div>
-        </div>
+        </section>
 
-        <!-- 状态栏 -->
-        <div class="status-bar">
-            <span class="status-text" id="statusText">加载中...</span>
-            <div class="status-actions">
-                <button class="status-btn" id="refreshBtn" title="刷新">🔄</button>
-            </div>
-        </div>
+        <footer class="status-bar">
+            <span class="status-dot" aria-hidden="true"></span><span class="status-text" id="statusText">正在读取桌面…</span>
+            <span class="status-tip">双击打开 · 右键更多</span>
+        </footer>
 
-        <!-- 拖拽调整大小的手柄 -->
-        <div class="resize-handle resize-handle-l" data-direction="l"></div>
-        <div class="resize-handle resize-handle-r" data-direction="r"></div>
-        <div class="resize-handle resize-handle-b" data-direction="b"></div>
-        <div class="resize-handle resize-handle-bl" data-direction="bl"></div>
-        <div class="resize-handle resize-handle-br" data-direction="br"></div>
-    </div>
+        <div class="resize-handle resize-handle-l" data-direction="l"></div><div class="resize-handle resize-handle-r" data-direction="r"></div>
+        <div class="resize-handle resize-handle-b" data-direction="b"></div><div class="resize-handle resize-handle-bl" data-direction="bl"></div><div class="resize-handle resize-handle-br" data-direction="br"></div>
+    </main>
 
-    <!-- 右键菜单 - 文件 -->
-    <div class="context-menu is-initially-hidden" id="contextMenu">
-        <div class="menu-item" data-action="open">
-            <span class="menu-icon">📂</span>
-            <span class="menu-text">打开</span>
-            <span class="menu-shortcut">Enter</span>
-        </div>
-        <div class="menu-item" data-action="locate">
-            <span class="menu-icon">📍</span>
-            <span class="menu-text">定位到文件</span>
-            <span class="menu-shortcut">Ctrl+L</span>
-        </div>
+    <div class="context-menu is-initially-hidden" id="contextMenu" role="menu">
+        <div class="menu-item" data-action="open" role="menuitem"><i class="ri-folder-open-line menu-icon"></i><span class="menu-text">打开</span><kbd class="menu-shortcut">Enter</kbd></div>
+        <div class="menu-item" data-action="locate" role="menuitem"><i class="ri-map-pin-line menu-icon"></i><span class="menu-text">在资源管理器中定位</span><kbd class="menu-shortcut">Ctrl L</kbd></div>
         <div class="menu-divider"></div>
-        <div class="menu-item" data-action="copy">
-            <span class="menu-icon">📋</span>
-            <span class="menu-text">复制路径</span>
-            <span class="menu-shortcut">Ctrl+C</span>
-        </div>
-        <div class="menu-item" data-action="cut">
-            <span class="menu-icon">✂️</span>
-            <span class="menu-text">剪切</span>
-            <span class="menu-shortcut">Ctrl+X</span>
-        </div>
+        <div class="menu-item" data-action="copy" role="menuitem"><i class="ri-file-copy-line menu-icon"></i><span class="menu-text">复制路径</span><kbd class="menu-shortcut">Ctrl C</kbd></div>
         <div class="menu-divider"></div>
-        <div class="menu-item has-submenu" data-action="move-to-category">
-            <span class="menu-icon">🏷️</span>
-            <span class="menu-text">移动到分类</span>
-            <span class="menu-arrow">▶</span>
-            <div class="submenu" id="categorySubmenu">
-                <!-- 动态生成分类列表 -->
-            </div>
-        </div>
+        <div class="menu-item has-submenu" data-action="move-to-category" role="menuitem"><i class="ri-price-tag-3-line menu-icon"></i><span class="menu-text">移动到分类</span><i class="ri-arrow-right-s-line menu-arrow"></i><div class="submenu" id="categorySubmenu"></div></div>
         <div class="menu-divider"></div>
-        <div class="menu-item" data-action="rename">
-            <span class="menu-icon">✏️</span>
-            <span class="menu-text">重命名</span>
-            <span class="menu-shortcut">F2</span>
-        </div>
+        <div class="menu-item" data-action="rename" role="menuitem"><i class="ri-edit-line menu-icon"></i><span class="menu-text">重命名</span><kbd class="menu-shortcut">F2</kbd></div>
     </div>
 
-    <!-- 右键菜单 - 空白区域 -->
-    <div class="context-menu is-initially-hidden" id="blankContextMenu">
-        <div class="menu-item" data-action="create-category">
-            <span class="menu-icon">➕</span>
-            <span class="menu-text">创建分类</span>
-        </div>
-        <div class="menu-item" data-action="manage-categories">
-            <span class="menu-icon">⚙️</span>
-            <span class="menu-text">管理分类</span>
-        </div>
+    <div class="context-menu is-initially-hidden" id="blankContextMenu" role="menu">
+        <div class="menu-item" data-action="create-category" role="menuitem"><i class="ri-add-line menu-icon"></i><span class="menu-text">创建分类</span></div>
+        <div class="menu-item" data-action="manage-categories" role="menuitem"><i class="ri-settings-3-line menu-icon"></i><span class="menu-text">管理分类</span></div>
         <div class="menu-divider"></div>
-        <div class="menu-item" data-action="refresh">
-            <span class="menu-icon">🔄</span>
-            <span class="menu-text">刷新</span>
-            <span class="menu-shortcut">F5</span>
+        <div class="menu-item" data-action="refresh" role="menuitem"><i class="ri-refresh-line menu-icon"></i><span class="menu-text">刷新</span><kbd class="menu-shortcut">F5</kbd></div>
+    </div>
+
+    <div class="rename-dialog is-initially-hidden" id="createCategoryDialog" role="dialog" aria-modal="true" aria-labelledby="createCategoryTitle">
+        <div class="rename-dialog-content"><div class="dialog-mark"><i class="ri-folder-add-line"></i></div><div class="rename-dialog-title" id="createCategoryTitle">创建分类</div>
+            <div class="category-form"><div class="form-group"><label for="categoryNameInput">分类名称</label><input type="text" class="rename-input" id="categoryNameInput" maxlength="40" placeholder="例如：当前项目"></div>
+                <div class="form-group"><label>选择标记</label><div class="icon-picker" id="iconPicker"><span class="icon-option selected" data-icon="📁">📁</span><span class="icon-option" data-icon="⭐">⭐</span><span class="icon-option" data-icon="💼">💼</span><span class="icon-option" data-icon="🎮">🎮</span><span class="icon-option" data-icon="🛠️">🛠️</span><span class="icon-option" data-icon="📚">📚</span><span class="icon-option" data-icon="🎨">🎨</span><span class="icon-option" data-icon="💡">💡</span><span class="icon-option" data-icon="🔧">🔧</span><span class="icon-option" data-icon="📝">📝</span><span class="icon-option" data-icon="🎯">🎯</span><span class="icon-option" data-icon="🚀">🚀</span></div></div></div>
+            <div class="rename-dialog-actions"><button class="rename-btn rename-btn-cancel" id="createCategoryCancelBtn">取消</button><button class="rename-btn rename-btn-confirm" id="createCategoryConfirmBtn">创建</button></div>
         </div>
     </div>
 
-    <!-- 创建分类对话框 -->
-    <div class="rename-dialog is-initially-hidden" id="createCategoryDialog">
-        <div class="rename-dialog-content">
-            <div class="rename-dialog-title">创建分类</div>
-            <div class="category-form">
-                <div class="form-group">
-                    <label>分类名称</label>
-                    <input type="text" class="rename-input" id="categoryNameInput" placeholder="输入分类名称">
-                </div>
-                <div class="form-group">
-                    <label>选择图标</label>
-                    <div class="icon-picker" id="iconPicker">
-                        <span class="icon-option selected" data-icon="📁">📁</span>
-                        <span class="icon-option" data-icon="⭐">⭐</span>
-                        <span class="icon-option" data-icon="💼">💼</span>
-                        <span class="icon-option" data-icon="🎮">🎮</span>
-                        <span class="icon-option" data-icon="🛠️">🛠️</span>
-                        <span class="icon-option" data-icon="📚">📚</span>
-                        <span class="icon-option" data-icon="🎨">🎨</span>
-                        <span class="icon-option" data-icon="💡">💡</span>
-                        <span class="icon-option" data-icon="🔧">🔧</span>
-                        <span class="icon-option" data-icon="📝">📝</span>
-                        <span class="icon-option" data-icon="🎯">🎯</span>
-                        <span class="icon-option" data-icon="🚀">🚀</span>
-                    </div>
-                </div>
-            </div>
-            <div class="rename-dialog-actions">
-                <button class="rename-btn rename-btn-cancel" id="createCategoryCancelBtn">取消</button>
-                <button class="rename-btn rename-btn-confirm" id="createCategoryConfirmBtn">创建</button>
-            </div>
-        </div>
+    <div class="rename-dialog is-initially-hidden" id="manageCategoriesDialog" role="dialog" aria-modal="true" aria-labelledby="manageCategoriesTitle">
+        <div class="rename-dialog-content manage-categories-content"><div class="dialog-mark"><i class="ri-price-tag-3-line"></i></div><div class="rename-dialog-title" id="manageCategoriesTitle">管理自定义分类</div><div class="custom-categories-list" id="customCategoriesList"></div>
+            <div class="rename-dialog-actions"><button class="rename-btn rename-btn-confirm" id="manageCategoriesCloseBtn">完成</button></div></div>
     </div>
 
-    <!-- 管理分类对话框 -->
-    <div class="rename-dialog is-initially-hidden" id="manageCategoriesDialog">
-        <div class="rename-dialog-content manage-categories-content">
-            <div class="rename-dialog-title">管理自定义分类</div>
-            <div class="custom-categories-list" id="customCategoriesList">
-                <!-- 动态生成 -->
-            </div>
-            <div class="rename-dialog-actions">
-                <button class="rename-btn rename-btn-confirm" id="manageCategoriesCloseBtn">关闭</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 重命名对话框 -->
-    <div class="rename-dialog is-initially-hidden" id="renameDialog">
-        <div class="rename-dialog-content">
-            <div class="rename-dialog-title">重命名</div>
-            <input type="text" class="rename-input" id="renameInput">
-            <div class="rename-dialog-actions">
-                <button class="rename-btn rename-btn-cancel" id="renameCancelBtn">取消</button>
-                <button class="rename-btn rename-btn-confirm" id="renameConfirmBtn">确定</button>
-            </div>
-        </div>
+    <div class="rename-dialog is-initially-hidden" id="renameDialog" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+        <div class="rename-dialog-content"><div class="dialog-mark"><i class="ri-edit-line"></i></div><div class="rename-dialog-title" id="renameTitle">重命名项目</div><input type="text" class="rename-input" id="renameInput" maxlength="255">
+            <div class="rename-dialog-actions"><button class="rename-btn rename-btn-cancel" id="renameCancelBtn">取消</button><button class="rename-btn rename-btn-confirm" id="renameConfirmBtn">保存</button></div></div>
     </div>
 
     <script src="main.js" type="module"></script>
