@@ -71,6 +71,16 @@ export const toolManifests = Object.freeze([
         loader: () => import('./color-picker/index.js')
     },
     {
+        id: 'whiteboard',
+        name: '白板',
+        icon: 'ri-brush-2-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'design',
+        status: 'ready',
+        description: '鼠标、触控和压感笔书写，支持撤销、橡皮擦、本地保存与 PNG 导出。',
+        loader: () => import('./whiteboard/index.js')
+    },
+    {
         id: 'html-preview',
         name: 'HTML 预览',
         icon: 'ri-code-box-line',

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-const FOLDER_PREVIEW_LIMIT: usize = 5;
+const FOLDER_BROWSE_LIMIT: usize = 200;
 const SEARCH_RESULT_LIMIT: usize = 200;
 
 /// 文件分类类型
@@ -109,6 +109,16 @@ pub struct CategorizedFiles {
     pub total_count: usize,          // 总数
 }
 
+/// 按需读取的文件夹一级内容
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderContents {
+    pub path: String,
+    pub name: String,
+    pub items: Vec<DesktopFile>,
+    pub total_count: usize,
+    pub truncated: bool,
+}
+
 /// 获取桌面路径
 pub fn get_desktop_path() -> Option<PathBuf> {
     dirs::desktop_dir()
@@ -123,7 +133,7 @@ fn get_timestamp(time: std::io::Result<SystemTime>) -> u64 {
 }
 
 /// 扫描单个文件/文件夹信息
-fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile> {
+fn scan_file_info(path: &PathBuf) -> Option<DesktopFile> {
     let metadata = fs::metadata(path).ok()?;
     let name = path.file_name()?.to_string_lossy().to_string();
     let is_folder = metadata.is_dir();
@@ -142,13 +152,6 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
     };
 
     let category = FileCategory::from_extension(&extension, is_folder);
-
-    // 获取子文件（仅一级）
-    let (children, children_truncated) = if is_folder && include_children {
-        scan_folder_children(path)
-    } else {
-        (None, false)
-    };
 
     // 提取文件图标（仅对程序和快捷方式）
     let icon = if category == FileCategory::Program || extension == "lnk" {
@@ -173,36 +176,67 @@ fn scan_file_info(path: &PathBuf, include_children: bool) -> Option<DesktopFile>
         extension,
         modified_time: get_timestamp(metadata.modified()),
         accessed_time: get_timestamp(metadata.accessed()),
-        children,
-        children_truncated,
+        children: None,
+        children_truncated: false,
         icon,
     })
 }
 
-/// 扫描文件夹的一级子内容
-fn scan_folder_children(folder_path: &PathBuf) -> (Option<Vec<DesktopFile>>, bool) {
-    let entries = match fs::read_dir(folder_path) {
-        Ok(entries) => entries,
-        Err(_) => return (None, false),
-    };
-    let mut children = Vec::new();
-    let mut truncated = false;
+/// 按需扫描指定文件夹的一级内容，不递归、不跟随符号链接。
+pub fn scan_folder_contents(folder_path: &PathBuf) -> Result<FolderContents, String> {
+    if !folder_path.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+
+    let entries = fs::read_dir(folder_path).map_err(|error| format!("读取文件夹失败: {error}"))?;
+    let mut items = Vec::with_capacity(FOLDER_BROWSE_LIMIT);
+    let mut total_count = 0usize;
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(file) = scan_file_info(&path, false) {
-            if children.len() == FOLDER_PREVIEW_LIMIT {
-                truncated = true;
-                break;
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy(),
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        total_count += 1;
+        if items.len() < FOLDER_BROWSE_LIMIT {
+            if let Some(file) = scan_file_info(&path) {
+                items.push(file);
             }
-            children.push(file);
         }
     }
 
-    // 按名称排序
-    children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    items.sort_by(|left, right| {
+        right
+            .is_folder
+            .cmp(&left.is_folder)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
 
-    (Some(children), truncated)
+    let name = folder_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "文件夹".to_string());
+
+    Ok(FolderContents {
+        path: folder_path.to_string_lossy().to_string(),
+        name,
+        truncated: total_count > items.len(),
+        total_count,
+        items,
+    })
 }
 
 /// 扫描桌面所有文件
@@ -219,7 +253,7 @@ pub fn scan_desktop() -> Result<CategorizedFiles, String> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(file) = scan_file_info(&path, true) {
+        if let Some(file) = scan_file_info(&path) {
             all_files.push(file);
         }
     }
@@ -282,7 +316,7 @@ pub fn search_desktop_files(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(file) = scan_file_info(&path, false) {
+        if let Some(file) = scan_file_info(&path) {
             // 名称匹配
             if !file.name.to_lowercase().contains(&query_lower) {
                 continue;
@@ -306,4 +340,56 @@ pub fn search_desktop_files(
     results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scan_folder_contents, FOLDER_BROWSE_LIMIT};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDirectory(PathBuf);
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_directory() -> TestDirectory {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be available")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("dtkit-folder-scan-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&path).expect("test directory should be created");
+        TestDirectory(path)
+    }
+
+    #[test]
+    fn folder_scan_is_single_level_sorted_and_bounded() {
+        let root = test_directory();
+        let nested = root.0.join("A-folder");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("not-eagerly-scanned.txt"), b"nested").unwrap();
+        fs::write(root.0.join("z-note.txt"), b"note").unwrap();
+
+        let initial = scan_folder_contents(&root.0).unwrap();
+        assert_eq!(initial.total_count, 2);
+        assert!(initial.items[0].is_folder);
+        assert!(initial.items.iter().all(|item| item.children.is_none()));
+
+        for index in 0..=FOLDER_BROWSE_LIMIT {
+            fs::write(root.0.join(format!("item-{index:03}.txt")), b"bounded").unwrap();
+        }
+        fs::write(root.0.join(".hidden.txt"), b"hidden").unwrap();
+
+        let bounded = scan_folder_contents(&root.0).unwrap();
+        assert_eq!(bounded.total_count, FOLDER_BROWSE_LIMIT + 3);
+        assert_eq!(bounded.items.len(), FOLDER_BROWSE_LIMIT);
+        assert!(bounded.truncated);
+        assert!(bounded.items.iter().all(|item| item.children.is_none()));
+    }
 }

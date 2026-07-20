@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { convertUnit, formatConvertedValue, UNIT_CATEGORIES } from '../src/tools/unit-converter/core.js';
+import {
+    convertAcrossCategory,
+    convertUnit,
+    formatConvertedValue,
+    UNIT_CATEGORIES
+} from '../src/tools/unit-converter/core.js';
 
 test('data conversion distinguishes bytes, bits, decimal KB and binary KiB', () => {
     assert.equal(convertUnit(1, 'data', 'byte', 'bit'), 8);
@@ -31,4 +36,15 @@ test('conversion output formatting remains readable across magnitudes', () => {
     assert.match(formatConvertedValue(1e15), /^1e\+15$/);
     assert.match(formatConvertedValue(1e-12), /^1e-12$/);
     assert.equal(Object.keys(UNIT_CATEGORIES).length, 6);
+});
+
+test('category overview calculates every target without duplicating conversion rules', () => {
+    const overview = convertAcrossCategory(1, 'length', 'm');
+
+    assert.equal(overview.length, UNIT_CATEGORIES.length.units.length);
+    assert.deepEqual(overview.find(item => item.unit.id === 'cm'), {
+        unit: UNIT_CATEGORIES.length.units.find(unit => unit.id === 'cm'),
+        value: 100,
+        formatted: '100'
+    });
 });

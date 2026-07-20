@@ -127,3 +127,17 @@ export function formatConvertedValue(value) {
 
     return Number.parseFloat(value.toPrecision(12)).toString();
 }
+
+export function convertAcrossCategory(value, categoryId, fromUnitId) {
+    const category = getUnitCategory(categoryId);
+    if (!category) throw new TypeError(`未知的单位类别: ${categoryId}`);
+
+    return category.units.map(unit => {
+        const converted = convertUnit(value, categoryId, fromUnitId, unit.id);
+        return {
+            unit,
+            value: converted,
+            formatted: formatConvertedValue(converted)
+        };
+    });
+}

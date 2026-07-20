@@ -176,6 +176,45 @@ kbd {
 .quick-tool:empty { display: none; }
 .quick-tool .view-container { min-height: 100%; padding: 1rem; }
 
+.quick-shell--whiteboard {
+    position: relative;
+    grid-template-rows: 1fr;
+    border: 0;
+    background: #fffdf9;
+}
+
+.quick-shell--whiteboard .quick-titlebar {
+    position: absolute;
+    top: 0.65rem;
+    right: 0.65rem;
+    z-index: 30;
+    width: auto;
+    padding: 0;
+    border: 0;
+    pointer-events: none;
+}
+
+.quick-shell--whiteboard .quick-brand,
+.quick-shell--whiteboard .quick-footer {
+    display: none;
+}
+
+.quick-shell--whiteboard .quick-close {
+    border: 1px solid rgba(118, 93, 63, 0.13);
+    color: #756c64;
+    background: rgba(255, 253, 249, 0.94);
+    box-shadow: 0 0.35rem 1rem rgba(71, 55, 43, 0.08);
+    pointer-events: auto;
+}
+
+.quick-shell--whiteboard .quick-content--tool,
+.quick-shell--whiteboard .quick-tool {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .quick-content__icon {
     width: 3.8rem;
     height: 3.8rem;

@@ -1,9 +1,10 @@
+import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 
-BASE_URL = "http://127.0.0.1:4173"
+BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
 SCREENSHOT_DIR = Path(r"C:\tmp\dtkit-utility-tools")
 
 
@@ -49,13 +50,20 @@ with sync_playwright() as playwright:
     open_library(page)
     page.locator('[data-tool-id="unit-converter"]').click()
     page.locator("#unitInput").wait_for(state="visible")
-    page.locator("#unitCategory").select_option("temperature")
+    page.locator('[data-unit-category="temperature"]').click()
     page.locator("#unitFrom").select_option("c")
     page.locator("#unitTo").select_option("f")
     page.locator("#unitInput").fill("100")
     assert page.locator("#unitOutput").input_value() == "212"
     assert "100 °C = 212 °F" in page.locator("#unitEquation").inner_text()
+    assert page.locator("#unitOverviewList .unit-overview-item").count() == 3
+    page.locator('[data-unit-target="k"]').click()
+    assert page.locator("#unitOutput").input_value() == "373.15"
     page.screenshot(path=str(SCREENSHOT_DIR / "unit-converter.png"), full_page=True)
+    page.set_viewport_size({"width": 760, "height": 800})
+    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    page.screenshot(path=str(SCREENSHOT_DIR / "unit-converter-narrow.png"), full_page=True)
+    page.set_viewport_size({"width": 1360, "height": 900})
 
     open_library(page)
     page.locator('[data-tool-id="crontab-explainer"]').click()

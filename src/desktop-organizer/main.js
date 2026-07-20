@@ -3,6 +3,12 @@
  * Desktop Organizer - Main Logic
  */
 
+import {
+    desktopSnapshotFingerprint,
+    readDesktopSnapshot,
+    writeDesktopSnapshot
+} from './snapshot.js';
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 
@@ -43,7 +49,15 @@ let state = {
     isSearching: false,   // 是否在搜索模式
     customCategories: [], // 自定义分类
     fileCategories: {},   // 文件到分类的映射 { filePath: categoryKey }
+    folderView: {
+        active: false,
+        stack: [],
+        categoryScrollTop: 0,
+    },
 };
+const folderCache = new Map();
+const FOLDER_CACHE_LIMIT = 8;
+let folderRequestGeneration = 0;
 
 // ============================================
 // DOM 元素
@@ -114,8 +128,17 @@ function getFileIcon(file) {
 
 function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = String(text ?? '');
     return div.innerHTML;
+}
+
+function escapeAttribute(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
 }
 
 function highlightText(text, query) {
@@ -128,6 +151,7 @@ function highlightText(text, query) {
 // 渲染函数
 // ============================================
 function renderCategoryList() {
+    elements.categoryList.classList.remove('category-list--folder-view');
     if (!state.files) {
         elements.categoryList.innerHTML = `
             <div class="loading">
@@ -235,30 +259,161 @@ function renderCategoryList() {
 function renderFileList(files) {
     return files.map(file => {
         const iconContent = getFileIcon(file);
-        const isImgIcon = file.icon ? true : false;
+        const isImgIcon = Boolean(file.icon);
+        const trailingContent = file.is_folder
+            ? '<span class="folder-drill">浏览 <i class="ri-arrow-right-s-line"></i></span>'
+            : `<span class="file-size">${formatFileSize(file.size)}</span>`;
         return `
-        <div class="file-item" data-path="${escapeHtml(file.path)}" data-name="${escapeHtml(file.name)}">
+        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}">
             <span class="file-icon${isImgIcon ? ' file-icon-real' : ''}">${iconContent}</span>
             <span class="file-name">${escapeHtml(file.name)}</span>
-            <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
-            ${file.is_folder && file.children ? renderFolderChildren(file.children, file.children_truncated) : ''}
+            ${trailingContent}
         </div>
     `}).join('');
 }
 
-function renderFolderChildren(children, truncated = false) {
-    if (!children || children.length === 0) return '';
-    
-    const items = children.slice(0, 5).map(child => `
-        <div class="file-item" data-path="${escapeHtml(child.path)}" data-name="${escapeHtml(child.name)}">
-            <span class="file-icon">${getFileIcon(child)}</span>
-            <span class="file-name">${escapeHtml(child.name)}</span>
-        </div>
-    `).join('');
-    
-    const moreHtml = truncated ? '<div class="file-item file-item--more">打开文件夹查看其余项目</div>' : '';
-    
-    return `<div class="folder-children">${items}${moreHtml}</div>`;
+function renderFolderBreadcrumb() {
+    const segments = [
+        '<button class="folder-browser__crumb" type="button" data-folder-depth="-1">桌面</button>'
+    ];
+    state.folderView.stack.forEach((folder, index) => {
+        segments.push('<i class="ri-arrow-right-s-line" aria-hidden="true"></i>');
+        segments.push(`<button class="folder-browser__crumb${index === state.folderView.stack.length - 1 ? ' is-current' : ''}" type="button" data-folder-depth="${index}" title="${escapeAttribute(folder.path)}">${escapeHtml(folder.name)}</button>`);
+    });
+    return segments.join('');
+}
+
+function readCachedFolder(path) {
+    const cached = folderCache.get(path);
+    if (!cached) return null;
+    folderCache.delete(path);
+    folderCache.set(path, cached);
+    return cached;
+}
+
+function cacheFolder(path, contents) {
+    folderCache.delete(path);
+    folderCache.set(path, contents);
+    while (folderCache.size > FOLDER_CACHE_LIMIT) {
+        folderCache.delete(folderCache.keys().next().value);
+    }
+}
+
+function renderFolderBrowser(contents = null, { syncing = false, error = null } = {}) {
+    const currentFolder = state.folderView.stack.at(-1);
+    if (!currentFolder) return;
+
+    const items = contents?.items || [];
+    const count = contents?.total_count ?? items.length;
+    const folderBody = contents
+        ? (items.length > 0
+            ? renderFileList(items)
+            : `<div class="folder-browser__empty"><span><i class="ri-folder-open-line"></i></span><strong>这个文件夹是空的</strong><small>新增内容后点击右上角刷新即可。</small></div>`)
+        : (error
+            ? `<div class="folder-browser__empty folder-browser__empty--error"><span><i class="ri-error-warning-line"></i></span><strong>暂时无法读取</strong><small>${escapeHtml(String(error))}</small></div>`
+            : `<div class="folder-browser__loading" aria-label="正在读取文件夹"><i class="ri-loader-4-line"></i><span>正在读取文件夹…</span></div>`);
+
+    elements.categoryList.classList.add('category-list--folder-view');
+    elements.categoryList.innerHTML = `
+        <section class="folder-browser" aria-label="文件夹浏览">
+            <header class="folder-browser__toolbar">
+                <button class="folder-browser__back" type="button" data-folder-back aria-label="返回上一层" title="返回上一层"><i class="ri-arrow-left-line"></i></button>
+                <div class="folder-browser__identity">
+                    <span>正在浏览</span>
+                    <nav class="folder-browser__breadcrumb" aria-label="当前位置">${renderFolderBreadcrumb()}</nav>
+                </div>
+                <div class="folder-browser__actions">
+                    <button type="button" data-folder-refresh aria-label="刷新当前文件夹" title="刷新当前文件夹"><i class="ri-refresh-line${syncing ? ' is-spinning' : ''}"></i></button>
+                    <button type="button" data-folder-external aria-label="在资源管理器中打开" title="在资源管理器中打开"><i class="ri-folder-open-line"></i></button>
+                </div>
+            </header>
+            <div class="folder-browser__summary">
+                <span><i class="ri-folder-2-line"></i>${escapeHtml(currentFolder.name)}</span>
+                <span class="folder-browser__sync-state">${syncing ? '正在同步…' : (error && contents ? '同步失败，显示缓存' : `${count} 个项目`)}</span>
+            </div>
+            <div class="folder-browser__list">${folderBody}</div>
+            ${contents?.truncated ? `<footer class="folder-browser__limit"><i class="ri-information-line"></i>内容较多，仅显示前 ${items.length} 项，共 ${count} 项</footer>` : ''}
+        </section>
+    `;
+
+    if (syncing) {
+        setDesktopStatus(`正在同步 · ${currentFolder.name}`);
+    } else if (error && contents) {
+        setDesktopStatus(`显示缓存 · ${currentFolder.name} · 同步失败`);
+    } else if (error) {
+        setDesktopStatus(`读取失败 · ${currentFolder.name}`);
+    } else {
+        setDesktopStatus(`${currentFolder.name} · ${count} 个项目`);
+    }
+}
+
+async function enterFolder(folder, { push = true } = {}) {
+    if (!folder?.path) return;
+
+    if (!state.folderView.active) {
+        state.folderView.categoryScrollTop = elements.categoryList.scrollTop;
+    }
+    if (push) {
+        state.folderView.stack.push({ path: folder.path, name: folder.name || '文件夹' });
+    }
+    state.folderView.active = true;
+    state.selectedFile = null;
+
+    const generation = ++folderRequestGeneration;
+    const cached = readCachedFolder(folder.path);
+    renderFolderBrowser(cached, { syncing: true });
+
+    try {
+        const contents = await invoke('desktop_list_folder', { path: folder.path });
+        if (generation !== folderRequestGeneration || state.folderView.stack.at(-1)?.path !== folder.path) return;
+        cacheFolder(folder.path, contents);
+        renderFolderBrowser(contents);
+    } catch (error) {
+        if (generation !== folderRequestGeneration || state.folderView.stack.at(-1)?.path !== folder.path) return;
+        console.error('读取文件夹失败:', error);
+        renderFolderBrowser(cached, { error });
+    }
+}
+
+function leaveFolderBrowser() {
+    folderRequestGeneration++;
+    state.folderView.active = false;
+    state.folderView.stack = [];
+    state.selectedFile = null;
+    const scrollTop = state.folderView.categoryScrollTop;
+    renderCategoryList();
+    requestAnimationFrame(() => {
+        elements.categoryList.scrollTop = scrollTop;
+    });
+}
+
+function navigateFolderBack() {
+    if (!state.folderView.active) return;
+    if (state.folderView.stack.length <= 1) {
+        leaveFolderBrowser();
+        return;
+    }
+
+    state.folderView.stack.pop();
+    enterFolder(state.folderView.stack.at(-1), { push: false });
+}
+
+function navigateFolderDepth(depth) {
+    if (depth < 0) {
+        leaveFolderBrowser();
+        return;
+    }
+    if (depth >= state.folderView.stack.length) return;
+    state.folderView.stack = state.folderView.stack.slice(0, depth + 1);
+    enterFolder(state.folderView.stack.at(-1), { push: false });
+}
+
+function refreshCurrentView() {
+    if (state.folderView.active) {
+        const currentFolder = state.folderView.stack.at(-1);
+        if (currentFolder) return enterFolder(currentFolder, { push: false });
+    }
+    return loadDesktopFiles();
 }
 
 function renderSearchResults() {
@@ -278,7 +433,7 @@ function renderSearchResults() {
     const query = state.searchQuery.replace(/^\/[a-z]\s*/i, ''); // 移除命令前缀
     
     elements.searchResultsList.innerHTML = state.searchResults.map(file => `
-        <div class="file-item" data-path="${escapeHtml(file.path)}" data-name="${escapeHtml(file.name)}">
+        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}">
             <span class="file-icon">${getFileIcon(file)}</span>
             <span class="file-name">${highlightText(file.name, query)}</span>
             <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
@@ -395,25 +550,58 @@ function updateCategorySubmenu() {
 // ============================================
 // 数据加载
 // ============================================
+const LIVE_RESCAN_INTERVAL_MS = 15_000;
 let scanPromise = null;
+let lastSuccessfulScanAt = 0;
+
+function setDesktopStatus(message) {
+    elements.statusText.textContent = message;
+}
+
+function hydrateCachedDesktopSnapshot() {
+    const snapshot = readDesktopSnapshot(globalThis.localStorage);
+    if (!snapshot) return false;
+
+    state.files = snapshot.files;
+    renderCategoryList();
+    setDesktopStatus(`上次扫描 · 共 ${state.files.total_count} 个项目 · 正在同步`);
+    return true;
+}
+
 async function loadDesktopFiles() {
     if (scanPromise) return scanPromise;
+    const previousFingerprint = desktopSnapshotFingerprint(state.files);
     scanPromise = invoke('desktop_scan');
     try {
-        elements.statusText.textContent = '扫描中...';
-        state.files = await scanPromise;
-        loadCustomCategories();
-        renderCategoryList();
+        elements.refreshBtn.classList.add('is-syncing');
+        elements.refreshBtn.setAttribute('aria-busy', 'true');
+        if (!state.folderView.active) {
+            setDesktopStatus(state.files ? `正在同步 · 共 ${state.files.total_count} 个项目` : '正在扫描桌面…');
+        }
+
+        const scannedFiles = await scanPromise;
+        const nextFingerprint = desktopSnapshotFingerprint(scannedFiles);
+        state.files = scannedFiles;
+        if (nextFingerprint !== previousFingerprint && !state.folderView.active) renderCategoryList();
+        writeDesktopSnapshot(globalThis.localStorage, scannedFiles);
+        lastSuccessfulScanAt = Date.now();
+        if (!state.folderView.active) setDesktopStatus(`已同步 · 共 ${state.files.total_count} 个项目`);
     } catch (error) {
         console.error('扫描桌面失败:', error);
-        elements.statusText.textContent = '扫描失败';
-        elements.categoryList.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">⚠️</div>
-                <div class="empty-state-text">加载失败: ${escapeHtml(String(error))}</div>
-            </div>
-        `;
+        if (state.files && !state.folderView.active) {
+            setDesktopStatus(`显示上次结果 · 同步失败`);
+        } else if (!state.files && !state.folderView.active) {
+            setDesktopStatus('扫描失败');
+            elements.categoryList.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">⚠️</div>
+                    <div class="empty-state-text">加载失败: ${escapeHtml(String(error))}</div>
+                </div>
+            `;
+        }
     } finally {
+        elements.refreshBtn.classList.remove('is-syncing');
+        elements.refreshBtn.removeAttribute('aria-busy');
         scanPromise = null;
     }
 }
@@ -477,7 +665,8 @@ async function locateFile(path) {
 async function renameFile(oldPath, newName) {
     try {
         await invoke('desktop_rename_file', { oldPath, newName });
-        await loadDesktopFiles(); // 刷新列表
+        await loadDesktopFiles();
+        if (state.folderView.active) await refreshCurrentView();
     } catch (error) {
         console.error('重命名失败:', error);
         alert('重命名失败: ' + error);
@@ -515,12 +704,16 @@ document.addEventListener('keydown', async (e) => {
     const selectedItem = document.querySelector('.file-item.selected');
     
     if (selectedItem && state.selectedFile) {
-        const { path, name } = state.selectedFile;
+        const { path, name, isFolder } = state.selectedFile;
         
         // Enter - 打开文件
         if (e.key === 'Enter') {
             e.preventDefault();
-            await openFile(path);
+            if (isFolder) {
+                await enterFolder({ path, name });
+            } else {
+                await openFile(path);
+            }
         }
         // F2 - 重命名
         else if (e.key === 'F2') {
@@ -542,6 +735,7 @@ document.addEventListener('keydown', async (e) => {
     // ESC - 关闭右键菜单
     if (e.key === 'Escape') {
         hideContextMenu();
+        if (state.folderView.active) navigateFolderBack();
     }
     
     // Ctrl+F 或 / - 聚焦搜索框
@@ -554,7 +748,7 @@ document.addEventListener('keydown', async (e) => {
     // F5 - 刷新
     if (e.key === 'F5') {
         e.preventDefault();
-        loadDesktopFiles();
+        refreshCurrentView();
     }
 });
 
@@ -574,6 +768,7 @@ function selectFileItem(fileItem) {
         state.selectedFile = {
             path: fileItem.dataset.path,
             name: fileItem.dataset.name,
+            isFolder: fileItem.dataset.isFolder === 'true',
         };
     } else {
         state.selectedFile = null;
@@ -583,13 +778,35 @@ function selectFileItem(fileItem) {
 // 单击选中文件
 elements.categoryList.addEventListener('click', (e) => {
     const fileItem = e.target.closest('.file-item');
-    if (fileItem && !e.target.closest('.folder-children')) {
+    if (fileItem) {
         selectFileItem(fileItem);
     }
 });
 
 // 分类展开/折叠
 elements.categoryList.addEventListener('click', (e) => {
+    if (e.target.closest('[data-folder-back]')) {
+        navigateFolderBack();
+        return;
+    }
+
+    const breadcrumb = e.target.closest('[data-folder-depth]');
+    if (breadcrumb) {
+        navigateFolderDepth(Number(breadcrumb.dataset.folderDepth));
+        return;
+    }
+
+    if (e.target.closest('[data-folder-refresh]')) {
+        refreshCurrentView();
+        return;
+    }
+
+    if (e.target.closest('[data-folder-external]')) {
+        const path = state.folderView.stack.at(-1)?.path;
+        if (path) openFile(path);
+        return;
+    }
+
     const header = e.target.closest('.category-header');
     if (header) {
         const category = header.dataset.category;
@@ -603,20 +820,16 @@ elements.categoryList.addEventListener('click', (e) => {
         return;
     }
 
-    // 文件夹悬停展开
     const folderItem = e.target.closest('.file-item');
-    if (folderItem) {
-        const children = folderItem.querySelector('.folder-children');
-        if (children) {
-            folderItem.classList.toggle('folder-expanded');
-        }
+    if (folderItem?.dataset.isFolder === 'true') {
+        enterFolder({ path: folderItem.dataset.path, name: folderItem.dataset.name });
     }
 });
 
 // 文件双击打开
 elements.categoryList.addEventListener('dblclick', (e) => {
     const fileItem = e.target.closest('.file-item');
-    if (fileItem) {
+    if (fileItem && fileItem.dataset.isFolder !== 'true') {
         const path = fileItem.dataset.path;
         if (path) {
             openFile(path);
@@ -642,6 +855,7 @@ function showContextMenu(e, fileItem) {
     state.selectedFile = {
         path: fileItem.dataset.path,
         name: fileItem.dataset.name,
+        isFolder: fileItem.dataset.isFolder === 'true',
     };
     
     // 更新分类子菜单
@@ -824,7 +1038,7 @@ elements.blankContextMenu?.addEventListener('click', async (e) => {
             showManageCategoriesDialog();
             break;
         case 'refresh':
-            await loadDesktopFiles();
+            await refreshCurrentView();
             break;
     }
     
@@ -1044,7 +1258,7 @@ elements.searchClear.addEventListener('click', () => {
 
 // 刷新按钮
 elements.refreshBtn.addEventListener('click', () => {
-    loadDesktopFiles();
+    refreshCurrentView();
 });
 
 // ============================================
@@ -1077,6 +1291,13 @@ document.addEventListener('visibilitychange', async () => {
             
             // 通知结束交互
             await notifyUserInteracting(false);
+        }
+    } else if (Date.now() - lastSuccessfulScanAt >= LIVE_RESCAN_INTERVAL_MS) {
+        // 只在窗口重新可见时刷新，不使用后台轮询。
+        if (state.folderView.active) {
+            void refreshCurrentView();
+        } else {
+            void loadDesktopFiles();
         }
     }
 });
@@ -1476,6 +1697,8 @@ document.addEventListener('mouseup', async () => {
 // ============================================
 async function init() {
     await loadUserPreferences();
+    loadCustomCategories();
+    hydrateCachedDesktopSnapshot();
     await loadDesktopFiles();
     
     // 初始化时同步热区位置

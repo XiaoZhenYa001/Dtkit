@@ -58,6 +58,32 @@ use system_actions::{lock_screen, run_program, schedule_shutdown};
 static APP_SUSPENDED: AtomicBool = AtomicBool::new(false);
 static DEEP_SLEEP_CLOSING: AtomicBool = AtomicBool::new(false);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainWindowCloseBehavior {
+    HideToTray,
+    DestroyWebview,
+}
+
+fn main_window_close_behavior(mode: MinimizeMode) -> MainWindowCloseBehavior {
+    match mode {
+        MinimizeMode::Standard | MinimizeMode::Efficient => MainWindowCloseBehavior::HideToTray,
+        MinimizeMode::Deep => MainWindowCloseBehavior::DestroyWebview,
+    }
+}
+
+fn emit_main_power_state(app: &AppHandle, suspended: bool, closing: bool) {
+    let mode = app.state::<ResourceGovernor>().mode();
+    let _ = app.emit_to(
+        "main",
+        "app-power-state",
+        serde_json::json!({
+            "suspended": suspended,
+            "mode": mode,
+            "closing": closing
+        }),
+    );
+}
+
 #[cfg(target_os = "windows")]
 fn set_webview_memory_target(window: &WebviewWindow, low_memory: bool) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -206,10 +232,12 @@ fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
 
     if let Some(window) = app.get_webview_window("main") {
+        set_webview_memory_target(&window, false);
+        // 先解除前端休眠状态，再显示窗口，避免入场动画停在透明首帧。
+        emit_main_power_state(window.app_handle(), false, false);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        set_webview_memory_target(&window, false);
         return Ok(window);
     }
 
@@ -739,13 +767,10 @@ pub fn run() {
                 let suspended = minimized && mode != MinimizeMode::Standard;
                 let was_suspended = APP_SUSPENDED.swap(suspended, Ordering::Relaxed);
                 if suspended != was_suspended {
-                    let _ = window.emit(
-                        "app-power-state",
-                        serde_json::json!({
-                            "suspended": suspended,
-                            "mode": mode,
-                            "closing": minimized && mode == MinimizeMode::Deep
-                        }),
+                    emit_main_power_state(
+                        window.app_handle(),
+                        suspended,
+                        minimized && mode == MinimizeMode::Deep,
                     );
 
                     if let Some(main_window) = window.app_handle().get_webview_window("main") {
@@ -787,28 +812,47 @@ pub fn run() {
                 }
             }
 
-            // 当主窗口关闭时，停止热区监听并退出程序
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                if window.label() == "main" {
-                    if DEEP_SLEEP_CLOSING.swap(false, Ordering::Relaxed) {
-                        return;
-                    }
-                    // 停止热区监听线程
-                    stop_hotzone_monitor();
+            // 右上角关闭只进入托盘；真正退出只允许由托盘菜单触发。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
+                // 深度休眠由最小化流程主动销毁 WebView，此时允许窗口正常关闭。
+                if DEEP_SLEEP_CLOSING.swap(false, Ordering::Relaxed) {
+                    return;
+                }
 
-                    // 关闭所有其他窗口
-                    let app = window.app_handle();
-                    // 关闭桌面整理窗口
+                let mode = window.state::<ResourceGovernor>().mode();
+                let close_behavior = main_window_close_behavior(mode);
+                let suspended = mode != MinimizeMode::Standard;
+                APP_SUSPENDED.store(suspended, Ordering::Relaxed);
+                emit_main_power_state(window.app_handle(), suspended, mode == MinimizeMode::Deep);
+
+                let app = window.app_handle();
+                if mode == MinimizeMode::Standard {
+                    if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
+                        let _ = organizer_window.hide();
+                    }
+                } else {
+                    stop_hotzone_monitor();
+                    window.state::<QuickHostManager>().release_now(app);
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.close();
                     }
-
-                    // 给线程和窗口一点时间清理
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-
-                    // 强制退出整个进程，确保所有子进程都被终止
-                    std::process::exit(0);
                 }
+
+                if close_behavior == MainWindowCloseBehavior::DestroyWebview {
+                    // 销毁主 WebView，但 APP_SUSPENDED 会阻止无窗口时退出事件终止后端。
+                    return;
+                }
+
+                api.prevent_close();
+                if mode == MinimizeMode::Efficient {
+                    if let Some(main_window) = app.get_webview_window("main") {
+                        set_webview_memory_target(&main_window, true);
+                    }
+                }
+                let _ = window.hide();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -865,6 +909,7 @@ pub fn run() {
             // 桌面整理命令
             desktop_scan,
             desktop_search,
+            desktop_list_folder,
             desktop_open_file,
             desktop_locate_file,
             desktop_rename_file,
@@ -896,7 +941,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod window_bounds_tests {
-    use super::fit_window_rect;
+    use super::{fit_window_rect, main_window_close_behavior, MainWindowCloseBehavior};
+    use crate::infrastructure::resources::MinimizeMode;
     use tauri::{PhysicalPosition, PhysicalSize};
 
     #[test]
@@ -925,5 +971,21 @@ mod window_bounds_tests {
 
         assert_eq!(position, PhysicalPosition::new(-1908, 12));
         assert_eq!(size, PhysicalSize::new(1896, 1056));
+    }
+
+    #[test]
+    fn close_behavior_keeps_every_mode_alive_in_the_tray() {
+        assert_eq!(
+            main_window_close_behavior(MinimizeMode::Standard),
+            MainWindowCloseBehavior::HideToTray
+        );
+        assert_eq!(
+            main_window_close_behavior(MinimizeMode::Efficient),
+            MainWindowCloseBehavior::HideToTray
+        );
+        assert_eq!(
+            main_window_close_behavior(MinimizeMode::Deep),
+            MainWindowCloseBehavior::DestroyWebview
+        );
     }
 }

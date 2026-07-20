@@ -68,6 +68,23 @@ test('desktop organizer webview is created lazily instead of at app startup', as
     assert.match(rustSource, /TrayIconBuilder/);
 });
 
+test('main window close routes to the tray and only the tray quit action exits', async () => {
+    const rustSource = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+
+    assert.match(rustSource, /WindowEvent::CloseRequested\s*\{\s*api/);
+    assert.match(rustSource, /api\.prevent_close\(\)/);
+    assert.match(rustSource, /"quit"\s*=>\s*app\.exit\(0\)/);
+    assert.doesNotMatch(rustSource, /std::process::exit\(0\)/);
+});
+
+test('restoring the main window resumes frontend rendering before it is shown', async () => {
+    const rustSource = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+    const ensureMainWindow = rustSource.match(/fn ensure_main_window[\s\S]*?\n}\n\nfn setup_tray/)?.[0] || '';
+
+    assert.match(ensureMainWindow, /emit_main_power_state\(window\.app_handle\(\), false, false\)/);
+    assert.match(ensureMainWindow, /set_webview_memory_target\(&window, false\)/);
+});
+
 test('deep sleep keeps alarm completion events for the recreated frontend', async () => {
     const rustSource = await readFile(new URL('../src-tauri/src/alarm_scheduler.rs', import.meta.url), 'utf8');
     const frontendSource = await readFile(new URL('../src/core/alarmService.js', import.meta.url), 'utf8');

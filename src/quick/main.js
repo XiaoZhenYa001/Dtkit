@@ -8,7 +8,8 @@ const TOOL_LABELS = Object.freeze({
     'html-preview': 'HTML 预览', 'url-encoder': 'URL 编码',
     'crontab-explainer': 'Crontab 解释', 'unit-converter': '单位换算',
     'alarm-clock': '定时闹钟', 'file-batch': '文件批处理',
-    'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心'
+    'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
+    'whiteboard': '白板'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
 const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
@@ -22,6 +23,7 @@ const palette = document.getElementById('quickPalette');
 const input = document.getElementById('commandInput');
 const results = document.getElementById('commandResults');
 const paletteHint = document.getElementById('paletteHint');
+const shell = document.querySelector('.quick-shell');
 let activeToolId = null;
 let toolRuntime = null;
 let renderGeneration = 0;
@@ -29,6 +31,12 @@ let searchGeneration = 0;
 let searchDelay = null;
 let selectedIndex = 0;
 let currentActions = [];
+
+function setToolChrome(toolId = null) {
+    const isWhiteboard = toolId === 'whiteboard';
+    shell?.classList.toggle('quick-shell--whiteboard', isWhiteboard);
+    document.documentElement.classList.toggle('quick-tool--whiteboard', isWhiteboard);
+}
 
 async function getToolRuntime() {
     if (toolRuntime) return toolRuntime;
@@ -40,6 +48,7 @@ async function getToolRuntime() {
 function releaseTool() {
     if (activeToolId && toolRuntime) toolRuntime.destroyTool(activeToolId);
     activeToolId = null;
+    setToolChrome();
     toolContainer.replaceChildren();
     content.classList.remove('quick-content--tool');
 }
@@ -230,12 +239,14 @@ async function renderTarget(target) {
         if (typeof tool.template !== 'function' || typeof tool.init !== 'function') throw new Error('工具缺少快捷窗口适配器');
         toolContainer.innerHTML = tool.template();
         activeToolId = target.toolId;
+        setToolChrome(target.toolId);
         await Promise.resolve(tool.init());
         if (generation !== renderGeneration) return releaseTool();
         status.hidden = true;
         content.classList.add('quick-content--tool');
         document.title = `${toolName} · DtKit`;
     } catch (error) {
+        setToolChrome();
         document.title = '加载失败 · DtKit';
         heading.textContent = `${toolName} 暂时无法打开`;
         description.textContent = String(error?.message || error);

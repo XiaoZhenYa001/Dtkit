@@ -63,7 +63,7 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.match(commands, /validated_desktop_entry/);
     assert.match(commands, /validate_leaf_filename/);
     assert.match(commands, /spawn_blocking/);
-    assert.match(scanner, /FOLDER_PREVIEW_LIMIT: usize = 5/);
+    assert.match(scanner, /FOLDER_BROWSE_LIMIT: usize = 200/);
     assert.match(scanner, /SEARCH_RESULT_LIMIT: usize = 200/);
     assert.match(hotzone, /compare_exchange\(false, true/);
     assert.match(hotzone, /if is_panel_visible \{\s*100\s*\} else \{\s*250/);
@@ -75,6 +75,23 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.match(organizerUi, /invoke\('clamp_desktop_organizer_window'\)/);
     assert.match(organizerUi, /screenBounds\.x/);
     assert.match(organizerUi, /screenBounds\.y/);
+    assert.match(organizerUi, /visibilitychange[\s\S]*LIVE_RESCAN_INTERVAL_MS[\s\S]*loadDesktopFiles/);
+    assert.doesNotMatch(organizerUi, /setInterval\s*\(/);
+});
+
+test('desktop folders are scanned on demand instead of during the top-level scan', () => {
+    const commands = read('src-tauri/src/desktop/commands.rs');
+    const scanner = read('src-tauri/src/desktop/scanner.rs');
+    const organizerUi = read('src/desktop-organizer/main.js');
+
+    assert.match(scanner, /FOLDER_BROWSE_LIMIT: usize = 200/);
+    assert.doesNotMatch(scanner, /scan_file_info\(&path, true\)/);
+    assert.doesNotMatch(scanner, /scan_folder_children/);
+    assert.match(commands, /desktop_list_folder/);
+    assert.match(organizerUi, /invoke\('desktop_list_folder'/);
+    assert.match(organizerUi, /FOLDER_CACHE_LIMIT = 8/);
+    assert.match(organizerUi, /folder-browser/);
+    assert.doesNotMatch(organizerUi, /renderFolderChildren/);
 });
 
 test('tool shortcuts are mounted from tool metadata instead of a centralized tool list', () => {
@@ -85,4 +102,16 @@ test('tool shortcuts are mounted from tool metadata instead of a centralized too
     assert.match(registry, /target: \{ kind: 'tool', toolId \}/);
     assert.doesNotMatch(settings, /timestamp-converter|json-formatter|transfer-station/);
     assert.match(settings, /target: \{ kind: 'palette' \}/);
+});
+
+test('whiteboard shortcut opens as an immersive quick canvas', () => {
+    const quickHost = read('src-tauri/src/infrastructure/quick_host.rs');
+    const quickScript = read('src/quick/main.js');
+    const quickStyle = read('src/quick/style.css');
+    const whiteboardStyle = read('src/css/tools/whiteboard.css');
+
+    assert.match(quickHost, /\| "whiteboard"/);
+    assert.match(quickScript, /quick-shell--whiteboard/);
+    assert.match(quickStyle, /\.quick-shell--whiteboard[\s\S]*grid-template-rows:\s*1fr/);
+    assert.match(whiteboardStyle, /quick-tool--whiteboard[\s\S]*\.whiteboard-hero[\s\S]*display:\s*none/);
 });

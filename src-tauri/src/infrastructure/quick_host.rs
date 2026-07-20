@@ -173,6 +173,7 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
             | "file-batch"
             | "transfer-station"
             | "resource-center"
+            | "whiteboard"
     )
 }
 
@@ -200,6 +201,7 @@ mod tests {
     #[test]
     fn tool_targets_only_accept_known_internal_tools() {
         assert!(QuickHostTarget::tool("timestamp-converter".into()).is_ok());
+        assert!(QuickHostTarget::tool("whiteboard".into()).is_ok());
         assert!(QuickHostTarget::tool("../settings".into()).is_err());
         assert!(QuickHostTarget::tool("UPPERCASE".into()).is_err());
         assert!(QuickHostTarget::tool("unknown-tool".into()).is_err());

@@ -20,6 +20,13 @@ with sync_playwright() as playwright:
                 accessed_time: 1, children: null, children_truncated: false, icon: null }] : null,
             children_truncated: folder, icon: null
         });
+        const cached = file('cached-notes.txt', 'document', false, 2048);
+        localStorage.setItem('dtkit_desktop_snapshot_v1', JSON.stringify({
+            version: 1,
+            capturedAt: Date.now(),
+            files: { recent: [cached], documents: [cached], images: [], videos: [], audios: [],
+                archives: [], programs: [], folders: [], others: [], total_count: 1 }
+        }));
         window.__bindings = [];
         window.__calls = [];
         window.__TAURI__ = {
@@ -32,8 +39,21 @@ with sync_playwright() as playwright:
                     const doc = file('roadmap.pdf', 'document', false, 245760);
                     const image = file('design.png', 'image', false, 1048576);
                     const folder = file('Current Project', 'folder', true, 0);
-                    return { recent: [doc, image], documents: [doc], images: [image], videos: [], audios: [],
-                        archives: [], programs: [], folders: [folder], others: [], total_count: 3 };
+                    return new Promise(resolve => {
+                        window.__resolveDesktopScan = () => resolve({
+                            recent: [doc, image], documents: [doc], images: [image], videos: [], audios: [],
+                            archives: [], programs: [], folders: [folder], others: [], total_count: 3
+                        });
+                    });
+                }
+                if (command === 'desktop_list_folder') {
+                    const child = file('brief.md', 'document', false, 512);
+                    child.path = `${args.path}/brief.md`;
+                    const nested = file('Reference', 'folder', true, 0);
+                    nested.path = `${args.path}/Reference`;
+                    nested.children = null;
+                    nested.children_truncated = false;
+                    return { path: args.path, name: args.path.split(/[\\/]/).pop(), items: [nested, child], total_count: 2, truncated: false };
                 }
                 if (command === 'desktop_search') return [file('roadmap.pdf', 'document', false, 245760)];
                 if (command === 'get_screen_bounds') return { x: 0, y: 0, width: 1366, height: 768, virtualWidth: 1366, virtualHeight: 768 };
@@ -52,12 +72,30 @@ with sync_playwright() as playwright:
     organizer.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
     organizer.on("pageerror", lambda error: errors.append(str(error)))
     organizer.goto(f"{BASE_URL}/desktop-organizer/index.html", wait_until="networkidle")
+    organizer.wait_for_function("document.querySelector('[data-name=\"cached-notes.txt\"]') !== null")
+    assert organizer.locator('[data-name="cached-notes.txt"]').count() >= 1
+    organizer.evaluate("window.__resolveDesktopScan()")
     organizer.wait_for_function("document.querySelectorAll('.category-item').length >= 3")
+    organizer.wait_for_function("document.querySelector('[data-name=\"roadmap.pdf\"]') !== null")
+    assert organizer.locator('[data-name="cached-notes.txt"]').count() == 0
     assert organizer.evaluate("window.__calls.some(call => call.command === 'clamp_desktop_organizer_window')")
     assert organizer.locator(".organizer-brand h1").text_content() == "桌面整理"
     assert "共 3 个项目" in organizer.locator("#statusText").text_content()
     assert organizer.locator(".category-item").count() >= 3
     assert organizer.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+
+    organizer.locator('[data-category="folder"] .category-header').click()
+    organizer.locator('[data-name="Current Project"]').click()
+    organizer.locator(".folder-browser").wait_for(state="visible")
+    assert "brief.md" in organizer.locator(".folder-browser__list").inner_text()
+    assert "Reference" in organizer.locator(".folder-browser__list").inner_text()
+    assert organizer.locator(".folder-children").count() == 0
+    assert organizer.evaluate("window.__calls.some(call => call.command === 'desktop_list_folder')")
+    assert organizer.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    organizer.screenshot(path=str(ORGANIZER_SCREENSHOT))
+    organizer.locator("[data-folder-back]").click()
+    assert organizer.locator(".folder-browser").count() == 0
+    assert organizer.locator('[data-name="Current Project"]').count() == 1
 
     organizer.locator("#searchInput").fill("road")
     organizer.wait_for_function("document.querySelectorAll('#searchResultsList .file-item').length === 1")
@@ -67,7 +105,6 @@ with sync_playwright() as playwright:
     assert organizer.locator("#contextMenu").is_visible()
     organizer.locator('#contextMenu [data-action="rename"]').click()
     assert organizer.locator("#renameDialog").is_visible()
-    organizer.screenshot(path=str(ORGANIZER_SCREENSHOT))
     organizer.locator("#renameCancelBtn").click()
     assert not errors, errors
     organizer.close()

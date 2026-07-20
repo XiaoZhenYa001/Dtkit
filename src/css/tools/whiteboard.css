@@ -1,0 +1,409 @@
+.whiteboard-tool {
+    width: min(76rem, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 1.35rem 0 2rem;
+    display: grid;
+    gap: 0.85rem;
+}
+
+.whiteboard-hero {
+    min-height: 6.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.15rem 1.3rem;
+    border: 1px solid rgba(118, 93, 63, 0.1);
+    border-radius: 1.2rem;
+    background:
+        radial-gradient(circle at 92% 0%, rgba(216, 111, 61, 0.17), transparent 32%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 248, 240, 0.8));
+    box-shadow: var(--shadow-xs);
+}
+
+.whiteboard-kicker {
+    color: var(--color-primary);
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+}
+
+.whiteboard-hero h2 {
+    margin: 0.15rem 0 0.18rem;
+    color: var(--color-text-primary);
+    font-size: 1.38rem;
+    line-height: 1.2;
+}
+
+.whiteboard-hero p {
+    color: var(--color-text-secondary);
+    font-size: 0.76rem;
+}
+
+.whiteboard-local-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    flex: 0 0 auto;
+    padding: 0.48rem 0.68rem;
+    border: 1px solid rgba(63, 128, 97, 0.16);
+    border-radius: 999px;
+    color: #356e53;
+    background: rgba(63, 128, 97, 0.08);
+    font-size: 0.65rem;
+    font-weight: 700;
+}
+
+.whiteboard-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    padding: 0.58rem;
+    border: 1px solid rgba(118, 93, 63, 0.11);
+    border-radius: 1rem;
+    background: rgba(255, 253, 249, 0.94);
+    box-shadow: var(--shadow-xs);
+}
+
+.whiteboard-tool-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding: 0.24rem;
+    border-radius: 0.7rem;
+    background: var(--color-bg-secondary);
+}
+
+.whiteboard-tool-group button,
+.whiteboard-color-picker {
+    min-height: 2.2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.42rem 0.58rem;
+    border: 1px solid transparent;
+    border-radius: 0.55rem;
+    color: var(--color-text-secondary);
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.65rem;
+    font-weight: 680;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+}
+
+.whiteboard-tool-group button:hover:not(:disabled),
+.whiteboard-tool-group button[aria-pressed="true"] {
+    color: var(--color-primary);
+    border-color: rgba(216, 111, 61, 0.16);
+    background: #fff;
+}
+
+.whiteboard-tool-group button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.whiteboard-tool-group button:disabled {
+    opacity: 0.34;
+    cursor: default;
+}
+
+.whiteboard-colors {
+    gap: 0.35rem;
+}
+
+.whiteboard-colors .whiteboard-color {
+    width: 1.7rem;
+    min-height: 1.7rem;
+    padding: 0;
+    border: 3px solid var(--color-bg-secondary);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(118, 93, 63, 0.12);
+}
+
+.whiteboard-colors .whiteboard-color[aria-pressed="true"] {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.whiteboard-color--ink { background: #242937 !important; }
+.whiteboard-color--orange { background: #d96f3d !important; }
+.whiteboard-color--blue { background: #3f6d74 !important; }
+.whiteboard-color--green { background: #3f8061 !important; }
+
+.whiteboard-color-picker {
+    position: relative;
+    width: 1.8rem;
+    min-height: 1.8rem;
+    padding: 0;
+    overflow: hidden;
+    color: var(--color-primary);
+    background: #fff;
+}
+
+.whiteboard-color-picker input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.whiteboard-size-control {
+    min-height: 2.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.62rem;
+    border-radius: 0.7rem;
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary);
+    font-size: 0.61rem;
+    font-weight: 680;
+}
+
+.whiteboard-size-control input {
+    width: 5.5rem;
+    accent-color: var(--color-primary);
+}
+
+.whiteboard-size-control output {
+    min-width: 2.5rem;
+    color: var(--color-text-tertiary);
+    font-size: 0.56rem;
+    text-align: right;
+}
+
+.whiteboard-action-group {
+    margin-left: auto;
+}
+
+.whiteboard-action-group .whiteboard-danger-action:hover:not(:disabled) {
+    color: var(--color-danger);
+    border-color: rgba(var(--color-danger-rgb), 0.16);
+    background: rgba(var(--color-danger-rgb), 0.07);
+}
+
+.whiteboard-stage {
+    overflow: hidden;
+    border: 1px solid rgba(118, 93, 63, 0.12);
+    border-radius: 1.15rem;
+    background: #fffdf9;
+    box-shadow: 0 14px 34px rgba(71, 55, 43, 0.09);
+}
+
+.whiteboard-surface {
+    position: relative;
+    height: clamp(20rem, calc(100vh - 29rem), 43rem);
+    min-height: 20rem;
+    overflow: hidden;
+    background-color: #fffdf9;
+}
+
+.whiteboard-surface--grid {
+    background-image: radial-gradient(circle, rgba(115, 121, 137, 0.2) 0.75px, transparent 0.9px);
+    background-size: 24px 24px;
+    background-position: 17px 17px;
+}
+
+#whiteboardCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.whiteboard-empty-hint {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: none;
+    justify-items: center;
+    gap: 0.28rem;
+    color: var(--color-text-tertiary);
+    text-align: center;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.whiteboard-surface.is-empty .whiteboard-empty-hint {
+    display: grid;
+}
+
+.whiteboard-empty-hint i {
+    width: 3rem;
+    height: 3rem;
+    display: grid;
+    place-items: center;
+    margin-bottom: 0.25rem;
+    border-radius: 1rem;
+    color: var(--color-primary);
+    background: rgba(216, 111, 61, 0.08);
+    font-size: 1.2rem;
+}
+
+.whiteboard-empty-hint strong {
+    color: var(--color-text-secondary);
+    font-size: 0.74rem;
+}
+
+.whiteboard-empty-hint span {
+    font-size: 0.62rem;
+}
+
+.whiteboard-statusbar {
+    min-height: 2.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.48rem 0.75rem;
+    border-top: 1px solid rgba(118, 93, 63, 0.1);
+    color: var(--color-text-tertiary);
+    background: rgba(249, 245, 239, 0.82);
+    font-size: 0.58rem;
+}
+
+.whiteboard-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
+}
+
+.whiteboard-status i,
+#whiteboardStatus > i {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: #4e936f;
+    box-shadow: 0 0 0 3px rgba(78, 147, 111, 0.1);
+}
+
+.whiteboard-status--saving i { background: #c58a3c; }
+.whiteboard-status--warning i { background: var(--color-danger); }
+.whiteboard-shortcuts { margin-left: auto; }
+
+@media (max-width: 980px) {
+    .whiteboard-tool { width: calc(100% - 1rem); }
+    .whiteboard-action-group { margin-left: 0; }
+    .whiteboard-shortcuts { display: none; }
+}
+
+@media (max-width: 700px) {
+    .whiteboard-tool { padding-top: 0.75rem; }
+    .whiteboard-hero { align-items: flex-start; flex-direction: column; gap: 0.65rem; }
+    .whiteboard-local-badge { align-self: flex-start; }
+    .whiteboard-toolbar { align-items: stretch; }
+    .whiteboard-mode-group, .whiteboard-history-group, .whiteboard-action-group { flex: 1 1 auto; }
+    .whiteboard-tool-group button { flex: 1; }
+    .whiteboard-size-control { flex: 1 1 100%; }
+    .whiteboard-size-control input { flex: 1; }
+    .whiteboard-surface { height: 24rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .whiteboard-tool-group button { transition: none; }
+}
+
+/* 快捷键窗口：画布是唯一主体，其余控件悬浮在画布边缘。 */
+html.quick-tool--whiteboard .whiteboard-tool {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    display: block;
+}
+
+html.quick-tool--whiteboard .whiteboard-hero {
+    display: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-toolbar {
+    position: absolute;
+    top: 0.65rem;
+    left: 0.65rem;
+    right: 3.35rem;
+    z-index: 20;
+    min-width: 0;
+    padding: 0.38rem;
+    flex-wrap: nowrap;
+    gap: 0.34rem;
+    overflow-x: auto;
+    border-color: rgba(118, 93, 63, 0.13);
+    border-radius: 0.85rem;
+    background: rgba(255, 253, 249, 0.94);
+    box-shadow: 0 0.45rem 1.25rem rgba(71, 55, 43, 0.09);
+    scrollbar-width: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-toolbar::-webkit-scrollbar {
+    display: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-tool-group {
+    flex: 0 0 auto;
+}
+
+html.quick-tool--whiteboard .whiteboard-tool-group button {
+    flex: 0 0 auto;
+    min-width: 2.1rem;
+    min-height: 2.1rem;
+    padding: 0.38rem;
+}
+
+html.quick-tool--whiteboard .whiteboard-tool-group button > span,
+html.quick-tool--whiteboard .whiteboard-size-control > span,
+html.quick-tool--whiteboard .whiteboard-size-control output {
+    display: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-size-control {
+    flex: 0 0 auto;
+    min-height: 2.55rem;
+    padding: 0.3rem 0.5rem;
+}
+
+html.quick-tool--whiteboard .whiteboard-size-control input {
+    width: clamp(4.5rem, 13vw, 6.5rem);
+}
+
+html.quick-tool--whiteboard .whiteboard-action-group {
+    margin-left: 0;
+}
+
+html.quick-tool--whiteboard .whiteboard-stage,
+html.quick-tool--whiteboard .whiteboard-surface {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-statusbar {
+    position: absolute;
+    left: 0.65rem;
+    right: 0.65rem;
+    bottom: 0.65rem;
+    z-index: 20;
+    width: auto;
+    min-height: 1.9rem;
+    padding: 0.38rem 0.62rem;
+    border: 1px solid rgba(118, 93, 63, 0.11);
+    border-radius: 0.7rem;
+    background: rgba(255, 253, 249, 0.9);
+    box-shadow: 0 0.35rem 1rem rgba(71, 55, 43, 0.06);
+    pointer-events: none;
+}
+
+html.quick-tool--whiteboard .whiteboard-shortcuts {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

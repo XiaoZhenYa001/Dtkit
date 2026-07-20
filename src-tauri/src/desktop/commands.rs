@@ -1,7 +1,10 @@
 // 桌面整理 Tauri 命令
 // Desktop Organizer Commands
 
-use crate::desktop::scanner::{scan_desktop, search_desktop_files, CategorizedFiles, DesktopFile};
+use crate::desktop::scanner::{
+    scan_desktop, scan_folder_contents, search_desktop_files, CategorizedFiles, DesktopFile,
+    FolderContents,
+};
 use crate::path_safety::validate_leaf_filename;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,6 +51,19 @@ pub async fn desktop_search(
     })
     .await
     .map_err(|error| format!("桌面搜索任务异常结束: {error}"))?
+}
+
+/// 按需读取桌面内某个文件夹的一级内容。
+#[tauri::command]
+pub async fn desktop_list_folder(path: String) -> Result<FolderContents, String> {
+    let path = validated_desktop_entry(&path)?;
+    if !path.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || scan_folder_contents(&path))
+        .await
+        .map_err(|error| format!("文件夹扫描任务异常结束: {error}"))?
 }
 
 /// 获取单个文件的图标
