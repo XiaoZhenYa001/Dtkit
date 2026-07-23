@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="css/layout.css">
     <!-- 工具库样式 -->
     <link rel="stylesheet" href="css/tools-library.css">
-    <!-- 设置页与下载页样式在首次访问时按需加载 -->
+    <!-- 设置页样式在首次访问时按需加载 -->
     <!-- 响应式设计 -->
     <link rel="stylesheet" href="css/responsive.css">
 </head>
@@ -38,12 +38,6 @@
                 <span class="nav-btn__label">收藏</span>
             </button>
 
-            <button class="nav-btn" data-view="downloads" title="下载">
-                <div class="nav-btn__icon">
-                    <i class="ri-download-2-line"></i>
-                </div>
-                <span class="nav-btn__label">下载</span>
-            </button>
         </nav>
 
         <button class="nav-btn nav-settings" data-view="settings" title="设置">
@@ -175,15 +169,6 @@
                 </div>
             </div>
 
-            <!-- 下载视图 -->
-            <div id="downloadsView" class="view">
-                <div class="view-container">
-                    <div id="downloadsContent">
-                        <!-- 下载内容由 JavaScript 动态注入 -->
-                    </div>
-                </div>
-            </div>
-
             <!-- 设置视图 -->
             <div id="settingsView" class="view">
                 <div class="view-container">
@@ -210,7 +195,7 @@
                             <nav class="settings-side-nav" aria-label="设置分类">
                                 <div class="settings-side-nav__label">设置分类</div>
                                 <a href="#storageSection" class="settings-side-nav__item settings-side-nav__item--active" aria-current="true">
-                                    <i class="ri-hard-drive-2-line"></i><span>存储与网络</span>
+                                    <i class="ri-hard-drive-2-line"></i><span>存储与维护</span>
                                 </a>
                                 <a href="#shortcutsSection" class="settings-side-nav__item">
                                     <i class="ri-keyboard-box-line"></i><span>快捷键</span>
@@ -232,117 +217,49 @@
 
                             <div class="settings-panels">
                         
-                        <!-- 存储与网络 -->
+                        <!-- 存储与维护 -->
                         <section class="settings-section" id="storageSection">
                             <div class="settings-section-header">
                                 <i class="ri-hard-drive-2-line"></i>
-                                <h2 class="settings-section-title">存储与网络</h2>
+                                <h2 class="settings-section-title">存储与维护</h2>
                                 <span class="settings-section-badge settings-section-badge--blue"><i class="ri-star-line"></i> 核心</span>
                             </div>
                             <div class="settings-section-content">
                                 
-                                <!-- 文件下载设置卡片 -->
+                                <!-- DtKit 文件管理卡片 -->
                                 <div class="storage-card">
                                     <div class="storage-card-header">
                                         <div class="storage-card-icon">
-                                            <i class="ri-folder-download-line"></i>
+                                            <i class="ri-folder-settings-line"></i>
                                         </div>
                                         <div class="storage-card-info">
-                                            <h3 class="storage-card-title">文件下载位置</h3>
-                                            <p class="storage-card-desc">设置工具生成的文件保存路径</p>
+                                            <h3 class="storage-card-title">文件管理</h3>
+                                            <p class="storage-card-desc">统一管理工具输出、白板、缓存、日志与回收内容</p>
                                         </div>
                                     </div>
                                     <div class="storage-card-body">
                                         <div class="settings-input-group">
                                             <i class="settings-input-icon ri-folder-2-line"></i>
-                                            <input type="text" id="downloadPathInput" class="settings-input" placeholder="例如: C:\Users\Downloads\DtKit">
+                                            <input type="text" id="downloadPathInput" class="settings-input" aria-label="DtKit 数据根目录" placeholder="例如: D:\DtKit">
                                             <div class="settings-btn-group">
                                                 <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">
                                                     <i class="ri-check-line"></i>
-                                                    <span>更改目录</span>
+                                                    <span>迁移全部数据</span>
                                                 </button>
                                                 <button id="browseDownloadPathBtn" class="settings-btn-icon" title="浏览文件夹">
                                                     <i class="ri-folder-open-line"></i>
                                                 </button>
                                             </div>
                                         </div>
-                                        <div class="storage-options">
-                                            <div class="settings-checkbox-wrapper">
-                                                <input type="checkbox" id="auto-open-folder" class="settings-checkbox-input" disabled>
-                                                <label for="auto-open-folder" class="settings-checkbox-label">
-                                                    <i class="ri-folder-open-line"></i>
-                                                    <span>下载完成后自动打开文件夹</span>
-                                                    <small>规划中</small>
-                                                </label>
-                                            </div>
+                                        <div class="storage-root-status" id="storageRootStatus" aria-live="polite">
+                                            <i class="ri-loader-4-line"></i><span>正在读取 DtKit 数据根目录…</span>
                                         </div>
-                                    </div>
-                                </div>
-
-                                <hr class="settings-divider">
-
-                                <!-- 镜像源设置卡片 -->
-                                <div class="storage-card storage-card--mirror">
-                                    <div class="storage-card-header">
-                                        <div class="storage-card-icon storage-card-icon--network">
-                                            <i class="ri-global-line"></i>
-                                        </div>
-                                        <div class="storage-card-info">
-                                            <h3 class="storage-card-title">工具资源镜像源</h3>
-                                            <p class="storage-card-desc">加速 NPM 包、图片资源及插件的下载速度</p>
-                                        </div>
-                                        <span class="settings-status-badge" id="mirrorPingStatus">
-                                            <i class="ri-wifi-line"></i> <span>--</span>
-                                        </span>
-                                    </div>
-                                    <div class="storage-card-body">
-                                        <div class="mirror-select-wrapper">
-                                            <div class="settings-mirror-controls">
-                                                <div class="select-wrapper">
-                                                    <i class="select-icon ri-server-line"></i>
-                                                    <select id="mirrorSourceSelect" class="settings-select-enhanced" title="选择镜像源">
-                                                        <option value="official" data-url="https://registry.npmjs.org/">🌐 官方源 (Default)</option>
-                                                        <option value="aliyun" data-url="https://registry.npmmirror.com/" selected>⚡ 阿里云 (Aliyun) - 推荐</option>
-                                                        <option value="tencent" data-url="https://mirrors.cloud.tencent.com/npm/">🚀 腾讯云 (Tencent)</option>
-                                                        <option value="huawei" data-url="https://repo.huaweicloud.com/repository/npm/">☁️ 华为云 (Huawei)</option>
-                                                        <option value="custom" data-url="">⚙️ 自定义...</option>
-                                                    </select>
-                                                </div>
-                                                <button id="testMirrorSpeedBtn" class="settings-btn settings-btn--icon-text" title="测试延迟">
-                                                    <i class="ri-speed-line"></i>
-                                                    <span>测速</span>
-                                                </button>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- 智能镜像检测开关 -->
-                                        <div class="settings-toggle-row">
-                                            <div class="toggle-info">
-                                                <i class="ri-flashlight-line toggle-icon"></i>
-                                                <div class="toggle-text">
-                                                    <span class="settings-toggle-label">智能镜像检测</span>
-                                                    <span class="settings-toggle-hint">自动检测受限链接并选择最快镜像</span>
-                                                </div>
-                                            </div>
-                                            <label class="settings-toggle">
-                                                <input type="checkbox" id="autoMirrorDetect" class="settings-toggle-input" checked>
-                                                <span class="settings-toggle-slider"></span>
-                                            </label>
-                                        </div>
-                                        
-                                        <!-- 自定义源配置 -->
-                                        <div class="settings-custom-source-box">
-                                            <div class="custom-source-content">
-                                                <i class="ri-add-circle-line custom-source-icon"></i>
-                                                <div class="custom-source-text">
-                                                    <span class="custom-source-title">配置自定义镜像源</span>
-                                                    <span class="custom-source-hint">支持多个镜像源备用切换</span>
-                                                </div>
-                                            </div>
-                                            <button id="configCustomSourceBtn" class="settings-custom-source-btn">
-                                                <i class="ri-settings-3-line"></i>
-                                                <span>配置</span>
-                                            </button>
+                                        <div class="storage-root-map" aria-label="数据目录结构">
+                                            <span><i class="ri-download-2-line"></i> Downloads</span>
+                                            <span><i class="ri-tools-line"></i> Kits</span>
+                                            <span><i class="ri-layout-masonry-line"></i> Whiteboards</span>
+                                            <span><i class="ri-delete-bin-6-line"></i> Trash</span>
+                                            <span><i class="ri-file-list-3-line"></i> Cache / Logs</span>
                                         </div>
                                     </div>
                                 </div>
@@ -612,41 +529,6 @@
             </div>
 
         </main>
-    </div>
-
-    <!-- 自定义镜像源配置对话框 -->
-    <div id="customSourceDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="customSourceDialogTitle" aria-hidden="true" hidden>
-        <div class="modal-dialog" tabindex="-1">
-            <div class="modal-header">
-                <h3 class="modal-title" id="customSourceDialogTitle"><i class="ri-settings-4-line"></i> 配置自定义镜像源</h3>
-                <button class="modal-close" id="closeCustomSourceDialog" type="button" aria-label="关闭对话框">
-                    <i class="ri-close-line"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="modal-description">
-                    <i class="ri-information-line"></i>
-                    <span>请输入 JSON 格式的镜像源配置。自定义配置源可能伴随着安全风险，请仅使用可信任的源。</span>
-                </div>
-                <textarea 
-                    id="customSourceInput" 
-                    class="modal-textarea" 
-                    placeholder='{"name": "自定义镜像源", "url": "https://example.com/registry/", "description": "镜像源描述"}'
-                    rows="10"
-                ></textarea>
-                <p id="customSourceError" class="modal-error" role="alert" hidden></p>
-                <div class="modal-hint">
-                    <i class="ri-lightbulb-line"></i>
-                    示例格式：包含 name（名称）、url（地址）和可选的 description（描述）字段
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="modal-btn modal-btn--secondary" id="cancelCustomSource" type="button">取消</button>
-                <button class="modal-btn modal-btn--primary" id="confirmCustomSource" type="button">
-                    <i class="ri-check-line"></i> 确定
-                </button>
-            </div>
-        </div>
     </div>
 
     <!-- 桌面整理确认对话框 -->

@@ -7,7 +7,7 @@ import './css/tool-shortcut.css';
 // ============================================
 // 导入核心模块
 // ============================================
-import appState, { getActiveTab } from './core/state.js';
+import appState, { getActiveTab, syncManagedStorageLayout } from './core/state.js';
 import DOM, { initDOM } from './core/dom.js';
 import { showToast } from './core/utils.js';
 import { bootstrapDesktopOrganizer } from './core/desktopOrganizer.js';
@@ -112,7 +112,6 @@ function updateContentView() {
     DOM.toolLibraryView?.classList.remove('view--active');
     DOM.favoritesView?.classList.remove('view--active');
     DOM.settingsView?.classList.remove('view--active');
-    DOM.downloadsView?.classList.remove('view--active');
     
     // 默认隐藏导航栏
     if (DOM.navbar) DOM.navbar.style.display = 'none';
@@ -157,15 +156,6 @@ function updateContentView() {
         renderFavoritesPage();
         appState.currentToolId = null;
         updateClearFavoritesButton();
-    } else if (appState.currentView === 'downloads') {
-        appState.currentToolId = null;
-        loadViewAssets('downloads')
-            .then(downloadsView => {
-                if (requestId !== viewRenderRequest) return;
-                DOM.downloadsView?.classList.add('view--active');
-                downloadsView.renderDownloadsPage();
-            })
-            .catch(error => handleViewLoadError('下载', requestId, error));
     } else {
         DOM.toolLibraryView?.classList.add('view--active');
         if (DOM.navbar) DOM.navbar.style.display = 'flex';
@@ -183,7 +173,6 @@ function getTabBadgeByView(view) {
     const badgeMap = {
         toolLibrary: '工作台',
         favorites: '收藏夹',
-        downloads: '下载',
         settings: '设置'
     };
 
@@ -298,15 +287,6 @@ function initNavButtonListeners() {
                     activeTab.icon = 'ri-star-line';
                     activeTab.badge = getTabBadgeByView('favorites');
                 }
-            } else if (view === 'downloads') {
-                appState.currentView = 'downloads';
-                if (activeTab) {
-                    activeTab.toolId = null;
-                    activeTab.viewType = 'downloads';
-                    activeTab.title = '下载';
-                    activeTab.icon = 'ri-download-2-line';
-                    activeTab.badge = getTabBadgeByView('downloads');
-                }
             } else if (view === 'settings') {
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
                 
@@ -380,7 +360,12 @@ function initCallbacks() {
 // ============================================
 // 初始化应用
 // ============================================
-function initializeApp() {
+async function initializeApp() {
+    try {
+        await syncManagedStorageLayout();
+    } catch (error) {
+        console.error('[DtKit] 文件管理目录同步失败', error);
+    }
     // 初始化 DOM 缓存
     initDOM();
     

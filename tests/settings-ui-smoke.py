@@ -38,6 +38,13 @@ with sync_playwright() as playwright:
         window.__TAURI__ = {
             core: {
                 invoke: async (command, args = {}) => {
+                    if (command === 'get_storage_layout') return {
+                        root: 'D:\\DtKit', downloads: 'D:\\DtKit\\Downloads', writable: true, warning: null
+                    };
+                    if (command === 'migrate_storage_root') return {
+                        layout: { root: args.targetRoot, downloads: args.targetRoot + String.fromCharCode(92) + 'Downloads', writable: true, warning: null },
+                        filesCopied: 12, bytesCopied: 2048, previousRoot: 'D:\\DtKit'
+                    };
                     if (command === 'get_shortcut_bindings') return window.__shortcutBindings;
                     if (command === 'replace_shortcut_bindings') {
                         window.__shortcutBindings = args.bindings;
@@ -99,7 +106,8 @@ with sync_playwright() as playwright:
     download_path = r"D:\Downloads\DtKit Refactor"
     page.locator("#downloadPathInput").fill(download_path)
     page.locator("#changeDownloadPathBtn").click()
-    assert page.evaluate("localStorage.getItem('dtkit_downloadPath')") == download_path
+    assert page.evaluate("localStorage.getItem('dtkit_downloadPath')") == download_path + r"\Downloads"
+    page.locator('#storageRootStatus').filter(has_text='目录可用').wait_for()
 
     shortcut = page.locator('#shortcutBindings .shortcut-binding__record')
     page.locator('#shortcutStatus').filter(has_text='各工具的专属快捷键').wait_for()
@@ -131,22 +139,9 @@ with sync_playwright() as playwright:
     assert cleanup_calls[1]["permanent"] is True
     assert "recovery" in cleanup_calls[1]["targets"]
 
-    config_button = page.locator("#configCustomSourceBtn")
-    config_button.click()
-    dialog = page.locator("#customSourceDialog")
-    assert dialog.is_visible()
-    assert page.locator("#customSourceInput").evaluate("element => document.activeElement === element")
-    page.locator("#customSourceInput").fill('{"name":"Local","url":"file://mirror"}')
-    page.locator("#confirmCustomSource").click()
-    assert page.locator("#customSourceError").is_visible()
-    assert "HTTP 或 HTTPS" in page.locator("#customSourceError").inner_text()
-
-    page.locator("#customSourceInput").fill('{"name":"Team Mirror","url":"https://mirror.example/npm"}')
-    page.locator("#confirmCustomSource").click()
-    assert not dialog.is_visible()
-    assert page.locator("#mirrorSourceSelect").input_value() == "custom"
-    assert page.locator('#mirrorSourceSelect option[value="custom"]').get_attribute("data-url") == "https://mirror.example/npm"
-    assert config_button.evaluate("element => document.activeElement === element")
+    assert page.locator("#customSourceDialog").count() == 0
+    assert page.locator("#mirrorSourceSelect").count() == 0
+    assert page.locator("#auto-open-folder").count() == 0
 
     desktop_toggle = page.locator("#desktopOrganizerToggle")
     desktop_toggle.check()

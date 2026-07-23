@@ -32,6 +32,21 @@ const PRESETS = Object.freeze([
     ['speed', '100', 'kph', 'mph', '100 km/h', 'mph']
 ]);
 
+function unitCombobox(id, label) {
+    return `
+        <div class="unit-combobox" data-unit-combobox="${id}">
+            <select id="${id}" class="unit-native-select" aria-hidden="true" tabindex="-1"></select>
+            <button class="unit-combobox__trigger" type="button" role="combobox" aria-label="${label}" aria-expanded="false">
+                <span><strong data-unit-selected-label>选择单位</strong><small data-unit-selected-symbol>--</small></span>
+                <i class="ri-arrow-down-s-line" aria-hidden="true"></i>
+            </button>
+            <div class="unit-combobox__popover" role="dialog" hidden>
+                <label class="unit-combobox__search"><i class="ri-search-line"></i><input type="search" placeholder="搜索单位或符号" aria-label="搜索单位"></label>
+                <div class="unit-combobox__options" role="listbox"></div>
+            </div>
+        </div>`;
+}
+
 let abortController = null;
 let copyResetTimer = null;
 
@@ -78,7 +93,7 @@ function getTemplate() {
                     <label class="unit-value-control" for="unitInput">
                         <span class="sr-only">需要换算的数值</span>
                         <input id="unitInput" type="text" inputmode="decimal" value="1" autocomplete="off" spellcheck="false">
-                        <select id="unitFrom" aria-label="原始单位"></select>
+                        ${unitCombobox('unitFrom', '原始单位')}
                     </label>
                 </article>
 
@@ -93,7 +108,7 @@ function getTemplate() {
                     </div>
                     <div class="unit-value-control unit-value-control--result">
                         <input id="unitOutput" type="text" readonly aria-label="换算结果">
-                        <select id="unitTo" aria-label="目标单位"></select>
+                        ${unitCombobox('unitTo', '目标单位')}
                         <button id="unitCopyBtn" class="unit-copy-button" type="button" aria-label="复制换算结果">
                             <i class="ri-file-copy-line" aria-hidden="true"></i><span>复制</span>
                         </button>
@@ -142,6 +157,73 @@ function unitOptions(category, selectedId) {
             ${unit.label} · ${unit.symbol}
         </option>
     `).join('');
+}
+
+function comboboxFor(select) {
+    return select.closest('.unit-combobox');
+}
+
+function syncCombobox(select, category) {
+    const root = comboboxFor(select);
+    const unit = category.units.find(item => item.id === select.value) || category.units[0];
+    root.querySelector('[data-unit-selected-label]').textContent = unit.label;
+    root.querySelector('[data-unit-selected-symbol]').textContent = unit.symbol;
+    root.querySelector('.unit-combobox__options').replaceChildren();
+}
+
+function renderComboboxOptions(select, category, query = '') {
+    const root = comboboxFor(select);
+    const needle = query.trim().toLowerCase();
+    const units = category.units.filter(unit => !needle || `${unit.label} ${unit.symbol}`.toLowerCase().includes(needle));
+    root.querySelector('.unit-combobox__options').innerHTML = units.map(unit => `
+        <button type="button" role="option" data-unit-option="${unit.id}" aria-selected="${unit.id === select.value}">
+            <span><strong>${unit.label}</strong><small>${unit.symbol}</small></span>
+            <i class="ri-check-line" aria-hidden="true"></i>
+        </button>`).join('') || '<p>没有匹配的单位</p>';
+}
+
+function closeCombobox(root) {
+    root.querySelector('.unit-combobox__trigger').setAttribute('aria-expanded', 'false');
+    root.querySelector('.unit-combobox__popover').hidden = true;
+}
+
+function bindCombobox(select, onChange, signal) {
+    const root = comboboxFor(select);
+    const trigger = root.querySelector('.unit-combobox__trigger');
+    const popover = root.querySelector('.unit-combobox__popover');
+    const search = root.querySelector('.unit-combobox__search input');
+    const category = () => UNIT_CATEGORIES[document.getElementById('unitInput').dataset.category];
+    trigger.addEventListener('click', () => {
+        const opening = popover.hidden;
+        document.querySelectorAll('.unit-combobox__popover:not([hidden])').forEach(panel => closeCombobox(panel.closest('.unit-combobox')));
+        if (!opening) return;
+        renderComboboxOptions(select, category());
+        popover.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+        search.value = '';
+        search.focus();
+    }, { signal });
+    search.addEventListener('input', () => renderComboboxOptions(select, category(), search.value), { signal });
+    root.addEventListener('click', event => {
+        const option = event.target.closest('[data-unit-option]');
+        if (!option) return;
+        select.value = option.dataset.unitOption;
+        syncCombobox(select, category());
+        closeCombobox(root);
+        onChange();
+        trigger.focus();
+    }, { signal });
+    trigger.addEventListener('keydown', event => {
+        if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        const units = category().units;
+        if (event.key === 'Enter' || event.key === ' ') return trigger.click();
+        const index = units.findIndex(unit => unit.id === select.value);
+        select.value = units[(index + (event.key === 'ArrowDown' ? 1 : -1) + units.length) % units.length].id;
+        syncCombobox(select, category());
+        onChange();
+    }, { signal });
+    select.addEventListener('change', () => { syncCombobox(select, category()); onChange(); }, { signal });
 }
 
 function readSelection() {
@@ -214,6 +296,8 @@ function activateCategory(elements, categoryId, fromId, toId) {
     });
     elements.from.innerHTML = unitOptions(category, fromId || defaultFrom);
     elements.to.innerHTML = unitOptions(category, toId || defaultTo);
+    syncCombobox(elements.from, category);
+    syncCombobox(elements.to, category);
     elements.hint.textContent = CATEGORY_HINTS[categoryId];
     elements.input.dataset.category = categoryId;
     saveSelection(categoryId, elements.from.value, elements.to.value);
@@ -250,16 +334,20 @@ function bindUnitEvents(elements, signal) {
         activateCategory(elements, tab.dataset.unitCategory);
     }, { signal }));
     elements.input.addEventListener('input', () => updateConversion(elements, elements.input.dataset.category), { signal });
-    elements.from.addEventListener('change', () => {
+    const updateFrom = () => {
         saveSelection(elements.input.dataset.category, elements.from.value, elements.to.value);
         updateConversion(elements, elements.input.dataset.category);
-    }, { signal });
-    elements.to.addEventListener('change', () => {
+    };
+    const updateTo = () => {
         saveSelection(elements.input.dataset.category, elements.from.value, elements.to.value);
         updateConversion(elements, elements.input.dataset.category);
-    }, { signal });
+    };
+    bindCombobox(elements.from, updateFrom, signal);
+    bindCombobox(elements.to, updateTo, signal);
     elements.swap.addEventListener('click', () => {
         [elements.from.value, elements.to.value] = [elements.to.value, elements.from.value];
+        syncCombobox(elements.from, UNIT_CATEGORIES[elements.input.dataset.category]);
+        syncCombobox(elements.to, UNIT_CATEGORIES[elements.input.dataset.category]);
         if (elements.output.value) elements.input.value = elements.output.value;
         saveSelection(elements.input.dataset.category, elements.from.value, elements.to.value);
         updateConversion(elements, elements.input.dataset.category);
@@ -269,12 +357,21 @@ function bindUnitEvents(elements, signal) {
         const target = event.target.closest('[data-unit-target]');
         if (!target) return;
         elements.to.value = target.dataset.unitTarget;
+        syncCombobox(elements.to, UNIT_CATEGORIES[elements.input.dataset.category]);
         saveSelection(elements.input.dataset.category, elements.from.value, elements.to.value);
         updateConversion(elements, elements.input.dataset.category);
     }, { signal });
     document.querySelectorAll('[data-unit-preset]').forEach(button => {
         button.addEventListener('click', () => applyPreset(elements, button.dataset.unitPreset), { signal });
     });
+    document.addEventListener('pointerdown', event => {
+        document.querySelectorAll('.unit-combobox__popover:not([hidden])').forEach(panel => {
+            if (!panel.closest('.unit-combobox').contains(event.target)) closeCombobox(panel.closest('.unit-combobox'));
+        });
+    }, { signal });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') document.querySelectorAll('.unit-combobox__popover:not([hidden])').forEach(panel => closeCombobox(panel.closest('.unit-combobox')));
+    }, { signal });
 }
 
 function initUnitConverterTool() {

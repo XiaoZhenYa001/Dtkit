@@ -7,3 +7,4 @@ pub(crate) mod resources;
 pub(crate) mod shortcuts;
 pub(crate) mod storage;
 pub(crate) mod transfer_station;
+pub(crate) mod whiteboard;

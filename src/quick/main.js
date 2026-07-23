@@ -24,6 +24,7 @@ const input = document.getElementById('commandInput');
 const results = document.getElementById('commandResults');
 const paletteHint = document.getElementById('paletteHint');
 const shell = document.querySelector('.quick-shell');
+const titlebar = document.querySelector('.quick-titlebar');
 let activeToolId = null;
 let toolRuntime = null;
 let renderGeneration = 0;
@@ -264,6 +265,10 @@ async function dismiss() {
 }
 
 document.getElementById('quickClose').addEventListener('click', dismiss);
+titlebar?.addEventListener('dblclick', event => {
+    if (event.target.closest('button')) return;
+    globalThis.window?.__TAURI__?.window?.getCurrentWindow?.().toggleMaximize?.();
+});
 input.addEventListener('input', refreshPalette);
 input.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

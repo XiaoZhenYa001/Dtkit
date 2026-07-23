@@ -18,6 +18,8 @@ function createDefaultTab() {
     };
 }
 
+let legacyDownloadPathAtStartup = localStorage.getItem('dtkit_downloadPath');
+
 // 应用状态单例
 const appState = {
     tabs: [createDefaultTab()],
@@ -56,6 +58,22 @@ export function saveDownloadPath(path) {
  */
 export function getDownloadPath() {
     return appState.settings.downloadPath;
+}
+
+export async function syncManagedStorageLayout() {
+    const invoke = globalThis.window?.__TAURI__?.core?.invoke;
+    if (!invoke) return null;
+    const layout = await invoke('get_storage_layout');
+    if (layout?.downloads) saveDownloadPath(layout.downloads);
+    return layout;
+}
+
+export function getLegacyDownloadPathAtStartup() {
+    return legacyDownloadPathAtStartup;
+}
+
+export function markLegacyDownloadPathMigrated() {
+    legacyDownloadPathAtStartup = null;
 }
 
 /**

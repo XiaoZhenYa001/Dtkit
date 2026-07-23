@@ -185,26 +185,51 @@ kbd {
 
 .quick-shell--whiteboard .quick-titlebar {
     position: absolute;
-    top: 0.65rem;
+    top: 0.35rem;
+    left: 0.65rem;
     right: 0.65rem;
     z-index: 30;
     width: auto;
-    padding: 0;
-    border: 0;
-    pointer-events: none;
+    height: 1.45rem;
+    padding: 0 0 0 0.5rem;
+    border: 1px solid rgba(118, 93, 63, 0.09);
+    border-radius: 0.55rem;
+    color: #8a8179;
+    background: rgba(255, 253, 249, 0.76);
+    pointer-events: auto;
+    cursor: grab;
 }
 
-.quick-shell--whiteboard .quick-brand,
 .quick-shell--whiteboard .quick-footer {
     display: none;
 }
 
+.quick-shell--whiteboard .quick-brand {
+    gap: 0.42rem;
+    color: #887e74;
+    font-size: 0.6rem;
+    font-weight: 680;
+    pointer-events: none;
+}
+
+.quick-shell--whiteboard .quick-brand::before {
+    content: '···';
+    color: #b5aaa0;
+    letter-spacing: 0.08em;
+}
+
+.quick-shell--whiteboard .quick-brand__mark { display: none; }
+
 .quick-shell--whiteboard .quick-close {
-    border: 1px solid rgba(118, 93, 63, 0.13);
+    width: 1.45rem;
+    height: 1.45rem;
+    border: 0;
+    border-radius: 0.48rem;
     color: #756c64;
-    background: rgba(255, 253, 249, 0.94);
-    box-shadow: 0 0.35rem 1rem rgba(71, 55, 43, 0.08);
+    background: transparent;
+    box-shadow: none;
     pointer-events: auto;
+    cursor: pointer;
 }
 
 .quick-shell--whiteboard .quick-content--tool,

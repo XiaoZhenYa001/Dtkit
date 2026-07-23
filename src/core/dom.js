@@ -14,7 +14,6 @@ const DOM = {
     // 视图容器
     toolLibraryView: null,
     favoritesView: null,
-    downloadsView: null,
     settingsView: null,
     
     // 工具网格
@@ -45,7 +44,6 @@ export function initDOM() {
     DOM.contentArea = document.getElementById('contentArea');
     DOM.toolLibraryView = document.getElementById('toolLibraryView');
     DOM.favoritesView = document.getElementById('favoritesView');
-    DOM.downloadsView = document.getElementById('downloadsView');
     DOM.settingsView = document.getElementById('settingsView');
     DOM.devToolsGrid = document.getElementById('devToolsGrid');
     DOM.designToolsGrid = document.getElementById('designToolsGrid');

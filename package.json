@@ -21,6 +21,7 @@
     "vite": "^8.1.4"
   },
   "dependencies": {
+    "katex": "^0.16.22",
     "qr-code-styling": "^1.9.2"
   }
 }

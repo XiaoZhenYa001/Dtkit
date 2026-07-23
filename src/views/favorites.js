@@ -83,6 +83,7 @@ export function renderFavoritesPage() {
         const tool = allTools.find(t => t.id === favId);
         if (tool) {
             const card = createToolCard(tool, onOpenTool);
+            card.classList.add('tool-card--favorite-positioned');
             
             // 改为绝对定位
             card.style.position = 'absolute';

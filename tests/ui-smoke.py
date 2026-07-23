@@ -1,6 +1,7 @@
 """Production-preview smoke test. Requires Python Playwright and Chromium."""
 
 import json
+import os
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -11,6 +12,7 @@ TAURI_CONFIG = json.loads(
     (PROJECT_ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
 )
 PRODUCTION_CSP = TAURI_CONFIG["app"]["security"]["csp"]
+BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
 
 
 def apply_production_csp(route):
@@ -29,7 +31,7 @@ def assert_no_runtime_errors(errors):
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
-    context.route("http://127.0.0.1:4173/**", apply_production_csp)
+    context.route(f"{BASE_URL}/**", apply_production_csp)
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
@@ -40,12 +42,12 @@ with sync_playwright() as playwright:
         else None,
     )
 
-    page.goto("http://127.0.0.1:4173", wait_until="networkidle")
+    page.goto(BASE_URL, wait_until="networkidle")
     page.locator(".tool-card").first.wait_for(state="visible")
 
     cards = page.locator(".tool-card")
-    if cards.count() != 13:
-        raise AssertionError(f"Expected 13 tool cards, found {cards.count()}")
+    if cards.count() != 17:
+        raise AssertionError(f"Expected 17 tool cards, found {cards.count()}")
 
     icon_style = page.locator('[data-view="toolLibrary"] i').first.evaluate(
         "element => ({"
@@ -67,29 +69,24 @@ with sync_playwright() as playwright:
         raise AssertionError("Alarm clock chunk was eagerly loaded")
     if any("html-preview" in resource for resource in initial_resources):
         raise AssertionError("HTML preview chunk was eagerly loaded")
-    if any("downloads-" in resource for resource in initial_resources):
-        raise AssertionError("Downloads assets were eagerly loaded")
     if any("settings-" in resource for resource in initial_resources):
         raise AssertionError("Settings assets were eagerly loaded")
-    if any("mirrorSource-" in resource for resource in initial_resources):
-        raise AssertionError("Mirror source logic was eagerly loaded")
+    if page.locator('[data-view="downloads"]').count():
+        raise AssertionError("Removed download manager is still present in the sidebar")
 
-    page.locator('[data-view="downloads"]').click()
-    page.locator(".downloads-page").wait_for(state="visible")
-
-    downloads_resources = page.evaluate(
-        "performance.getEntriesByType('resource').map(entry => entry.name)"
+    ready_cards = page.locator(".tool-card:not(.tool-card--planned)")
+    for index in range(min(5, ready_cards.count())):
+        ready_cards.nth(index).locator(".tool-card__favorite").click()
+    page.locator('[data-view="favorites"]').click()
+    page.locator("#favoritesGrid .tool-card").first.wait_for(state="visible")
+    first_frame_positions = page.locator("#favoritesGrid .tool-card").evaluate_all(
+        """cards => cards.map(card => {
+            const rect = card.getBoundingClientRect();
+            return `${Math.round(rect.x)}:${Math.round(rect.y)}`;
+        })"""
     )
-    if not any("downloads-" in resource for resource in downloads_resources):
-        raise AssertionError("Downloads assets were not loaded on demand")
-    for extension in (".css", ".js"):
-        if not any(
-            "downloads-" in resource and resource.endswith(extension)
-            for resource in downloads_resources
-        ):
-            raise AssertionError(f"Downloads {extension} chunk was not loaded")
-    if not any("mirrorSource-" in resource for resource in downloads_resources):
-        raise AssertionError("Shared mirror source chunk was not loaded on demand")
+    if len(set(first_frame_positions)) != len(first_frame_positions):
+        raise AssertionError(f"Favorite cards overlapped on the first frame: {first_frame_positions!r}")
 
     page.locator('[data-view="settings"]').click()
     page.locator(".settings-content").wait_for(state="visible")
@@ -113,7 +110,7 @@ with sync_playwright() as playwright:
     page.locator('[data-view="toolLibrary"]').click()
     page.locator(".tool-card").first.wait_for(state="visible")
 
-    page.locator('[data-tool-id="html-preview"]').click()
+    page.locator('#toolLibraryView [data-tool-id="html-preview"]').click()
     page.locator("#htmlEditor").wait_for(state="visible")
     if page.locator(".html-preview-container").evaluate(
         "element => getComputedStyle(element).display"
@@ -165,7 +162,7 @@ with sync_playwright() as playwright:
         raise AssertionError(f"Preview Blob CSS mismatch: {preview_style!r}")
 
     page.locator('[data-view="toolLibrary"]').click()
-    page.locator('[data-tool-id="alarm-clock"]').click()
+    page.locator('#toolLibraryView [data-tool-id="alarm-clock"]').click()
     page.locator(".alarm-clock-view").wait_for(state="visible")
     if page.locator(".alarm-clock-view").evaluate(
         "element => getComputedStyle(element).display"
@@ -184,7 +181,7 @@ with sync_playwright() as playwright:
         raise AssertionError("Alarm clock CSS was not loaded as an external chunk")
 
     page.locator('[data-view="toolLibrary"]').click()
-    page.locator('[data-tool-id="json-formatter"]').click()
+    page.locator('#toolLibraryView [data-tool-id="json-formatter"]').click()
     page.locator("#jsonInput").wait_for(state="visible")
     page.wait_for_timeout(100)
     page.locator("#jsonInput").fill('{"outer":{"inner":1}}')
@@ -238,7 +235,7 @@ with sync_playwright() as playwright:
         else None,
     )
     organizer_page.goto(
-        "http://127.0.0.1:4173/desktop-organizer/index.html",
+        f"{BASE_URL}/desktop-organizer/index.html",
         wait_until="networkidle",
     )
     organizer_page.locator(".panel").wait_for(state="visible")
@@ -250,7 +247,7 @@ with sync_playwright() as playwright:
     organizer_page.close()
 
     print(
-        "UI smoke passed: 13 cards, lazy views/tools, subset icons, "
+        "UI smoke passed: 17 cards, stable favorites, lazy views/tools, subset icons, "
         "strict CSP, sandboxed preview JS."
     )
     context.close()

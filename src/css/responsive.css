@@ -14,10 +14,6 @@
     .tool-grid {
         grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
     }
-
-    .downloads-stats {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
 }
 
 @media (max-width: 768px) {
@@ -61,8 +57,7 @@
     }
 
     .view-container,
-    .settings-content,
-    .downloads-page {
+    .settings-content {
         padding: 1rem;
     }
 
@@ -76,15 +71,11 @@
     }
 
     .page-hero__title,
-    .downloads-header__left h1,
     .settings-hero-title {
         font-size: 1.65rem;
     }
 
     .favorites-header,
-    .downloads-header,
-    .downloads-toolbar,
-    .add-download-header,
     .settings-hero-content,
     .settings-toggle-item,
     .settings-footer-card {
@@ -99,26 +90,18 @@
         grid-template-columns: 1fr;
     }
 
-    .downloads-stats,
     .tool-grid {
         grid-template-columns: 1fr;
     }
 
-    .btn-start-download,
     .toggle-advanced-btn,
     .filter-btn,
-    .task-btn,
     .settings-btn--primary,
     .settings-btn--secondary {
         width: 100%;
         justify-content: center;
     }
 
-    .task-info {
-        flex-direction: column;
-    }
-
-    .task-controls,
     .settings-quick-nav {
         width: 100%;
     }
@@ -151,9 +134,6 @@
 
     .page-hero,
     .settings-hero,
-    .downloads-header__left,
-    .add-download-section,
-    .task-card,
     .settings-section-content {
         padding: 1rem;
     }

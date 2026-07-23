@@ -183,6 +183,12 @@
     animation-delay: calc(var(--card-index, 0) * 60ms);
 }
 
+.tool-card--favorite-positioned {
+    animation-name: favoriteCardFadeIn;
+    animation-duration: 180ms;
+    animation-delay: 0ms;
+}
+
 .tool-card::after {
     content: '';
     position: absolute;
@@ -683,6 +689,11 @@
         opacity: 1;
         transform: none;
     }
+}
+
+@keyframes favoriteCardFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 

@@ -23,21 +23,23 @@ test('quick host is a separate minimal frontend entry', () => {
 test('quick host capability follows least privilege', () => {
     const capability = JSON.parse(read('src-tauri/capabilities/quick-host.json'));
 
-    assert.deepEqual(capability.windows, ['quick-host']);
+    assert.deepEqual(capability.windows, ['quick-host-*']);
     assert.ok(capability.permissions.includes('core:event:default'));
     assert.ok(capability.permissions.includes('core:window:allow-start-dragging'));
+    assert.ok(capability.permissions.includes('core:window:allow-toggle-maximize'));
     assert.ok(!capability.permissions.some(permission => /fs|shell|global-shortcut/.test(permission)));
 });
 
-test('native shortcut registry starts empty and targets the single quick host', () => {
+test('native shortcut registry starts empty and creates independent quick hosts', () => {
     const shortcuts = read('src-tauri/src/infrastructure/shortcuts.rs');
     const quickHost = read('src-tauri/src/infrastructure/quick_host.rs');
 
     assert.match(shortcuts, /derive\(Default\)[\s\S]*ShortcutRegistry/);
     assert.match(shortcuts, /no_shortcuts_are_bound_by_default/);
     assert.doesNotMatch(shortcuts, /with_shortcut|register\("/);
-    assert.match(quickHost, /const QUICK_HOST_LABEL: &str = "quick-host"/);
-    assert.match(quickHost, /get_webview_window\(QUICK_HOST_LABEL\)/);
+    assert.match(quickHost, /const QUICK_HOST_LABEL_PREFIX: &str = "quick-host-"/);
+    assert.match(quickHost, /next_label\.fetch_add/);
+    assert.doesNotMatch(quickHost, /get_webview_window\(QUICK_HOST_LABEL\)/);
 });
 
 test('portable storage and resource policy have explicit managed boundaries', () => {
@@ -114,4 +116,33 @@ test('whiteboard shortcut opens as an immersive quick canvas', () => {
     assert.match(quickScript, /quick-shell--whiteboard/);
     assert.match(quickStyle, /\.quick-shell--whiteboard[\s\S]*grid-template-rows:\s*1fr/);
     assert.match(whiteboardStyle, /quick-tool--whiteboard[\s\S]*\.whiteboard-hero[\s\S]*display:\s*none/);
+});
+
+test('whiteboard persistence is rooted in managed storage and remains idle when unchanged', () => {
+    const frontend = read('src/tools/whiteboard/index.js');
+    const backend = read('src-tauri/src/infrastructure/whiteboard.rs');
+    const storage = read('src-tauri/src/infrastructure/storage.rs');
+
+    assert.match(frontend, /DRAFT_DELAY_MS = 60_000/);
+    assert.doesNotMatch(frontend, /setInterval\s*\(/);
+    assert.match(frontend, /save_whiteboard_draft/);
+    assert.match(frontend, /list_whiteboards/);
+    assert.match(frontend, /thumbnailDataUrl/);
+    assert.match(frontend, /getCoalescedEvents/);
+    assert.match(frontend, /committedCanvas/);
+    assert.doesNotMatch(frontend, /state\.elements\.reduce\([\s\S]*totalPoints/);
+    assert.match(backend, /\.whiteboards/);
+    assert.match(backend, /atomic_write/);
+    assert.match(storage, /root\.join\("Kits"\)\.join\("Whiteboards"\)/);
+});
+
+test('storage migration verifies a staged copy before changing the root pointer', () => {
+    const storage = read('src-tauri/src/infrastructure/storage.rs');
+
+    assert.match(storage, /\.dtkit-migration-/);
+    assert.match(storage, /staged_bytes != bytes_copied/);
+    assert.match(storage, /write_root_pointer\(bootstrap_file, &target\)/);
+    assert.match(storage, /target\.starts_with\(source\) \|\| source\.starts_with\(target\)/);
+    assert.doesNotMatch(storage, /has_active_downloads/);
+    assert.match(storage, /has_active_share/);
 });

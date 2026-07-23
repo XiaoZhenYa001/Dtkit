@@ -51,8 +51,15 @@ with sync_playwright() as playwright:
     page.locator('[data-tool-id="unit-converter"]').click()
     page.locator("#unitInput").wait_for(state="visible")
     page.locator('[data-unit-category="temperature"]').click()
-    page.locator("#unitFrom").select_option("c")
-    page.locator("#unitTo").select_option("f")
+    from_combo = page.locator('[data-unit-combobox="unitFrom"]')
+    from_combo.locator('.unit-combobox__trigger').click()
+    assert from_combo.locator('[data-unit-option]').count() == 3
+    from_combo.locator('[data-unit-option="c"]').click()
+    to_combo = page.locator('[data-unit-combobox="unitTo"]')
+    to_combo.locator('.unit-combobox__trigger').click()
+    to_combo.locator('.unit-combobox__search input').fill('华氏')
+    assert to_combo.locator('[data-unit-option]').count() == 1
+    to_combo.locator('[data-unit-option="f"]').click()
     page.locator("#unitInput").fill("100")
     assert page.locator("#unitOutput").input_value() == "212"
     assert "100 °C = 212 °F" in page.locator("#unitEquation").inner_text()

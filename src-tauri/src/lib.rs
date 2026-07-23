@@ -16,7 +16,6 @@ use tauri::{
 // 桌面整理模块
 mod alarm_scheduler;
 mod desktop;
-mod download;
 mod file_output;
 mod infrastructure;
 mod path_safety;
@@ -30,7 +29,6 @@ use desktop::hotzone::{
     get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos, HotZoneConfig,
     HotZoneMonitor,
 };
-use download::{cancel_download, get_download_tasks, remove_download_record, start_download};
 use file_output::write_qr_code;
 use infrastructure::cleanup::{
     get_cleanup_status, restore_latest_cleanup, run_storage_cleanup, schedule_automatic_cleanup,
@@ -47,11 +45,18 @@ use infrastructure::resources::{
 use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
-use infrastructure::storage::{get_storage_layout, get_storage_usage, StorageManager};
+use infrastructure::storage::{
+    get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
+};
 use infrastructure::transfer_station::{
     export_transfer_item, get_lan_share, import_transfer_files, list_transfer_items,
     open_transfer_item, remove_transfer_item, restore_transfer_item,
     schedule_transfer_expiry_check, start_lan_share, stop_lan_share, TransferStationManager,
+};
+use infrastructure::whiteboard::{
+    discard_whiteboard_draft, get_whiteboard_thumbnail, list_whiteboards, load_whiteboard,
+    release_whiteboard_edit, save_whiteboard, save_whiteboard_draft, take_over_whiteboard_edit,
+    WhiteboardEditManager,
 };
 use system_actions::{lock_screen, run_program, schedule_shutdown};
 
@@ -442,14 +447,7 @@ struct AudioFileInfo {
 /// 扫描Kit/clock文件夹中的音频文件
 #[tauri::command]
 fn scan_audio_files(app: AppHandle) -> Result<Vec<AudioFileInfo>, String> {
-    // 获取应用数据目录
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
-
-    // 构建Kit/clock路径
-    let audio_dir = app_data_dir.join("Kit").join("clock");
+    let audio_dir = app.state::<StorageManager>().layout()?.kits.join("Alarm");
 
     // 如果目录不存在，创建它
     if !audio_dir.exists() {
@@ -503,14 +501,7 @@ fn scan_audio_files(app: AppHandle) -> Result<Vec<AudioFileInfo>, String> {
 /// 打开音频文件夹
 #[tauri::command]
 fn open_audio_folder(app: AppHandle) -> Result<(), String> {
-    // 获取应用数据目录
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
-
-    // 构建Kit/clock路径
-    let audio_dir = app_data_dir.join("Kit").join("clock");
+    let audio_dir = app.state::<StorageManager>().layout()?.kits.join("Alarm");
 
     // 如果目录不存在，创建它
     if !audio_dir.exists() {
@@ -692,6 +683,12 @@ fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 必须最先注册：第二个进程只负责唤醒现有窗口，不初始化托盘、快捷键或 WebView。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Err(error) = ensure_main_window(app) {
+                eprintln!("[SingleInstance] 恢复现有窗口失败: {error}");
+            }
+        }))
         .manage(AlarmScheduler::default())
         .manage(StorageManager::default())
         .manage(CleanupManager::default())
@@ -701,6 +698,7 @@ pub fn run() {
         .manage(ResourceGovernor::default())
         .manage(ShortcutRegistry::default())
         .manage(QuickHostManager::default())
+        .manage(WhiteboardEditManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
@@ -863,10 +861,6 @@ pub fn run() {
             lock_screen,
             calculate_text_hash,
             calculate_file_hash,
-            start_download,
-            get_download_tasks,
-            cancel_download,
-            remove_download_record,
             open_file_location,
             open_file,
             scan_audio_files,
@@ -879,6 +873,7 @@ pub fn run() {
             set_minimize_mode,
             get_storage_layout,
             get_storage_usage,
+            migrate_storage_root,
             get_cleanup_status,
             set_automatic_cleanup_enabled,
             set_cleanup_retention_days,
@@ -906,6 +901,14 @@ pub fn run() {
             replace_shortcut_bindings,
             open_quick_host,
             dismiss_quick_host,
+            list_whiteboards,
+            load_whiteboard,
+            save_whiteboard,
+            save_whiteboard_draft,
+            discard_whiteboard_draft,
+            get_whiteboard_thumbnail,
+            take_over_whiteboard_edit,
+            release_whiteboard_edit,
             // 桌面整理命令
             desktop_scan,
             desktop_search,

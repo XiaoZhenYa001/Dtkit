@@ -77,6 +77,17 @@ test('main window close routes to the tray and only the tray quit action exits',
     assert.doesNotMatch(rustSource, /std::process::exit\(0\)/);
 });
 
+test('a second app launch is intercepted before other plugins and restores the existing main window', async () => {
+    const cargo = await readFile(new URL('../src-tauri/Cargo.toml', import.meta.url), 'utf8');
+    const rustSource = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+    const singleInstanceIndex = rustSource.indexOf('.plugin(tauri_plugin_single_instance::init');
+    const dialogIndex = rustSource.indexOf('.plugin(tauri_plugin_dialog::init())');
+
+    assert.match(cargo, /tauri-plugin-single-instance/);
+    assert.ok(singleInstanceIndex >= 0 && singleInstanceIndex < dialogIndex);
+    assert.match(rustSource, /tauri_plugin_single_instance::init\(\|app, _args, _cwd\|[\s\S]*ensure_main_window\(app\)/);
+});
+
 test('restoring the main window resumes frontend rendering before it is shown', async () => {
     const rustSource = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
     const ensureMainWindow = rustSource.match(/fn ensure_main_window[\s\S]*?\n}\n\nfn setup_tray/)?.[0] || '';

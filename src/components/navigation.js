@@ -37,11 +37,6 @@ function applyViewState(activeTab, viewType) {
             icon: 'ri-star-line',
             badge: '收藏夹'
         },
-        downloads: {
-            title: '下载',
-            icon: 'ri-download-2-line',
-            badge: '下载'
-        },
         settings: {
             title: '设置',
             icon: 'ri-settings-3-line',
