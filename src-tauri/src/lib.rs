@@ -37,6 +37,12 @@ use infrastructure::cleanup::{
 use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_file_batch};
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
+use infrastructure::passwords::{
+    commit_password_import, copy_password, discard_password_import, empty_password_trash,
+    get_password_entry_for_edit, get_password_settings, list_passwords, preview_password_import,
+    remove_password_entry, restore_password_entry, save_password_entry, set_password_settings,
+    PasswordVaultManager,
+};
 use infrastructure::quick_host::{dismiss_quick_host, open_quick_host, QuickHostManager};
 use infrastructure::resources::{
     get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
@@ -699,6 +705,7 @@ pub fn run() {
         .manage(ShortcutRegistry::default())
         .manage(QuickHostManager::default())
         .manage(WhiteboardEditManager::default())
+        .manage(PasswordVaultManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
@@ -799,6 +806,7 @@ pub fn run() {
                     if mode == MinimizeMode::Deep
                         && !DEEP_SLEEP_CLOSING.swap(true, Ordering::Relaxed)
                     {
+                        window.state::<PasswordVaultManager>().release_idle_state();
                         let app = window.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(120)).await;
@@ -827,6 +835,9 @@ pub fn run() {
                 emit_main_power_state(window.app_handle(), suspended, mode == MinimizeMode::Deep);
 
                 let app = window.app_handle();
+                if mode == MinimizeMode::Deep {
+                    window.state::<PasswordVaultManager>().release_idle_state();
+                }
                 if mode == MinimizeMode::Standard {
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.hide();
@@ -909,6 +920,18 @@ pub fn run() {
             get_whiteboard_thumbnail,
             take_over_whiteboard_edit,
             release_whiteboard_edit,
+            list_passwords,
+            get_password_entry_for_edit,
+            save_password_entry,
+            remove_password_entry,
+            restore_password_entry,
+            empty_password_trash,
+            preview_password_import,
+            commit_password_import,
+            discard_password_import,
+            copy_password,
+            get_password_settings,
+            set_password_settings,
             // 桌面整理命令
             desktop_scan,
             desktop_search,

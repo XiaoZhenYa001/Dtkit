@@ -2,6 +2,7 @@ pub(crate) mod cleanup;
 pub(crate) mod file_batch;
 pub(crate) mod jobs;
 pub(crate) mod palette;
+pub(crate) mod passwords;
 pub(crate) mod quick_host;
 pub(crate) mod resources;
 pub(crate) mod shortcuts;

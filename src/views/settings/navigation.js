@@ -6,10 +6,26 @@ export function initSettingsNavigation() {
     if (!navigation) return;
     initialized = true;
 
-    const links = [...navigation.querySelectorAll('a[href^="#"]')];
-    const sections = links
-        .map(link => document.querySelector(link.getAttribute('href')))
-        .filter(Boolean);
+    const panels = document.querySelector('.settings-panels');
+    const sections = [...(panels?.querySelectorAll(':scope > .settings-section') || [])]
+        .filter(section => section.id);
+    const note = navigation.querySelector('.settings-side-nav__note');
+    navigation.querySelectorAll('a[href^="#"]').forEach(link => link.remove());
+    const links = sections.map((section, index) => {
+        const link = document.createElement('a');
+        link.href = `#${section.id}`;
+        link.className = `settings-side-nav__item${index === 0 ? ' settings-side-nav__item--active' : ''}`;
+        const headerIcon = section.querySelector('.settings-section-header > i');
+        const icon = document.createElement('i');
+        icon.className = section.dataset.settingsNavIcon || headerIcon?.className || 'ri-settings-3-line';
+        const label = document.createElement('span');
+        label.textContent = section.dataset.settingsNavLabel
+            || section.querySelector('.settings-section-title')?.textContent?.trim()
+            || section.id;
+        link.append(icon, label);
+        navigation.insertBefore(link, note);
+        return link;
+    });
     let navigationLockUntil = 0;
 
     const activate = sectionId => {

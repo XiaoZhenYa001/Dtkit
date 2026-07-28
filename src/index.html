@@ -38,6 +38,13 @@
                 <span class="nav-btn__label">收藏</span>
             </button>
 
+            <button class="nav-btn" data-view="passwords" data-tool="password-vault" title="密码">
+                <div class="nav-btn__icon">
+                    <i class="ri-lock-2-line"></i>
+                </div>
+                <span class="nav-btn__label">密码</span>
+            </button>
+
         </nav>
 
         <button class="nav-btn nav-settings" data-view="settings" title="设置">
@@ -200,11 +207,11 @@
                                 <a href="#shortcutsSection" class="settings-side-nav__item">
                                     <i class="ri-keyboard-box-line"></i><span>快捷键</span>
                                 </a>
-                                <a href="#desktopSection" class="settings-side-nav__item">
-                                    <i class="ri-layout-grid-line"></i><span>桌面整理</span>
-                                </a>
                                 <a href="#configSection" class="settings-side-nav__item">
                                     <i class="ri-database-2-line"></i><span>配置规则</span>
+                                </a>
+                                <a href="#desktopSection" class="settings-side-nav__item">
+                                    <i class="ri-layout-grid-line"></i><span>桌面整理</span>
                                 </a>
                                 <a href="#generalSection" class="settings-side-nav__item">
                                     <i class="ri-toggle-line"></i><span>常规选项</span>
@@ -218,7 +225,7 @@
                             <div class="settings-panels">
                         
                         <!-- 存储与维护 -->
-                        <section class="settings-section" id="storageSection">
+                        <section class="settings-section" id="storageSection" data-settings-nav-label="存储与维护" data-settings-nav-icon="ri-hard-drive-2-line">
                             <div class="settings-section-header">
                                 <i class="ri-hard-drive-2-line"></i>
                                 <h2 class="settings-section-title">存储与维护</h2>
@@ -352,7 +359,7 @@
                             </div>
                         </section>
                         <!-- 快捷键绑定 -->
-                        <section class="settings-section" id="shortcutsSection">
+                        <section class="settings-section" id="shortcutsSection" data-settings-nav-label="快捷键" data-settings-nav-icon="ri-keyboard-box-line">
                             <div class="settings-section-header">
                                 <i class="ri-keyboard-box-line"></i>
                                 <h2 class="settings-section-title">命令面板快捷键</h2>
@@ -364,7 +371,7 @@
                         </section>
 
                         <!-- 配置规则管理 -->
-                        <section class="settings-section" id="configSection">
+                        <section class="settings-section" id="configSection" data-settings-nav-label="配置规则" data-settings-nav-icon="ri-database-2-line">
                             <div class="settings-section-header">
                                 <i class="ri-database-2-line"></i>
                                 <h2 class="settings-section-title">配置规则管理</h2>
@@ -397,7 +404,7 @@
                         </section>
 
                         <!-- 桌面整理 -->
-                        <section class="settings-section settings-section--featured" id="desktopSection">
+                        <section class="settings-section settings-section--featured" id="desktopSection" data-settings-nav-label="桌面整理" data-settings-nav-icon="ri-layout-grid-line">
                             <div class="settings-section-header">
                                 <i class="ri-layout-grid-line"></i>
                                 <h2 class="settings-section-title">桌面整理</h2>
@@ -434,7 +441,7 @@
                         </section>
 
                         <!-- 常规选项 -->
-                        <section class="settings-section" id="generalSection">
+                        <section class="settings-section" id="generalSection" data-settings-nav-label="常规选项" data-settings-nav-icon="ri-toggle-line">
                             <div class="settings-section-header">
                                 <i class="ri-toggle-line"></i>
                                 <h2 class="settings-section-title">常规选项</h2>
@@ -483,6 +490,18 @@
                                         <i class="ri-information-line"></i>
                                         <span>提醒始终由后台调度。深度休眠时请从系统托盘恢复；自定义铃声会回退为系统通知音。</span>
                                     </div>
+                                </div>
+                                <div class="settings-toggle-item password-clipboard-policy">
+                                    <div class="settings-toggle-label-group">
+                                        <span class="settings-toggle-label">密码复制后的剪贴板清理</span>
+                                        <span class="settings-toggle-desc" id="settingsPasswordClipboardStatus">正在读取密码设置…</span>
+                                    </div>
+                                    <select id="settingsPasswordClipboardTime" class="settings-select" disabled aria-label="密码剪贴板自动清理时间">
+                                        <option value="15">15 秒</option>
+                                        <option value="30">30 秒（推荐）</option>
+                                        <option value="60">1 分钟</option>
+                                        <option value="0">永不</option>
+                                    </select>
                                 </div>
                                 <div class="settings-toggle-item">
                                     <span class="settings-toggle-label">开机自动启动</span>

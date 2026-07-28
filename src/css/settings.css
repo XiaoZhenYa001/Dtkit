@@ -926,6 +926,21 @@
     gap: 0.5rem;
 }
 
+.settings-select {
+    min-width: 9rem;
+    min-height: 2.45rem;
+    padding: 0 2rem 0 0.75rem;
+    border: 1px solid var(--border-color, rgba(86, 72, 60, 0.14));
+    border-radius: 0.7rem;
+    color: var(--text-primary);
+    background: var(--bg-primary, #fff);
+}
+
+.settings-select:disabled {
+    cursor: wait;
+    opacity: 0.55;
+}
+
 .settings-footer {
     margin-top: 1rem;
     padding-top: 0.85rem;

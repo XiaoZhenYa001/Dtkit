@@ -1,4 +1,5 @@
 use super::jobs::JobManager;
+use super::passwords::PasswordVaultManager;
 use super::quick_host::QuickHostManager;
 use super::shortcuts::ShortcutRegistry;
 use super::storage::{StorageManager, StorageUsage};
@@ -318,6 +319,7 @@ pub(crate) async fn get_resource_snapshot(app: AppHandle) -> Result<ResourceSnap
 pub(crate) async fn release_idle_resources(
     app: AppHandle,
 ) -> Result<ResourceReleaseResult, String> {
+    app.state::<PasswordVaultManager>().release_idle_state();
     let quick_host_released = app.get_webview_window("quick-host").is_some();
     if quick_host_released {
         let release_app = app.clone();

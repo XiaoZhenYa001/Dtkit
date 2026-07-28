@@ -141,7 +141,9 @@ test('storage migration verifies a staged copy before changing the root pointer'
 
     assert.match(storage, /\.dtkit-migration-/);
     assert.match(storage, /staged_bytes != bytes_copied/);
-    assert.match(storage, /write_root_pointer\(bootstrap_file, &target\)/);
+    assert.match(storage, /verify_copied_file\(&source_path, &destination\)/);
+    assert.match(storage, /file_sha256\(source\)\? != file_sha256\(destination\)\?/);
+    assert.match(storage, /write_root_pointer\(bootstrap_file, &layout\.root\)/);
     assert.match(storage, /target\.starts_with\(source\) \|\| source\.starts_with\(target\)/);
     assert.doesNotMatch(storage, /has_active_downloads/);
     assert.match(storage, /has_active_share/);

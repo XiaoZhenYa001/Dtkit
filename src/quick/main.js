@@ -9,7 +9,7 @@ const TOOL_LABELS = Object.freeze({
     'crontab-explainer': 'Crontab 解释', 'unit-converter': '单位换算',
     'alarm-clock': '定时闹钟', 'file-batch': '文件批处理',
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
-    'whiteboard': '白板'
+    'whiteboard': '白板', 'password-vault': '密码'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
 const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);

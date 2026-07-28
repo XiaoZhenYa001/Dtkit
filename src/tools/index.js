@@ -169,6 +169,16 @@ export const toolManifests = Object.freeze([
         loader: () => import('./transfer-station/index.js')
     },
     {
+        id: 'password-vault',
+        name: '密码',
+        icon: 'ri-lock-2-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'utility',
+        status: 'ready',
+        description: '当前 Windows 用户保护的本机密码库，支持快捷搜索与安全复制。',
+        loader: () => import('./password-vault/index.js')
+    },
+    {
         id: 'resource-center',
         name: '资源控制中心',
         icon: 'ri-dashboard-line',

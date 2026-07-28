@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tauri::{AppHandle, Manager};
@@ -23,6 +23,7 @@ pub(crate) struct StorageLayout {
     pub(crate) downloads: PathBuf,
     pub(crate) kits: PathBuf,
     pub(crate) whiteboards: PathBuf,
+    pub(crate) passwords: PathBuf,
     pub(crate) backups: PathBuf,
     pub(crate) trash: PathBuf,
     pub(crate) config: PathBuf,
@@ -42,6 +43,7 @@ impl StorageLayout {
             downloads: root.join("Downloads"),
             kits: root.join("Kits"),
             whiteboards: root.join("Kits").join("Whiteboards"),
+            passwords: root.join("Kits").join("Passwords"),
             backups: root.join("Backups"),
             trash: root.join("Trash"),
             config: root.join("Config"),
@@ -56,11 +58,12 @@ impl StorageLayout {
         }
     }
 
-    pub(crate) fn managed_directories(&self) -> [&Path; 11] {
+    pub(crate) fn managed_directories(&self) -> [&Path; 12] {
         [
             &self.downloads,
             &self.kits,
             &self.whiteboards,
+            &self.passwords,
             &self.backups,
             &self.trash,
             &self.config,
@@ -390,15 +393,45 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(u64, u64), String> {
                         destination.display()
                     ));
                 }
-                fs::copy(entry.path(), &destination).map_err(|error| {
+                let source_path = entry.path();
+                fs::copy(&source_path, &destination).map_err(|error| {
                     format!("复制文件失败（{}）: {error}", entry.path().display())
                 })?;
+                verify_copied_file(&source_path, &destination)?;
                 files = files.saturating_add(1);
                 bytes = bytes.saturating_add(metadata.len());
             }
         }
     }
     Ok((files, bytes))
+}
+
+fn file_sha256(path: &Path) -> Result<[u8; 32], String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("打开迁移校验文件失败（{}）: {error}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("读取迁移校验文件失败（{}）: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest.finalize().into())
+}
+
+fn verify_copied_file(source: &Path, destination: &Path) -> Result<(), String> {
+    if file_sha256(source)? != file_sha256(destination)? {
+        return Err(format!(
+            "迁移文件完整性校验失败，未切换数据目录: {}",
+            source.display()
+        ));
+    }
+    Ok(())
 }
 
 fn write_root_pointer(path: &Path, root: &Path) -> Result<(), String> {
@@ -468,14 +501,15 @@ fn migrate_layout(
             fs::remove_dir(&target).map_err(|error| format!("准备空目标目录失败: {error}"))?;
         }
         fs::rename(&staging, &target).map_err(|error| format!("提交迁移目录失败: {error}"))?;
-        if let Err(error) = write_root_pointer(bootstrap_file, &target) {
-            let _ = fs::remove_dir_all(&target);
-            return Err(error);
-        }
         let mut layout = StorageLayout::from_root(current.mode, target);
         layout.writable = verify_writable(&layout.root);
         if !layout.writable {
+            let _ = fs::remove_dir_all(&layout.root);
             return Err("迁移后的数据根目录不可写，已拒绝切换".to_string());
+        }
+        if let Err(error) = write_root_pointer(bootstrap_file, &layout.root) {
+            let _ = fs::remove_dir_all(&layout.root);
+            return Err(error);
         }
         Ok(StorageMigrationResult {
             layout,
@@ -570,6 +604,8 @@ pub(crate) async fn migrate_storage_root(
     .map_err(|error| format!("迁移任务异常结束: {error}"))??;
     app.state::<StorageManager>()
         .replace_layout(result.layout.clone())?;
+    app.state::<super::passwords::PasswordVaultManager>()
+        .reset_for_storage_change();
     Ok(result)
 }
 
@@ -638,6 +674,7 @@ mod tests {
         let layout = StorageLayout::from_root(StorageMode::Standard, root.clone());
         assert_eq!(layout.downloads, root.join("Downloads"));
         assert_eq!(layout.whiteboards, root.join("Kits").join("Whiteboards"));
+        assert_eq!(layout.passwords, root.join("Kits").join("Passwords"));
         assert_eq!(
             layout.temp_transfer,
             root.join("Kits").join("TransferStation")

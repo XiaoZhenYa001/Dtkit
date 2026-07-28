@@ -75,7 +75,9 @@ function syncNavButtonState() {
     let activeView = 'toolLibrary';
     
     if (activeTab) {
-        if (activeTab.toolId === 'settings') {
+        if (activeTab.toolId === 'password-vault') {
+            activeView = 'passwords';
+        } else if (activeTab.toolId === 'settings') {
             activeView = 'settings';
         } else if (activeTab.toolId) {
             // 工具视图，根据 viewType 保持对应导航按钮高亮
@@ -262,6 +264,13 @@ function initNavButtonListeners() {
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const view = e.currentTarget.dataset.view;
+            const toolId = e.currentTarget.dataset.tool;
+
+            if (toolId) {
+                const tool = getTool(toolId);
+                openTool(toolId, tool?.name || '密码', tool?.icon || 'ri-lock-2-line');
+                return;
+            }
             
             // 更新导航按钮激活状态
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('nav-btn--active'));

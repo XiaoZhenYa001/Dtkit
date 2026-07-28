@@ -3,6 +3,7 @@ import { initDownloadPathSettings } from './settings/download-path.js';
 import { initCleanupSettings } from './settings/cleanup.js';
 import { initMinimizeModeSettings } from './settings/minimize-mode.js';
 import { initSettingsNavigation } from './settings/navigation.js';
+import { initPasswordSettings } from './settings/passwords.js';
 import { shortcutManager } from './settings/shortcuts.js';
 
 let initializationPromise = null;
@@ -20,6 +21,7 @@ export function initSettings() {
             initMinimizeModeSettings();
             await Promise.all([
                 shortcutManager.init(),
+                initPasswordSettings(),
                 initCleanupSettings(),
                 initDesktopOrganizerSettings()
             ]);
