@@ -12,7 +12,7 @@ import {
 } from '../src/tools/toolRegistry.js';
 
 test('startup registers metadata without loading tool implementations', () => {
-    assert.equal(toolManifests.length, 18);
+    assert.equal(toolManifests.length, 20);
     assert.equal(new Set(toolManifests.map(tool => tool.id)).size, toolManifests.length);
     assert.equal(getAllTools().length, toolManifests.length);
     assert.ok(toolManifests.every(tool => !isToolLoaded(tool.id)));
@@ -20,7 +20,7 @@ test('startup registers metadata without loading tool implementations', () => {
         toolManifests.filter(tool => tool.status === 'planned').map(tool => tool.id),
         ['image-compressor', 'favicon-generator']
     );
-    assert.equal(toolManifests.filter(tool => tool.status === 'ready').length, 16);
+    assert.equal(toolManifests.filter(tool => tool.status === 'ready').length, 18);
 });
 
 test('planned tools are blocked before their loader runs', async () => {

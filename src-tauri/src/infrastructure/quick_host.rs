@@ -1,4 +1,5 @@
 use super::resources::ResourceGovernor;
+use super::tool_modules::ToolModuleManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,6 +174,8 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
             | "resource-center"
             | "password-vault"
             | "whiteboard"
+            | "text-snippets"
+            | "screenshot-annotator"
     )
 }
 
@@ -180,8 +183,14 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
 pub(crate) async fn open_quick_host(
     app: AppHandle,
     manager: tauri::State<'_, QuickHostManager>,
+    modules: tauri::State<'_, ToolModuleManager>,
     target: QuickHostTarget,
 ) -> Result<(), String> {
+    if let Some(tool_id) = target.tool_id.as_deref() {
+        if !modules.is_enabled(tool_id) {
+            return Err("该工具模块已停用".to_string());
+        }
+    }
     manager.open(&app, target).map(|_| ())
 }
 

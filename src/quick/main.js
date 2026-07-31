@@ -9,7 +9,8 @@ const TOOL_LABELS = Object.freeze({
     'crontab-explainer': 'Crontab 解释', 'unit-converter': '单位换算',
     'alarm-clock': '定时闹钟', 'file-batch': '文件批处理',
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
-    'whiteboard': '白板', 'password-vault': '密码'
+    'whiteboard': '白板', 'password-vault': '密码',
+    'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
 const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
@@ -32,6 +33,16 @@ let searchGeneration = 0;
 let searchDelay = null;
 let selectedIndex = 0;
 let currentActions = [];
+let disabledToolIds = new Set();
+
+async function loadToolModulePolicy() {
+    try {
+        const ids = await invoke('get_tool_module_settings');
+        disabledToolIds = new Set(Array.isArray(ids) ? ids : []);
+    } catch {
+        disabledToolIds = new Set();
+    }
+}
 
 function setToolChrome(toolId = null) {
     const isWhiteboard = toolId === 'whiteboard';
@@ -111,6 +122,7 @@ function showActions(actions, hint = '') {
 function toolActions(query = '') {
     const needle = query.toLowerCase();
     return Object.entries(TOOL_LABELS)
+        .filter(([id]) => !disabledToolIds.has(id))
         .filter(([id, label]) => !needle || `${id} ${label}`.toLowerCase().includes(needle))
         .map(([toolId, label]) => ({
             label, detail: '在轻量窗口中打开', icon: 'tools', query: label,
@@ -217,6 +229,8 @@ async function renderTarget(target) {
     releaseTool();
     palette.hidden = target.kind !== 'palette';
     if (target.kind === 'palette') {
+        await loadToolModulePolicy();
+        if (generation !== renderGeneration) return;
         document.title = '万能命令面板 · DtKit';
         title.textContent = '万能命令面板';
         status.hidden = true;

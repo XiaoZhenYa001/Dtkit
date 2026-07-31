@@ -207,6 +207,9 @@
                                 <a href="#shortcutsSection" class="settings-side-nav__item">
                                     <i class="ri-keyboard-box-line"></i><span>快捷键</span>
                                 </a>
+                                <a href="#toolModulesSection" class="settings-side-nav__item">
+                                    <i class="ri-apps-2-line"></i><span>工具模块</span>
+                                </a>
                                 <a href="#configSection" class="settings-side-nav__item">
                                     <i class="ri-database-2-line"></i><span>配置规则</span>
                                 </a>
@@ -285,75 +288,102 @@
                                         </button>
                                     </div>
                                     <div class="storage-card-body cleanup-card-body">
-                                        <div class="cleanup-usage-grid" aria-label="受管目录占用">
-                                            <div class="cleanup-usage-item">
-                                                <span><i class="ri-archive-line"></i> 缓存</span>
-                                                <strong id="cleanupCacheUsage">--</strong>
+                                        <section class="cleanup-panel cleanup-panel--overview" aria-labelledby="cleanupOverviewTitle">
+                                            <div class="cleanup-panel-heading">
+                                                <div>
+                                                    <strong id="cleanupOverviewTitle">空间概览</strong>
+                                                    <span>仅统计 DtKit 数据根目录内的受管文件</span>
+                                                </div>
+                                                <span class="cleanup-safety-badge"><i class="ri-shield-check-line"></i> 边界受保护</span>
                                             </div>
-                                            <div class="cleanup-usage-item">
-                                                <span><i class="ri-file-list-3-line"></i> 日志</span>
-                                                <strong id="cleanupLogUsage">--</strong>
+                                            <div class="cleanup-usage-grid" aria-label="受管目录占用">
+                                                <div class="cleanup-usage-item">
+                                                    <i class="ri-archive-line"></i>
+                                                    <span><small>运行缓存</small><strong id="cleanupCacheUsage">--</strong></span>
+                                                </div>
+                                                <div class="cleanup-usage-item">
+                                                    <i class="ri-file-list-3-line"></i>
+                                                    <span><small>诊断日志</small><strong id="cleanupLogUsage">--</strong></span>
+                                                </div>
+                                                <div class="cleanup-usage-item cleanup-usage-item--recovery">
+                                                    <i class="ri-history-line"></i>
+                                                    <span><small>可恢复内容</small><strong id="cleanupRecoveryUsage">--</strong></span>
+                                                </div>
                                             </div>
-                                            <div class="cleanup-usage-item">
-                                                <span><i class="ri-history-line"></i> 恢复区</span>
-                                                <strong id="cleanupRecoveryUsage">--</strong>
-                                            </div>
-                                        </div>
+                                        </section>
 
-                                        <div class="cleanup-options">
-                                            <label class="cleanup-option">
-                                                <input type="checkbox" id="cleanupTargetCache" checked>
-                                                <span>缓存</span>
-                                            </label>
-                                            <label class="cleanup-option">
-                                                <input type="checkbox" id="cleanupTargetLogs" checked>
-                                                <span>日志</span>
-                                            </label>
-                                            <label class="cleanup-option cleanup-option--recovery">
-                                                <input type="checkbox" id="cleanupTargetRecovery" disabled>
-                                                <span>同时清空恢复区</span>
-                                            </label>
-                                        </div>
+                                        <div class="cleanup-workspace">
+                                            <section class="cleanup-panel cleanup-panel--policy" aria-labelledby="cleanupPolicyTitle">
+                                                <div class="cleanup-panel-heading cleanup-panel-heading--toggle">
+                                                    <div>
+                                                        <strong id="cleanupPolicyTitle">自动维护</strong>
+                                                        <span>启动时检查一次，运行期间不驻留计时器</span>
+                                                    </div>
+                                                    <label class="settings-toggle" title="启动时自动安全清理">
+                                                        <input type="checkbox" id="automaticCleanupEnabled" class="settings-toggle-input" disabled>
+                                                        <span class="settings-toggle-slider"></span>
+                                                    </label>
+                                                </div>
+                                                <div class="cleanup-retention-row">
+                                                    <label>
+                                                        <span>缓存保留期限</span>
+                                                        <span class="cleanup-number-field">
+                                                            <input id="cleanupCacheRetention" type="number" min="1" max="365" value="7" disabled>
+                                                            <small>天</small>
+                                                        </span>
+                                                    </label>
+                                                    <label>
+                                                        <span>日志保留期限</span>
+                                                        <span class="cleanup-number-field">
+                                                            <input id="cleanupLogRetention" type="number" min="1" max="365" value="7" disabled>
+                                                            <small>天</small>
+                                                        </span>
+                                                    </label>
+                                                </div>
+                                                <p class="cleanup-policy-hint" id="cleanupPolicyHint">最多每天检查一次，不启动后台计时器</p>
+                                            </section>
 
-                                        <div class="cleanup-policy-row">
-                                            <div>
-                                                <strong>启动时自动安全清理</strong>
-                                                <span id="cleanupPolicyHint">最多每天检查一次，不启动后台计时器</span>
-                                            </div>
-                                            <label class="settings-toggle">
-                                                <input type="checkbox" id="automaticCleanupEnabled" class="settings-toggle-input" disabled>
-                                                <span class="settings-toggle-slider"></span>
-                                            </label>
+                                            <section class="cleanup-panel cleanup-panel--manual" aria-labelledby="cleanupManualTitle">
+                                                <div class="cleanup-panel-heading">
+                                                    <div>
+                                                        <strong id="cleanupManualTitle">本次清理</strong>
+                                                        <span>选择需要处理的内容，默认移入恢复区</span>
+                                                    </div>
+                                                </div>
+                                                <div class="cleanup-options" role="group" aria-label="清理目标">
+                                                    <label class="cleanup-option">
+                                                        <input type="checkbox" id="cleanupTargetCache" checked>
+                                                        <i class="ri-archive-line"></i><span>缓存</span><i class="ri-check-line"></i>
+                                                    </label>
+                                                    <label class="cleanup-option">
+                                                        <input type="checkbox" id="cleanupTargetLogs" checked>
+                                                        <i class="ri-file-list-3-line"></i><span>日志</span><i class="ri-check-line"></i>
+                                                    </label>
+                                                    <label class="cleanup-option cleanup-option--recovery">
+                                                        <input type="checkbox" id="cleanupTargetRecovery" disabled>
+                                                        <i class="ri-history-line"></i><span>恢复区</span><i class="ri-check-line"></i>
+                                                    </label>
+                                                </div>
+                                                <label class="cleanup-permanent-option">
+                                                    <input type="checkbox" id="permanentCleanupEnabled">
+                                                    <i class="ri-error-warning-line"></i>
+                                                    <span>
+                                                        <strong>彻底删除</strong>
+                                                        <small>开启后跳过恢复区，执行前仍会再次确认</small>
+                                                    </span>
+                                                    <i class="ri-arrow-right-s-line"></i>
+                                                </label>
+                                                <div class="cleanup-actions">
+                                                    <button class="settings-btn settings-btn--secondary" id="restoreLatestCleanup" type="button" disabled>
+                                                        <i class="ri-arrow-go-back-line"></i> 恢复最近清理
+                                                    </button>
+                                                    <button class="settings-btn settings-btn--primary" id="runStorageCleanup" type="button" disabled>
+                                                        <i class="ri-brush-2-line"></i><span id="cleanupActionLabel">安全清理</span>
+                                                    </button>
+                                                </div>
+                                            </section>
                                         </div>
-
-                                        <div class="cleanup-retention-row">
-                                            <label>缓存保留
-                                                <input id="cleanupCacheRetention" type="number" min="1" max="365" value="7" disabled>
-                                                <span>天</span>
-                                            </label>
-                                            <label>日志保留
-                                                <input id="cleanupLogRetention" type="number" min="1" max="365" value="7" disabled>
-                                                <span>天</span>
-                                            </label>
-                                        </div>
-
-                                        <label class="cleanup-permanent-option">
-                                            <input type="checkbox" id="permanentCleanupEnabled">
-                                            <span>
-                                                <strong>彻底删除</strong>
-                                                <small>跳过恢复区，删除后无法恢复</small>
-                                            </span>
-                                        </label>
-
-                                        <div class="cleanup-actions">
-                                            <button class="settings-btn settings-btn--secondary" id="restoreLatestCleanup" type="button" disabled>
-                                                <i class="ri-arrow-go-back-line"></i> 恢复最近清理
-                                            </button>
-                                            <button class="settings-btn settings-btn--primary" id="runStorageCleanup" type="button" disabled>
-                                                <i class="ri-brush-2-line"></i> 安全清理
-                                            </button>
-                                        </div>
-                                        <p class="cleanup-status" id="cleanupStatus" role="status">正在读取存储占用…</p>
+                                        <p class="cleanup-status" id="cleanupStatus" role="status"><i class="ri-information-line"></i><span>正在读取存储占用…</span></p>
                                     </div>
                                 </div>
                             </div>
@@ -368,6 +398,37 @@
                             <p class="settings-shortcut-note">此处仅保留万能命令面板入口。打开任意工具后，可在内容区左上角设置该工具的专属快捷键。</p>
                             <div class="settings-section-content" id="shortcutBindings" aria-label="命令面板快捷键"></div>
                             <div class="settings-shortcut-status" id="shortcutStatus" role="status">正在读取快捷键…</div>
+                        </section>
+
+                        <section class="settings-section" id="toolModulesSection" data-settings-nav-label="工具模块" data-settings-nav-icon="ri-apps-2-line">
+                            <div class="settings-section-header">
+                                <i class="ri-apps-2-line"></i>
+                                <h2 class="settings-section-title">工具模块管理</h2>
+                                <span class="settings-section-hint">停用后不显示、不加载，也不会响应快捷键</span>
+                                <button id="toolModulesCollapse" class="settings-section-collapse" type="button" aria-expanded="false" aria-controls="toolModulesContent">
+                                    <span>展开</span><i class="ri-arrow-down-s-line"></i>
+                                </button>
+                            </div>
+                            <div class="settings-section-content" id="toolModulesContent" hidden>
+                                <div class="tool-module-summary">
+                                    <div class="tool-module-summary__metric"><strong id="toolModuleEnabledCount">正在读取…</strong><span>启用模块</span></div>
+                                    <div class="tool-module-summary__metric tool-module-summary__metric--muted"><strong id="toolModuleDisabledCount">—</strong><span>已停用</span></div>
+                                    <p><i class="ri-leaf-line"></i> 工具仍只在首次打开时加载。停用不会删除历史数据，也不会占用运行内存。</p>
+                                </div>
+                                <div class="tool-module-toolbar">
+                                    <label class="tool-module-search"><i class="ri-search-line"></i><input id="toolModuleSearch" type="search" autocomplete="off" placeholder="搜索工具模块"></label>
+                                    <div class="tool-module-categories" role="group" aria-label="模块分类">
+                                        <button type="button" class="is-active" data-module-category="all" aria-pressed="true">全部</button>
+                                        <button type="button" data-module-category="dev" aria-pressed="false">开发</button>
+                                        <button type="button" data-module-category="design" aria-pressed="false">设计</button>
+                                        <button type="button" data-module-category="utility" aria-pressed="false">效率</button>
+                                        <button type="button" data-module-category="other" aria-pressed="false">其他</button>
+                                    </div>
+                                    <label class="tool-module-disabled-only"><input id="toolModuleDisabledOnly" type="checkbox"><span>仅看已停用</span></label>
+                                </div>
+                                <div id="toolModuleList" class="tool-module-list" aria-label="工具模块列表"></div>
+                                <p id="toolModuleStatus" class="settings-shortcut-status" role="status"></p>
+                            </div>
                         </section>
 
                         <!-- 配置规则管理 -->
@@ -530,12 +591,13 @@
                                 </div>
                                 <div class="settings-footer-info">
                                     <span class="settings-footer-name">DtKit</span>
-                                    <span class="settings-footer-version">v0.2.5</span>
+                                    <span class="settings-footer-version">v0.2.6</span>
                                 </div>
                                 <div class="settings-footer-meta">
-                                    <span class="settings-footer-build">Build 20260720</span>
+                                    <span class="settings-footer-build">Build 20260731</span>
                                     <span class="settings-footer-separator">•</span>
-                                    <a href="#" class="settings-footer-link">检查更新</a>
+                                    <button id="checkUpdateButton" type="button" class="settings-footer-link">检查更新</button>
+                                    <span id="updateCheckStatus" class="settings-footer-update-status" role="status" aria-live="polite"></span>
                                     <span class="settings-footer-separator">•</span>
                                     <a href="#" class="settings-footer-link">关于</a>
                                 </div>

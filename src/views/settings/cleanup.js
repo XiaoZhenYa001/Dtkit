@@ -86,7 +86,7 @@ class CleanupSettings {
         const button = document.getElementById('runStorageCleanup');
         button.classList.toggle('settings-btn--danger', enabled);
         button.classList.toggle('settings-btn--primary', !enabled);
-        button.lastChild.textContent = enabled ? ' 彻底删除' : ' 安全清理';
+        document.getElementById('cleanupActionLabel').textContent = enabled ? '彻底删除' : '安全清理';
     }
 
     selectedTargets() {
@@ -188,7 +188,7 @@ class CleanupSettings {
 
     setMessage(message, tone = '') {
         const status = document.getElementById('cleanupStatus');
-        status.textContent = message;
+        status.querySelector('span').textContent = message;
         status.dataset.tone = tone;
     }
 }

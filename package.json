@@ -1,7 +1,7 @@
 {
   "name": "dtkit",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "icons:build": "python scripts/build-remixicon-subset.py",
     "csp:hash": "node scripts/update-preview-csp-hash.mjs",
     "check:js": "node scripts/check-js.mjs",
-    "test:js": "node --test tests/alarm-service.test.js tests/cleanup-settings.test.js tests/command-engine.test.js tests/csp.test.js tests/crontab-explainer.test.js tests/desktop-organizer.test.js tests/desktop-snapshot.test.js tests/html.test.js tests/icons.test.js tests/infrastructure-foundation.test.js tests/password-vault.test.js tests/settings-model.test.js tests/settings-navigation.test.js tests/tool-registry.test.js tests/tool-styles.test.js tests/unit-converter.test.js tests/url-encoder.test.js tests/whiteboard.test.js",
+    "test:js": "node --test tests/alarm-service.test.js tests/cleanup-settings.test.js tests/command-engine.test.js tests/csp.test.js tests/crontab-explainer.test.js tests/desktop-organizer.test.js tests/desktop-snapshot.test.js tests/html.test.js tests/icons.test.js tests/infrastructure-foundation.test.js tests/navigation-history.test.js tests/password-vault.test.js tests/portable-tools.test.js tests/settings-model.test.js tests/settings-navigation.test.js tests/tool-registry.test.js tests/tool-styles.test.js tests/unit-converter.test.js tests/update-checker.test.js tests/url-encoder.test.js tests/whiteboard.test.js",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "test": "npm run test:js && npm run test:rust",
     "check": "npm run check:js && npm run test"

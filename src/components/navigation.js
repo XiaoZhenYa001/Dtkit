@@ -54,23 +54,86 @@ export function updateBackForwardButtons() {
     const activeTab = getActiveTab();
     if (!activeTab) return;
 
-    if (DOM.backBtn) DOM.backBtn.disabled = activeTab.historyIndex <= 0;
-    if (DOM.forwardBtn) DOM.forwardBtn.disabled = activeTab.historyIndex >= activeTab.history.length - 1;
+    if (DOM.backBtn) DOM.backBtn.disabled = !hasNavigableHistory(activeTab, -1);
+    if (DOM.forwardBtn) DOM.forwardBtn.disabled = !hasNavigableHistory(activeTab, 1);
+}
+
+function normalizeHistoryItem(historyItem) {
+    if (historyItem && typeof historyItem === 'object') {
+        const normalized = {
+            toolId: historyItem.toolId ?? null,
+            viewType: historyItem.viewType || 'toolLibrary'
+        };
+        const scrollTop = Number(historyItem.scrollTop);
+        if (Number.isFinite(scrollTop) && scrollTop >= 0) normalized.scrollTop = scrollTop;
+        return normalized;
+    }
+    return { toolId: historyItem ?? null, viewType: 'toolLibrary' };
+}
+
+export function captureCurrentScrollPosition() {
+    const activeTab = getActiveTab();
+    if (!activeTab || !DOM.contentArea || activeTab.historyIndex < 0) return;
+    const current = normalizeHistoryItem(activeTab.history[activeTab.historyIndex]);
+    current.scrollTop = Math.max(0, DOM.contentArea.scrollTop || 0);
+    activeTab.history[activeTab.historyIndex] = current;
+}
+
+export function getCurrentHistoryScrollTop() {
+    const activeTab = getActiveTab();
+    if (!activeTab || activeTab.historyIndex < 0) return 0;
+    const current = normalizeHistoryItem(activeTab.history[activeTab.historyIndex]);
+    return current.scrollTop || 0;
+}
+
+function isSameHistoryItem(left, right) {
+    const a = normalizeHistoryItem(left);
+    const b = normalizeHistoryItem(right);
+    return a.toolId === b.toolId && a.viewType === b.viewType;
+}
+
+function isHistoryItemAvailable(historyItem) {
+    const { toolId } = normalizeHistoryItem(historyItem);
+    if (toolId === null || toolId === 'settings') return true;
+    const tool = onGetTool ? onGetTool(toolId) : null;
+    return Boolean(tool && tool.enabled !== false && tool.status !== 'planned');
+}
+
+function hasNavigableHistory(activeTab, direction) {
+    for (
+        let index = activeTab.historyIndex + direction;
+        index >= 0 && index < activeTab.history.length;
+        index += direction
+    ) {
+        if (isHistoryItemAvailable(activeTab.history[index])) return true;
+    }
+    return false;
+}
+
+export function recordHistoryEntry(activeTab, historyItem) {
+    if (!activeTab) return false;
+    const next = normalizeHistoryItem(historyItem);
+    const current = activeTab.history[activeTab.historyIndex];
+    if (isSameHistoryItem(current, next)) return false;
+
+    activeTab.history = activeTab.history.slice(0, activeTab.historyIndex + 1);
+    activeTab.history.push(next);
+    activeTab.historyIndex = activeTab.history.length - 1;
+    return true;
 }
 
 function applyHistoryItem(historyItem) {
     const activeTab = getActiveTab();
-    if (!activeTab) return;
+    if (!activeTab) return false;
 
-    const toolId = typeof historyItem === 'object' ? historyItem.toolId : historyItem;
-    const viewType = typeof historyItem === 'object' ? historyItem.viewType : 'toolLibrary';
+    const { toolId, viewType } = normalizeHistoryItem(historyItem);
 
     if (toolId === null) {
         activeTab.viewType = viewType;
         activeTab.toolId = null;
         appState.currentView = viewType;
         applyViewState(activeTab, viewType);
-        return;
+        return true;
     }
 
     if (toolId === 'settings') {
@@ -78,41 +141,50 @@ function applyHistoryItem(historyItem) {
         activeTab.toolId = 'settings';
         appState.currentView = 'settings';
         applyViewState(activeTab, 'settings');
-        return;
+        return true;
     }
 
-    const tool = onGetTool ? onGetTool(toolId) : null;
-    if (!tool) return;
+    if (!isHistoryItemAvailable(historyItem)) return false;
+    const tool = onGetTool(toolId);
 
     activeTab.toolId = toolId;
+    activeTab.viewType = viewType;
     activeTab.title = tool.name;
     activeTab.icon = tool.icon;
     activeTab.badge = getToolBadge(tool);
     appState.currentView = toolId;
+    return true;
+}
+
+function moveHistory(direction) {
+    const activeTab = getActiveTab();
+    if (!activeTab) return;
+
+    captureCurrentScrollPosition();
+
+    let nextIndex = activeTab.historyIndex + direction;
+    while (nextIndex >= 0 && nextIndex < activeTab.history.length) {
+        if (applyHistoryItem(activeTab.history[nextIndex])) {
+            activeTab.historyIndex = nextIndex;
+            if (onRenderTabs) onRenderTabs();
+            if (onUpdateContentView) onUpdateContentView();
+            updateBackForwardButtons();
+            return;
+        }
+        nextIndex += direction;
+    }
 }
 
 export function goBack() {
     const activeTab = getActiveTab();
     if (!activeTab || activeTab.historyIndex <= 0) return;
-
-    activeTab.historyIndex--;
-    applyHistoryItem(activeTab.history[activeTab.historyIndex]);
-
-    if (onRenderTabs) onRenderTabs();
-    if (onUpdateContentView) onUpdateContentView();
-    updateBackForwardButtons();
+    moveHistory(-1);
 }
 
 export function goForward() {
     const activeTab = getActiveTab();
     if (!activeTab || activeTab.historyIndex >= activeTab.history.length - 1) return;
-
-    activeTab.historyIndex++;
-    applyHistoryItem(activeTab.history[activeTab.historyIndex]);
-
-    if (onRenderTabs) onRenderTabs();
-    if (onUpdateContentView) onUpdateContentView();
-    updateBackForwardButtons();
+    moveHistory(1);
 }
 
 export function initNavigationListeners() {

@@ -67,6 +67,8 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.match(commands, /spawn_blocking/);
     assert.match(scanner, /FOLDER_BROWSE_LIMIT: usize = 200/);
     assert.match(scanner, /SEARCH_RESULT_LIMIT: usize = 200/);
+    assert.match(scanner, /PROGRAM_ICON_CACHE_LIMIT: usize = 96/);
+    assert.match(scanner, /cached_program_icon/);
     assert.match(hotzone, /compare_exchange\(false, true/);
     assert.match(hotzone, /if is_panel_visible \{\s*100\s*\} else \{\s*250/);
     assert.doesNotMatch(nativeWindow, /\.position\(1350\.0/);
@@ -78,6 +80,8 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.match(organizerUi, /screenBounds\.x/);
     assert.match(organizerUi, /screenBounds\.y/);
     assert.match(organizerUi, /visibilitychange[\s\S]*LIVE_RESCAN_INTERVAL_MS[\s\S]*loadDesktopFiles/);
+    assert.match(organizerUi, /rebuildSearchIndex/);
+    assert.doesNotMatch(organizerUi, /invoke\('desktop_search'/);
     assert.doesNotMatch(organizerUi, /setInterval\s*\(/);
 });
 

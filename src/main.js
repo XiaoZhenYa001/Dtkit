@@ -27,14 +27,22 @@ import {
     hasToolTemplate,
     renderToolView,
     showDynamicContainer,
-    hideDynamicContainer
+    hideDynamicContainer,
+    applyDisabledTools
 } from './tools/index.js';
 
 // ============================================
 // 导入组件
 // ============================================
 import { addTab, closeTab, switchTab, renderTabs, setTabCallbacks } from './components/tabs.js';
-import { updateBackForwardButtons, goBack, goForward, initNavigationListeners, setNavigationCallbacks } from './components/navigation.js';
+import {
+    captureCurrentScrollPosition,
+    getCurrentHistoryScrollTop,
+    updateBackForwardButtons,
+    initNavigationListeners,
+    recordHistoryEntry,
+    setNavigationCallbacks
+} from './components/navigation.js';
 
 // ============================================
 // 导入视图
@@ -48,8 +56,22 @@ import { loadViewAssets } from './views/lazyAssets.js';
 // ============================================
 
 let pendingToolInitFrame = null;
+let pendingScrollRestoreFrame = null;
 const toolOpenRequests = new Map();
 let viewRenderRequest = 0;
+
+function restoreCurrentScrollPosition(requestId) {
+    if (pendingScrollRestoreFrame !== null) cancelAnimationFrame(pendingScrollRestoreFrame);
+    const scrollTop = getCurrentHistoryScrollTop();
+    pendingScrollRestoreFrame = requestAnimationFrame(() => {
+        pendingScrollRestoreFrame = null;
+        if (requestId !== viewRenderRequest || !DOM.contentArea) return;
+        const previousScrollBehavior = DOM.contentArea.style.scrollBehavior;
+        DOM.contentArea.style.scrollBehavior = 'auto';
+        DOM.contentArea.scrollTop = scrollTop;
+        DOM.contentArea.style.scrollBehavior = previousScrollBehavior;
+    });
+}
 
 function handleViewLoadError(viewName, requestId, error) {
     if (requestId !== viewRenderRequest) return;
@@ -63,6 +85,7 @@ function showSettingsView(requestId) {
         .then(() => {
             if (requestId !== viewRenderRequest) return;
             DOM.settingsView?.classList.add('view--active');
+            restoreCurrentScrollPosition(requestId);
         })
         .catch(error => handleViewLoadError('设置', requestId, error));
 }
@@ -163,6 +186,10 @@ function updateContentView() {
         if (DOM.navbar) DOM.navbar.style.display = 'flex';
         appState.currentToolId = null;
     }
+
+    if (activeTab.toolId !== 'settings' && appState.currentView !== 'settings') {
+        restoreCurrentScrollPosition(requestId);
+    }
     
     // 同步左侧导航按钮状态
     syncNavButtonState();
@@ -199,6 +226,8 @@ async function openTool(toolId, toolName, toolIcon) {
         showToast(`${requestedTool.name}正在开发中，敬请期待`, 'info');
         return;
     }
+
+    captureCurrentScrollPosition();
 
     // 检查是否已有标签打开了该工具
     let existingTab = appState.tabs.find(t => t.toolId === toolId);
@@ -244,10 +273,7 @@ async function openTool(toolId, toolName, toolIcon) {
     targetTab.badge = getTabBadgeByTool(toolId);
     
     // 添加到历史栈（保存 toolId 和 viewType）
-    const historyIndex = targetTab.historyIndex + 1;
-    targetTab.history = targetTab.history.slice(0, historyIndex);
-    targetTab.history.push({ toolId: toolId, viewType: targetTab.viewType });
-    targetTab.historyIndex = targetTab.history.length - 1;
+    recordHistoryEntry(targetTab, { toolId, viewType: targetTab.viewType });
     
     appState.currentView = toolId;
     renderTabs();
@@ -271,6 +297,8 @@ function initNavButtonListeners() {
                 openTool(toolId, tool?.name || '密码', tool?.icon || 'ri-lock-2-line');
                 return;
             }
+
+            captureCurrentScrollPosition();
             
             // 更新导航按钮激活状态
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('nav-btn--active'));
@@ -286,6 +314,7 @@ function initNavButtonListeners() {
                     activeTab.title = '工具库';
                     activeTab.icon = 'ri-apps-2-line';
                     activeTab.badge = getTabBadgeByView('toolLibrary');
+                    recordHistoryEntry(activeTab, { toolId: null, viewType: 'toolLibrary' });
                 }
             } else if (view === 'favorites') {
                 appState.currentView = 'favorites';
@@ -295,6 +324,7 @@ function initNavButtonListeners() {
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
                     activeTab.badge = getTabBadgeByView('favorites');
+                    recordHistoryEntry(activeTab, { toolId: null, viewType: 'favorites' });
                 }
             } else if (view === 'settings') {
                 const settingsTab = appState.tabs.find(t => t.toolId === 'settings');
@@ -322,6 +352,7 @@ function initNavButtonListeners() {
             
             renderTabs();
             updateContentView();
+            updateBackForwardButtons();
         });
     });
 }
@@ -377,6 +408,12 @@ async function initializeApp() {
     }
     // 初始化 DOM 缓存
     initDOM();
+    try {
+        const disabled = await globalThis.window?.__TAURI__?.core?.invoke?.('get_tool_module_settings');
+        if (Array.isArray(disabled)) applyDisabledTools(disabled);
+    } catch (error) {
+        console.error('[DtKit] 工具模块配置同步失败', error);
+    }
     
     // 初始化模块间回调
     initCallbacks();
@@ -393,6 +430,10 @@ async function initializeApp() {
     initSearchListener();
     initAddTabListener();
     initClearFavoritesListener();
+    window.addEventListener('dtkit-tool-modules-changed', () => {
+        renderToolLibrary();
+        renderFavoritesPage();
+    });
     
     // 已启用的桌面整理热区需要在设置页面尚未打开时也能工作。
     bootstrapDesktopOrganizer().catch(error => {

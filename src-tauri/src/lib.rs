@@ -48,11 +48,16 @@ use infrastructure::resources::{
     get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
     set_resource_policy, MinimizeMode, ResourceGovernor,
 };
+use infrastructure::screenshot::{capture_screen_for_annotation, save_annotated_screenshot};
 use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
+use infrastructure::snippets::{delete_snippet, save_snippet, search_snippets, SnippetManager};
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
+};
+use infrastructure::tool_modules::{
+    get_tool_module_settings, set_tool_module_enabled, ToolModuleManager,
 };
 use infrastructure::transfer_station::{
     export_transfer_item, get_lan_share, import_transfer_files, list_transfer_items,
@@ -64,7 +69,7 @@ use infrastructure::whiteboard::{
     release_whiteboard_edit, save_whiteboard, save_whiteboard_draft, take_over_whiteboard_edit,
     WhiteboardEditManager,
 };
-use system_actions::{lock_screen, run_program, schedule_shutdown};
+use system_actions::{lock_screen, open_release_page, run_program, schedule_shutdown};
 
 static APP_SUSPENDED: AtomicBool = AtomicBool::new(false);
 static DEEP_SLEEP_CLOSING: AtomicBool = AtomicBool::new(false);
@@ -706,6 +711,8 @@ pub fn run() {
         .manage(QuickHostManager::default())
         .manage(WhiteboardEditManager::default())
         .manage(PasswordVaultManager::default())
+        .manage(SnippetManager::default())
+        .manage(ToolModuleManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
@@ -726,6 +733,9 @@ pub fn run() {
             }
             if let Err(error) = app.state::<CleanupManager>().restore(app.handle()) {
                 eprintln!("[CleanupManager] 忽略无效的已保存策略: {error}");
+            }
+            if let Err(error) = app.state::<ToolModuleManager>().restore(app.handle()) {
+                eprintln!("[ToolModuleManager] 忽略无效的已保存配置: {error}");
             }
             if let Err(error) = app.state::<ShortcutRegistry>().restore(app.handle()) {
                 eprintln!("[ShortcutRegistry] 忽略无效的已保存配置: {error}");
@@ -868,6 +878,7 @@ pub fn run() {
             greet,
             write_qr_code,
             run_program,
+            open_release_page,
             schedule_shutdown,
             lock_screen,
             calculate_text_hash,
@@ -932,6 +943,13 @@ pub fn run() {
             copy_password,
             get_password_settings,
             set_password_settings,
+            search_snippets,
+            save_snippet,
+            delete_snippet,
+            capture_screen_for_annotation,
+            save_annotated_screenshot,
+            get_tool_module_settings,
+            set_tool_module_enabled,
             // 桌面整理命令
             desktop_scan,
             desktop_search,

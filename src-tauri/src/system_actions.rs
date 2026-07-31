@@ -3,6 +3,12 @@ use std::path::Path;
 use std::process::Command;
 
 const ALLOWED_PROGRAM_EXTENSIONS: &[&str] = &["exe", "com", "bat", "cmd", "ps1"];
+const RELEASES_PAGE: &str = "https://github.com/XiaoZhenYa001/Dtkit/releases";
+
+#[tauri::command]
+pub(crate) fn open_release_page() -> Result<(), String> {
+    opener::open(RELEASES_PAGE).map_err(|error| format!("打开发布页失败: {error}"))
+}
 
 #[tauri::command]
 pub(crate) fn run_program(file_path: String) -> Result<(), String> {

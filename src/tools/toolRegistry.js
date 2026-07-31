@@ -82,6 +82,7 @@ export function registerToolManifest(manifest) {
         category: manifest.category,
         description: manifest.description || '点击查看详情',
         status,
+        enabled: existing?.enabled ?? true,
         template: existing?.template || null,
         init: existing?.init || null,
         destroy: existing?.destroy || null,
@@ -126,6 +127,7 @@ export function registerTool(toolConfig) {
         category,
         description: description || '点击查看详情',
         status: normalizeToolStatus(toolConfig.status, existing?.status),
+        enabled: existing?.enabled ?? true,
         template: template || null,
         init,
         destroy: destroy || null,
@@ -150,6 +152,7 @@ export function registerTool(toolConfig) {
 export async function loadTool(toolId) {
     const tool = toolsRegistry.get(toolId);
     if (!tool) throw new Error(`工具未找到: ${toolId}`);
+    if (!tool.enabled) throw new Error(`工具模块已停用: ${toolId}`);
     if (tool.status === TOOL_STATUSES.PLANNED) throw new Error(`工具尚未开放: ${toolId}`);
     if (tool.loaded) return tool;
     if (tool.loadPromise) return tool.loadPromise;
@@ -344,8 +347,24 @@ export function destroyTool(toolId) {
  * 获取所有工具列表（扁平数组）
  * @returns {Array} 所有工具的扁平列表
  */
-export function getAllTools() {
-    return Array.from(toolsRegistry.values());
+export function getAllTools(options = {}) {
+    const tools = Array.from(toolsRegistry.values());
+    return options.includeDisabled ? tools : tools.filter(tool => tool.enabled);
+}
+
+export function applyDisabledTools(disabledToolIds = []) {
+    const disabled = new Set(disabledToolIds);
+    toolsRegistry.forEach(tool => {
+        tool.enabled = !disabled.has(tool.id);
+    });
+}
+
+export function setToolEnabled(toolId, enabled) {
+    const tool = toolsRegistry.get(toolId);
+    if (!tool) return false;
+    tool.enabled = Boolean(enabled);
+    if (!tool.enabled && tool.initialized) destroyTool(toolId);
+    return true;
 }
 
 /**

@@ -82,6 +82,7 @@ with sync_playwright() as playwright:
     assert organizer.locator(".organizer-brand h1").text_content() == "桌面整理"
     assert "共 3 个项目" in organizer.locator("#statusText").text_content()
     assert organizer.locator(".category-item").count() >= 3
+    assert organizer.locator('[data-category="document"] .file-item').count() == 0
     assert organizer.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
     organizer.locator('[data-category="folder"] .category-header').click()
@@ -98,6 +99,10 @@ with sync_playwright() as playwright:
     assert organizer.locator('[data-name="Current Project"]').count() == 1
 
     organizer.locator("#searchInput").fill("road")
+    organizer.wait_for_function("document.querySelectorAll('#searchResultsList .file-item').length === 1")
+    assert "roadmap.pdf" in organizer.locator("#searchResultsList").inner_text()
+    assert not organizer.evaluate("window.__calls.some(call => call.command === 'desktop_search')")
+    organizer.locator("#searchInput").fill("/d")
     organizer.wait_for_function("document.querySelectorAll('#searchResultsList .file-item').length === 1")
     assert "roadmap.pdf" in organizer.locator("#searchResultsList").inner_text()
     organizer.locator("#searchClear").click()

@@ -2,12 +2,44 @@
 // Desktop Scanner - 扫描桌面文件并分类
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 const FOLDER_BROWSE_LIMIT: usize = 200;
 const SEARCH_RESULT_LIMIT: usize = 200;
+#[cfg(target_os = "windows")]
+const PROGRAM_ICON_CACHE_LIMIT: usize = 96;
+
+#[cfg(target_os = "windows")]
+lazy_static::lazy_static! {
+    static ref PROGRAM_ICON_CACHE: Mutex<HashMap<PathBuf, (u64, Option<String>)>> =
+        Mutex::new(HashMap::new());
+}
+
+#[cfg(target_os = "windows")]
+fn cached_program_icon(path: &PathBuf, modified_time: u64) -> Option<String> {
+    if let Ok(cache) = PROGRAM_ICON_CACHE.lock() {
+        if let Some((cached_time, icon)) = cache.get(path) {
+            if *cached_time == modified_time {
+                return icon.clone();
+            }
+        }
+    }
+
+    let icon = crate::desktop::icon::extract_file_icon(&path.to_string_lossy());
+    if let Ok(mut cache) = PROGRAM_ICON_CACHE.lock() {
+        if cache.len() >= PROGRAM_ICON_CACHE_LIMIT && !cache.contains_key(path) {
+            cache.clear();
+        }
+        cache.insert(path.clone(), (modified_time, icon.clone()));
+    }
+    icon
+}
 
 /// 文件分类类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -152,12 +184,14 @@ fn scan_file_info(path: &PathBuf) -> Option<DesktopFile> {
     };
 
     let category = FileCategory::from_extension(&extension, is_folder);
+    let modified_time = get_timestamp(metadata.modified());
+    let accessed_time = get_timestamp(metadata.accessed());
 
     // 提取文件图标（仅对程序和快捷方式）
     let icon = if category == FileCategory::Program || extension == "lnk" {
         #[cfg(windows)]
         {
-            crate::desktop::icon::extract_file_icon(&path.to_string_lossy())
+            cached_program_icon(path, modified_time)
         }
         #[cfg(not(windows))]
         {
@@ -174,8 +208,8 @@ fn scan_file_info(path: &PathBuf) -> Option<DesktopFile> {
         is_folder,
         size: if is_folder { 0 } else { metadata.len() },
         extension,
-        modified_time: get_timestamp(metadata.modified()),
-        accessed_time: get_timestamp(metadata.accessed()),
+        modified_time,
+        accessed_time,
         children: None,
         children_truncated: false,
         icon,

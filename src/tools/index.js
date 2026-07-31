@@ -187,6 +187,26 @@ export const toolManifests = Object.freeze([
         status: 'ready',
         description: '按需查看资源快照并配置低能耗策略。',
         loader: () => import('./resource-center/index.js')
+    },
+    {
+        id: 'text-snippets',
+        name: '文本片段库',
+        icon: 'ri-file-copy-2-line',
+        colorClass: 'tool-card__icon--blue',
+        category: 'utility',
+        status: 'ready',
+        description: '保存常用回复、代码和模板，通过快捷键快速搜索复制。',
+        loader: () => import('./text-snippets/index.js')
+    },
+    {
+        id: 'screenshot-annotator',
+        name: '截图与标注',
+        icon: 'ri-screenshot-2-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'design',
+        status: 'ready',
+        description: '快捷截取虚拟桌面，并进行画笔、形状、箭头和文字标注。',
+        loader: () => import('./screenshot-annotator/index.js')
     }
 ]);
 

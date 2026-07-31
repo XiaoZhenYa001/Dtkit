@@ -26,5 +26,5 @@ export function showToast(message, type = 'success') {
     }, 3000);
 }
 
-// 挂载到 window 供全局使用
-window.showToast = showToast;
+// 挂载到浏览器窗口供旧模块使用；纯逻辑测试环境没有 window。
+if (typeof window !== 'undefined') window.showToast = showToast;

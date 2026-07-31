@@ -1,5 +1,6 @@
 use super::quick_host::{is_supported_tool_id, QuickHostManager, QuickHostTarget};
 use super::storage::StorageManager;
+use super::tool_modules::ToolModuleManager;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -86,8 +87,13 @@ impl ShortcutRegistry {
         }
         let serialized =
             fs::read_to_string(&path).map_err(|error| format!("读取快捷键配置失败: {error}"))?;
-        let bindings: Vec<ShortcutBinding> = serde_json::from_str(&serialized)
+        let mut bindings: Vec<ShortcutBinding> = serde_json::from_str(&serialized)
             .map_err(|error| format!("快捷键配置格式无效: {error}"))?;
+        let modules = app.state::<ToolModuleManager>();
+        bindings.retain(|binding| match &binding.target {
+            ShortcutTarget::Tool { tool_id } => modules.is_enabled(tool_id),
+            ShortcutTarget::Palette => true,
+        });
         self.replace(app, bindings, false).map(|_| ())
     }
 
@@ -189,6 +195,11 @@ pub(crate) fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, state: Short
     let Some(target) = registry.resolve(&accelerator) else {
         return;
     };
+    if let ShortcutTarget::Tool { tool_id } = &target {
+        if !app.state::<ToolModuleManager>().is_enabled(tool_id) {
+            return;
+        }
+    }
     let quick_target = match target.quick_target() {
         Ok(target) => target,
         Err(error) => {
@@ -218,8 +229,17 @@ pub(crate) fn get_shortcut_bindings(
 pub(crate) fn replace_shortcut_bindings(
     app: AppHandle,
     registry: tauri::State<'_, ShortcutRegistry>,
+    modules: tauri::State<'_, ToolModuleManager>,
     bindings: Vec<ShortcutBinding>,
 ) -> Result<Vec<ShortcutBinding>, String> {
+    if bindings.iter().any(|binding| {
+        matches!(
+            &binding.target,
+            ShortcutTarget::Tool { tool_id } if !modules.is_enabled(tool_id)
+        )
+    }) {
+        return Err("已停用的工具不能绑定快捷键".to_string());
+    }
     registry.replace(&app, bindings, true)
 }
 

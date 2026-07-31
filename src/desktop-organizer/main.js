@@ -46,6 +46,7 @@ let state = {
     selectedFile: null,   // 选中的文件
     searchQuery: '',      // 搜索关键词
     searchResults: [],    // 搜索结果
+    searchIndex: [],      // 单次扫描生成的轻量搜索索引
     isSearching: false,   // 是否在搜索模式
     customCategories: [], // 自定义分类
     fileCategories: {},   // 文件到分类的映射 { filePath: categoryKey }
@@ -147,6 +148,36 @@ function highlightText(text, query) {
     return escapeHtml(text).replace(regex, '<span class="search-highlight">$1</span>');
 }
 
+const SEARCH_CATEGORY_KEYS = ['documents', 'images', 'videos', 'audios', 'archives', 'programs', 'folders', 'others'];
+
+function rebuildSearchIndex() {
+    state.searchIndex = SEARCH_CATEGORY_KEYS.flatMap(key => state.files?.[key] || []).map(file => ({
+        file,
+        normalizedName: file.name.toLocaleLowerCase()
+    }));
+}
+
+function filesForCategory(categoryKey) {
+    if (categoryKey.startsWith('custom_')) {
+        return state.searchIndex
+            .filter(entry => state.fileCategories[entry.file.path] === categoryKey)
+            .map(entry => entry.file);
+    }
+
+    const config = CATEGORIES[categoryKey];
+    if (!config) return [];
+    const files = state.files?.[config.key] || [];
+    if (categoryKey === 'recent') return files;
+    return files.filter(file => !state.fileCategories[file.path]);
+}
+
+function categoryFilesMarkup(categoryKey, files) {
+    if (files.length) return renderFileList(files);
+    return categoryKey.startsWith('custom_')
+        ? '<div class="empty-category-hint">右键文件并选择“移动到分类”</div>'
+        : '';
+}
+
 // ============================================
 // 渲染函数
 // ============================================
@@ -161,54 +192,23 @@ function renderCategoryList() {
         return;
     }
 
-    // 收集被分配到自定义分类的文件路径
-    const customCategoryFiles = new Set(Object.keys(state.fileCategories));
-    
-    // 构建自定义分类的文件列表
-    const customCategoryData = {};
-    for (const cat of state.customCategories) {
-        customCategoryData[cat.key] = [];
-    }
-    
-    // 从所有文件中找出分配到自定义分类的
-    const allFiles = [
-        ...(state.files.documents || []),
-        ...(state.files.images || []),
-        ...(state.files.videos || []),
-        ...(state.files.audios || []),
-        ...(state.files.archives || []),
-        ...(state.files.programs || []),
-        ...(state.files.folders || []),
-        ...(state.files.others || []),
-    ];
-    
-    for (const file of allFiles) {
-        const catKey = state.fileCategories[file.path];
-        if (catKey && customCategoryData[catKey]) {
-            customCategoryData[catKey].push(file);
-        }
-    }
-
     const categoryOrder = ['recent', 'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'];
     let html = '';
 
     // 先渲染自定义分类（即使是空的也显示）
     for (const cat of state.customCategories) {
-        const files = customCategoryData[cat.key] || [];
-        
+        const files = filesForCategory(cat.key);
         const isExpanded = state.expandedCategories.has(cat.key);
-        const emptyHint = files.length === 0 ? '<div class="empty-category-hint">将文件拖到此分类或右键文件选择"移动到分类"</div>' : '';
-        
         html += `
-            <div class="category-item custom-category ${isExpanded ? 'expanded' : ''}" data-category="${cat.key}">
-                <div class="category-header" data-category="${cat.key}">
+            <div class="category-item custom-category ${isExpanded ? 'expanded' : ''}" data-category="${cat.key}" data-files-rendered="${isExpanded}">
+                <button class="category-header" type="button" data-category="${cat.key}" aria-expanded="${isExpanded}">
                     <span class="category-icon">${cat.icon}</span>
                     <span class="category-name">${escapeHtml(cat.name)}</span>
                     <span class="category-count">${files.length}</span>
                     <span class="category-arrow">▶</span>
-                </div>
+                </button>
                 <div class="category-files">
-                    ${files.length > 0 ? renderFileList(files) : emptyHint}
+                    ${isExpanded ? categoryFilesMarkup(cat.key, files) : ''}
                 </div>
             </div>
         `;
@@ -217,27 +217,22 @@ function renderCategoryList() {
     // 渲染默认分类
     for (const catKey of categoryOrder) {
         const catConfig = CATEGORIES[catKey];
-        let files = state.files[catConfig.key] || [];
-        
-        // 排除已分配到自定义分类的文件（最近使用分类除外）
-        if (catKey !== 'recent') {
-            files = files.filter(f => !customCategoryFiles.has(f.path));
-        }
+        const files = filesForCategory(catKey);
         
         if (files.length === 0) continue;
 
         const isExpanded = state.expandedCategories.has(catKey);
         
         html += `
-            <div class="category-item ${isExpanded ? 'expanded' : ''}" data-category="${catKey}">
-                <div class="category-header" data-category="${catKey}">
+            <div class="category-item ${isExpanded ? 'expanded' : ''}" data-category="${catKey}" data-files-rendered="${isExpanded}">
+                <button class="category-header" type="button" data-category="${catKey}" aria-expanded="${isExpanded}">
                     <span class="category-icon"><i class="${catConfig.icon}"></i></span>
                     <span class="category-name">${catConfig.name}</span>
                     <span class="category-count">${files.length}</span>
                     <span class="category-arrow">▶</span>
-                </div>
+                </button>
                 <div class="category-files">
-                    ${renderFileList(files)}
+                    ${isExpanded ? categoryFilesMarkup(catKey, files) : ''}
                 </div>
             </div>
         `;
@@ -563,6 +558,7 @@ function hydrateCachedDesktopSnapshot() {
     if (!snapshot) return false;
 
     state.files = snapshot.files;
+    rebuildSearchIndex();
     renderCategoryList();
     setDesktopStatus(`上次扫描 · 共 ${state.files.total_count} 个项目 · 正在同步`);
     return true;
@@ -582,7 +578,9 @@ async function loadDesktopFiles() {
         const scannedFiles = await scanPromise;
         const nextFingerprint = desktopSnapshotFingerprint(scannedFiles);
         state.files = scannedFiles;
+        rebuildSearchIndex();
         if (nextFingerprint !== previousFingerprint && !state.folderView.active) renderCategoryList();
+        if (state.isSearching && state.searchQuery) searchFiles(state.searchQuery);
         writeDesktopSnapshot(globalThis.localStorage, scannedFiles);
         lastSuccessfulScanAt = Date.now();
         if (!state.folderView.active) setDesktopStatus(`已同步 · 共 ${state.files.total_count} 个项目`);
@@ -607,8 +605,8 @@ async function loadDesktopFiles() {
 }
 
 let searchGeneration = 0;
-async function searchFiles(query) {
-    const generation = ++searchGeneration;
+function searchFiles(query) {
+    searchGeneration++;
     // 解析命令模式
     let categoryFilter = null;
     let searchTerm = query;
@@ -621,26 +619,20 @@ async function searchFiles(query) {
         }
     }
 
-    if (!searchTerm) {
+    if (!searchTerm && !categoryFilter) {
         state.searchResults = [];
         renderSearchResults();
         return;
     }
 
-    try {
-        const results = await invoke('desktop_search', {
-            query: searchTerm,
-            categoryFilter: categoryFilter,
-        });
-        if (generation !== searchGeneration) return;
-        state.searchResults = results;
-        renderSearchResults();
-    } catch (error) {
-        if (generation !== searchGeneration) return;
-        console.error('搜索失败:', error);
-        state.searchResults = [];
-        renderSearchResults();
-    }
+    const normalizedTerm = searchTerm.toLocaleLowerCase();
+    state.searchResults = state.searchIndex
+        .filter(({ file, normalizedName }) =>
+            (!categoryFilter || file.category === categoryFilter)
+            && (!normalizedTerm || normalizedName.includes(normalizedTerm)))
+        .slice(0, 200)
+        .map(entry => entry.file);
+    renderSearchResults();
 }
 
 // ============================================
@@ -775,6 +767,24 @@ function selectFileItem(fileItem) {
     }
 }
 
+function persistExpandedCategories() {
+    let existing = {};
+    try {
+        const parsed = JSON.parse(localStorage.getItem('desktopOrganizerPrefs') || '{}');
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+    } catch {
+        // A malformed legacy preference must not prevent future settings from being saved.
+    }
+    try {
+        localStorage.setItem('desktopOrganizerPrefs', JSON.stringify({
+            ...existing,
+            expandedCategories: Array.from(state.expandedCategories)
+        }));
+    } catch (error) {
+        console.error('保存分类展开状态失败:', error);
+    }
+}
+
 // 单击选中文件
 elements.categoryList.addEventListener('click', (e) => {
     const fileItem = e.target.closest('.file-item');
@@ -810,13 +820,22 @@ elements.categoryList.addEventListener('click', (e) => {
     const header = e.target.closest('.category-header');
     if (header) {
         const category = header.dataset.category;
-        if (state.expandedCategories.has(category)) {
+        const item = header.closest('.category-item');
+        const filesContainer = item.querySelector('.category-files');
+        const willExpand = !state.expandedCategories.has(category);
+        if (!willExpand) {
             state.expandedCategories.delete(category);
+            filesContainer.replaceChildren();
+            item.dataset.filesRendered = 'false';
+            if (item.querySelector('.file-item.selected')) state.selectedFile = null;
         } else {
             state.expandedCategories.add(category);
+            filesContainer.innerHTML = categoryFilesMarkup(category, filesForCategory(category));
+            item.dataset.filesRendered = 'true';
         }
-        const item = header.closest('.category-item');
-        item.classList.toggle('expanded');
+        item.classList.toggle('expanded', willExpand);
+        header.setAttribute('aria-expanded', String(willExpand));
+        persistExpandedCategories();
         return;
     }
 
@@ -837,12 +856,21 @@ elements.categoryList.addEventListener('dblclick', (e) => {
     }
 });
 
-elements.searchResultsList?.addEventListener('dblclick', (e) => {
+elements.searchResultsList?.addEventListener('click', (e) => {
+    const fileItem = e.target.closest('.file-item');
+    if (fileItem) selectFileItem(fileItem);
+});
+
+elements.searchResultsList?.addEventListener('dblclick', async (e) => {
     const fileItem = e.target.closest('.file-item');
     if (fileItem) {
         const path = fileItem.dataset.path;
-        if (path) {
-            openFile(path);
+        if (path && fileItem.dataset.isFolder === 'true') {
+            elements.searchInput.value = '';
+            elements.searchInput.dispatchEvent(new Event('input'));
+            await enterFolder({ path, name: fileItem.dataset.name });
+        } else if (path) {
+            await openFile(path);
         }
     }
 });
@@ -1519,10 +1547,17 @@ document.addEventListener('selectstart', (e) => {
 // 用户偏好
 // ============================================
 async function loadUserPreferences() {
+    let prefs = null;
     try {
-        const prefs = localStorage.getItem('desktopOrganizerPrefs');
-        if (prefs) {
-            const { width, height, positionX, expandedCategories } = JSON.parse(prefs);
+        const saved = localStorage.getItem('desktopOrganizerPrefs');
+        prefs = saved ? JSON.parse(saved) : null;
+    } catch {
+        localStorage.removeItem('desktopOrganizerPrefs');
+    }
+
+    try {
+        if (prefs && typeof prefs === 'object' && !Array.isArray(prefs)) {
+            const { width, height, positionX, expandedCategories } = prefs;
             if (Number.isFinite(width) && Number.isFinite(height) && width >= 400 && height >= 300) {
                 await appWindow.setSize({ type: 'Physical', width: Math.round(width), height: Math.round(height) });
             }
@@ -1534,10 +1569,14 @@ async function loadUserPreferences() {
                 state.expandedCategories = new Set(expandedCategories.filter(value => typeof value === 'string').slice(0, 64));
             }
         }
+    } catch (error) {
+        console.error('加载偏好失败:', error);
+    }
+    try {
         await invoke('clamp_desktop_organizer_window');
         await saveUserPreferences();
     } catch (error) {
-        console.error('加载偏好失败:', error);
+        console.error('校正桌面整理窗口失败:', error);
     }
 }
 

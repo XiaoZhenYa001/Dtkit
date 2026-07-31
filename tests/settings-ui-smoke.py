@@ -85,8 +85,8 @@ with sync_playwright() as playwright:
     page.on("pageerror", lambda error: page_errors.append(str(error)))
     open_settings(page)
 
-    assert page.locator("#settingsView .settings-section").count() == 5
-    assert page.locator(".settings-side-nav__item").count() == 5
+    assert page.locator("#settingsView .settings-section").count() == 6
+    assert page.locator(".settings-side-nav__item").count() == 6
     assert page.locator("#configSection button:disabled").count() == 2
     assert page.locator("#generalSection input:disabled").count() == 2
     assert page.locator("#minimizeModeOptions [data-minimize-mode]").count() == 3
@@ -177,7 +177,7 @@ with sync_playwright() as playwright:
         clientWidth: document.documentElement.clientWidth
     })""")
     assert mobile_layout["scrollWidth"] <= mobile_layout["clientWidth"]
-    assert mobile.locator(".settings-side-nav__item").count() == 5
+    assert mobile.locator(".settings-side-nav__item").count() == 6
     assert mobile.locator("#minimizeModeOptions").evaluate(
         "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
     ) == 1

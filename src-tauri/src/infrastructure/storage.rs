@@ -24,6 +24,8 @@ pub(crate) struct StorageLayout {
     pub(crate) kits: PathBuf,
     pub(crate) whiteboards: PathBuf,
     pub(crate) passwords: PathBuf,
+    pub(crate) snippets: PathBuf,
+    pub(crate) screenshots: PathBuf,
     pub(crate) backups: PathBuf,
     pub(crate) trash: PathBuf,
     pub(crate) config: PathBuf,
@@ -44,6 +46,8 @@ impl StorageLayout {
             kits: root.join("Kits"),
             whiteboards: root.join("Kits").join("Whiteboards"),
             passwords: root.join("Kits").join("Passwords"),
+            snippets: root.join("Kits").join("Snippets"),
+            screenshots: root.join("Kits").join("Screenshots"),
             backups: root.join("Backups"),
             trash: root.join("Trash"),
             config: root.join("Config"),
@@ -58,12 +62,14 @@ impl StorageLayout {
         }
     }
 
-    pub(crate) fn managed_directories(&self) -> [&Path; 12] {
+    pub(crate) fn managed_directories(&self) -> [&Path; 14] {
         [
             &self.downloads,
             &self.kits,
             &self.whiteboards,
             &self.passwords,
+            &self.snippets,
+            &self.screenshots,
             &self.backups,
             &self.trash,
             &self.config,
@@ -606,6 +612,7 @@ pub(crate) async fn migrate_storage_root(
         .replace_layout(result.layout.clone())?;
     app.state::<super::passwords::PasswordVaultManager>()
         .reset_for_storage_change();
+    app.state::<super::snippets::SnippetManager>().invalidate();
     Ok(result)
 }
 
@@ -675,6 +682,8 @@ mod tests {
         assert_eq!(layout.downloads, root.join("Downloads"));
         assert_eq!(layout.whiteboards, root.join("Kits").join("Whiteboards"));
         assert_eq!(layout.passwords, root.join("Kits").join("Passwords"));
+        assert_eq!(layout.snippets, root.join("Kits").join("Snippets"));
+        assert_eq!(layout.screenshots, root.join("Kits").join("Screenshots"));
         assert_eq!(
             layout.temp_transfer,
             root.join("Kits").join("TransferStation")

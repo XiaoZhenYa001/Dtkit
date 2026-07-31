@@ -99,7 +99,7 @@ def run():
             "nodes => nodes.map(node => node.getAttribute('href'))"
         )
         assert nav_targets == [
-            "#storageSection", "#shortcutsSection", "#configSection",
+            "#storageSection", "#shortcutsSection", "#toolModulesSection", "#configSection",
             "#desktopSection", "#generalSection"
         ]
 
