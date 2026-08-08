@@ -9,6 +9,8 @@ import {
     pauseAlarmTaskSchedule,
     prepareAlarmTaskSchedule
 } from '../src/core/alarmService.js';
+import { formatAlarmDuration } from '../src/tools/alarm-clock/taskListView.js';
+import { createAlarmTask } from '../src/tools/alarm-clock/taskFactory.js';
 
 function countdownTask(seconds = 60) {
     return {
@@ -71,6 +73,39 @@ test('legacy repeating alarms are migrated to an explicit all-days schedule', ()
     normalizeAlarmTask(task);
     assert.equal(task.config.repeatEnabled, true);
     assert.deepEqual(task.config.repeatDays, [0, 1, 2, 3, 4, 5, 6]);
+});
+
+test('alarm duration formatting is stable for fractional and long durations', () => {
+    assert.equal(formatAlarmDuration(0), '00:00:00');
+    assert.equal(formatAlarmDuration(61.2), '00:01:02');
+    assert.equal(formatAlarmDuration(100 * 60 * 60), '100:00:00');
+});
+
+test('alarm task factory validates schedules and produces serializable tasks', () => {
+    const { task } = createAlarmTask({
+        name: '喝水',
+        type: 'interval',
+        action: 'notify',
+        intervalValue: '30',
+        intervalUnit: 'minutes'
+    }, { id: 'alarm-1', now: new Date('2026-08-08T00:00:00.000Z') });
+    assert.deepEqual(task, {
+        id: 'alarm-1',
+        name: '喝水',
+        type: 'interval',
+        action: 'notify',
+        enabled: true,
+        paused: false,
+        createdAt: '2026-08-08T00:00:00.000Z',
+        config: { intervalValue: 30, intervalUnit: 'minutes', intervalMs: 1_800_000 }
+    });
+
+    assert.equal(createAlarmTask({
+        name: '错误倒计时', type: 'countdown', action: 'notify', hours: 0, minutes: 60, seconds: 0
+    }).error, '倒计时时间超出有效范围');
+    assert.equal(createAlarmTask({
+        name: '无重复日', type: 'fixed', action: 'notify', time: '09:00', repeatEnabled: true
+    }).error, '重复提醒至少选择一天');
 });
 
 test('alarm tool contains only the visible countdown refresh interval', async () => {

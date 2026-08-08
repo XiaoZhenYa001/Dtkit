@@ -6,6 +6,14 @@ import '../../css/tools/alarm-clock.css';
  */
 import { registerTool } from '../toolRegistry.js';
 import { showToast } from '../../core/utils.js';
+import { getAlarmTemplate } from './template.js';
+import { formatAlarmDuration, renderAlarmTaskList } from './taskListView.js';
+import {
+    clearAlarmNotifications,
+    removeAlarmNotification,
+    showSoundAlarmNotification
+} from './notifications.js';
+import { createAlarmTask } from './taskFactory.js';
 import {
     ALARM_TRIGGER_EVENT,
     getAlarmRemainingSeconds,
@@ -89,179 +97,6 @@ function revokeBlobUrl(url) {
         }
     }
 }
-
-// 任务类型映射
-const TASK_TYPES = {
-    countdown: '倒计时',
-    fixed: '固定时间',
-    hourly: '整点报时',
-    interval: '间隔提醒'
-};
-
-// 动作类型映射
-const ACTION_TYPES = {
-    notify: '弹出消息通知',
-    sound: '播放提示音',
-    run: '运行程序或脚本',
-    shutdown: '关闭电脑',
-    lock: '锁定屏幕'
-};
-
-// ============================================
-// HTML 模板
-// ============================================
-function getTemplate() {
-    return `
-        <div class="view-container alarm-clock-view">
-            <!-- 顶部统计栏 -->
-            <div class="alarm-header-stats">
-                <div class="alarm-stat-card">
-                    <div class="alarm-stat-label">活跃任务</div>
-                    <div class="alarm-stat-value" id="activeTaskCount">0</div>
-                </div>
-                <div class="alarm-stat-card">
-                    <div class="alarm-stat-label">今日已完成</div>
-                    <div class="alarm-stat-value" id="completedTodayCount">0</div>
-                </div>
-                <div class="alarm-stat-card">
-                    <div class="alarm-stat-label">距离下个提醒</div>
-                    <div class="alarm-stat-value alarm-stat-value--accent" id="nextAlarmCountdown">--:--:--</div>
-                </div>
-                <button id="stopAllAlarmsBtn" class="alarm-stop-all-btn" title="停止所有正在播放的闹钟">
-                    <i class="ri-stop-circle-line"></i> 停止所有闹钟
-                </button>
-            </div>
-
-            <!-- 主体布局 -->
-            <div class="alarm-main-container">
-                <!-- 左侧配置面板 -->
-                <div class="alarm-config-panel">
-                    <h3 class="alarm-panel-title">
-                        <i class="ri-add-circle-line"></i> 新建定时任务
-                    </h3>
-
-                    <div class="alarm-input-group">
-                        <label class="alarm-label">任务名称</label>
-                        <input type="text" id="alarmTaskName" class="alarm-input" maxlength="80"
-                            placeholder="例如：该喝水了、下班打卡...">
-                    </div>
-
-                    <div class="alarm-input-group">
-                        <label class="alarm-label">定时类型</label>
-                        <select id="alarmTaskType" class="alarm-select">
-                            <option value="countdown">倒计时</option>
-                            <option value="fixed">固定时间</option>
-                            <option value="hourly">整点报时</option>
-                            <option value="interval">间隔提醒</option>
-                        </select>
-                    </div>
-
-                    <div class="alarm-input-group" id="timeInputGroup">
-                        <label class="alarm-label" id="timeInputLabel">设定时间</label>
-                        <input type="time" id="alarmTimeInput" class="alarm-input" value="09:00">
-                        <!-- 倒计时专用输入 -->
-                        <div id="countdownInputs" class="alarm-countdown-inputs is-initially-hidden">
-                            <input type="number" id="countdownHours" class="alarm-input alarm-input--small"
-                                min="0" max="23" value="0" placeholder="时">
-                            <span class="alarm-time-sep">:</span>
-                            <input type="number" id="countdownMinutes" class="alarm-input alarm-input--small"
-                                min="0" max="59" value="5" placeholder="分">
-                            <span class="alarm-time-sep">:</span>
-                            <input type="number" id="countdownSeconds" class="alarm-input alarm-input--small"
-                                min="0" max="59" value="0" placeholder="秒">
-                        </div>
-                        <!-- 间隔提醒专用输入 -->
-                        <div id="intervalInputs" class="alarm-interval-inputs is-initially-hidden">
-                            <span class="alarm-interval-text">每隔</span>
-                            <input type="number" id="intervalValue" class="alarm-input alarm-input--small"
-                                min="1" max="999" value="30">
-                            <select id="intervalUnit" class="alarm-select alarm-select--small">
-                                <option value="minutes">分钟</option>
-                                <option value="hours">小时</option>
-                            </select>
-                            <span class="alarm-interval-text">提醒一次</span>
-                        </div>
-                    </div>
-
-                    <div class="alarm-input-group">
-                        <label class="alarm-label">执行动作</label>
-                        <select id="alarmActionType" class="alarm-select">
-                            <option value="notify">弹出消息通知</option>
-                            <option value="sound">播放提示音</option>
-                            <option value="run">运行程序或脚本</option>
-                            <option value="shutdown">关闭电脑 (Shutdown)</option>
-                            <option value="lock">锁定屏幕</option>
-                        </select>
-                    </div>
-
-                    <!-- 动态配置区域 -->
-                    <div id="actionConfigArea" class="alarm-action-config">
-                        <!-- 根据选择的动作类型动态显示 -->
-                    </div>
-
-                    <div class="alarm-input-group">
-                        <label class="alarm-label">重复设置</label>
-                        <div class="alarm-repeat-options">
-                            <label class="alarm-checkbox-label">
-                                <input type="checkbox" id="repeatEnabled" checked>
-                                <span>启用重复</span>
-                            </label>
-                            <div id="repeatDaysGroup" class="alarm-repeat-days">
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="1" checked>
-                                    <span>一</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="2" checked>
-                                    <span>二</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="3" checked>
-                                    <span>三</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="4" checked>
-                                    <span>四</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="5" checked>
-                                    <span>五</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="6">
-                                    <span>六</span>
-                                </label>
-                                <label class="alarm-day-checkbox">
-                                    <input type="checkbox" name="repeatDay" value="0">
-                                    <span>日</span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button id="addTaskBtn" class="alarm-btn-add">
-                        <i class="ri-add-line"></i> 添加到任务列表
-                    </button>
-                </div>
-
-                <!-- 右侧任务列表 -->
-                <div class="alarm-list-panel" id="taskListPanel">
-                    <div class="alarm-list-empty" id="emptyListHint">
-                        <i class="ri-alarm-line"></i>
-                        <p>暂无定时任务</p>
-                        <p class="alarm-list-empty-sub">在左侧创建你的第一个任务吧</p>
-                    </div>
-                    <!-- 任务项将动态添加到这里 -->
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// ============================================
-// CSS 样式
-// ============================================
-
 
 // ============================================
 // 初始化函数
@@ -620,118 +455,33 @@ function bindFileSelector() {
 // 添加任务
 // ============================================
 function addTask() {
-    const taskName = document.getElementById('alarmTaskName')?.value.trim();
-    const taskType = document.getElementById('alarmTaskType')?.value;
-    const actionType = document.getElementById('alarmActionType')?.value;
-
-    if (!taskName) {
-        showToast('请输入任务名称', 'warning');
-        return;
-    }
-
     if (alarmState.tasks.length >= MAX_ALARM_TASKS) {
         showToast(`最多创建 ${MAX_ALARM_TASKS} 个闹钟任务`, 'warning');
         return;
     }
 
-    // 构建任务对象
-    const task = {
-        id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        name: taskName,
-        type: taskType,
-        action: actionType,
-        enabled: true,
-        paused: false,  // 新增：暂停状态
-        createdAt: new Date().toISOString(),
-        config: {}
-    };
-
-    // 根据任务类型获取时间配置
-    switch (taskType) {
-        case 'countdown':
-            const hours = Number(document.getElementById('countdownHours')?.value || 0);
-            const minutes = Number(document.getElementById('countdownMinutes')?.value || 0);
-            const seconds = Number(document.getElementById('countdownSeconds')?.value || 0);
-            if (!Number.isInteger(hours) || hours < 0 || hours > 23
-                || !Number.isInteger(minutes) || minutes < 0 || minutes > 59
-                || !Number.isInteger(seconds) || seconds < 0 || seconds > 59) {
-                showToast('倒计时时间超出有效范围', 'warning');
-                return;
-            }
-            const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-
-            if (totalSeconds <= 0) {
-                showToast('请设置有效的倒计时时长', 'warning');
-                return;
-            }
-
-            task.config.totalSeconds = totalSeconds;
-            task.config.remainingSeconds = totalSeconds;
-            break;
-
-        case 'fixed':
-            const timeValue = document.getElementById('alarmTimeInput')?.value;
-            if (!timeValue) {
-                showToast('请设置执行时间', 'warning');
-                return;
-            }
-            task.config.time = timeValue;
-            task.config.repeatEnabled = document.getElementById('repeatEnabled')?.checked !== false;
-            task.config.repeatDays = getSelectedRepeatDays();
-            if (task.config.repeatEnabled && task.config.repeatDays.length === 0) {
-                showToast('重复提醒至少选择一天', 'warning');
-                return;
-            }
-            break;
-
-        case 'hourly':
-            task.config.repeatEnabled = document.getElementById('repeatEnabled')?.checked !== false;
-            task.config.repeatDays = getSelectedRepeatDays();
-            if (task.config.repeatEnabled && task.config.repeatDays.length === 0) {
-                showToast('重复提醒至少选择一天', 'warning');
-                return;
-            }
-            break;
-
-        case 'interval':
-            const intervalValue = Number(document.getElementById('intervalValue')?.value || 30);
-            const intervalUnit = document.getElementById('intervalUnit')?.value || 'minutes';
-            if (!Number.isInteger(intervalValue) || intervalValue < 1 || intervalValue > 999) {
-                showToast('提醒间隔必须是 1 到 999 的整数', 'warning');
-                return;
-            }
-            const intervalMs = intervalUnit === 'hours'
-                ? intervalValue * 3600 * 1000
-                : intervalValue * 60 * 1000;
-
-            task.config.intervalMs = intervalMs;
-            task.config.intervalValue = intervalValue;
-            task.config.intervalUnit = intervalUnit;
-            break;
-    }
-
-    // 根据动作类型获取额外配置
-    switch (actionType) {
-        case 'sound':
-            const selectedAudio = document.querySelector('.alarm-audio-item.selected');
-            if (selectedAudio) {
-                task.config.audioPath = selectedAudio.dataset.audioPath;
-                task.config.audioName = selectedAudio.dataset.audioName;
-            } else if (alarmState.availableAudioFiles.length > 0) {
-                // 默认选择第一个音频
-                task.config.audioPath = alarmState.availableAudioFiles[0].path;
-                task.config.audioName = alarmState.availableAudioFiles[0].name;
-            }
-            break;
-
-        case 'run':
-            const filePath = document.getElementById('selectedFilePath')?.textContent;
-            if (filePath === '未选择文件' || !filePath) {
-                showToast('请选择要运行的程序', 'warning');
-                return;
-            }
-            task.config.filePath = filePath;
-            break;
+    const selectedAudio = document.querySelector('.alarm-audio-item.selected');
+    const fallbackAudio = alarmState.availableAudioFiles[0];
+    const { task, error } = createAlarmTask({
+        name: document.getElementById('alarmTaskName')?.value,
+        type: document.getElementById('alarmTaskType')?.value,
+        action: document.getElementById('alarmActionType')?.value,
+        hours: document.getElementById('countdownHours')?.value,
+        minutes: document.getElementById('countdownMinutes')?.value,
+        seconds: document.getElementById('countdownSeconds')?.value,
+        time: document.getElementById('alarmTimeInput')?.value,
+        intervalValue: document.getElementById('intervalValue')?.value,
+        intervalUnit: document.getElementById('intervalUnit')?.value || 'minutes',
+        repeatEnabled: document.getElementById('repeatEnabled')?.checked !== false,
+        repeatDays: getSelectedRepeatDays(),
+        audio: selectedAudio
+            ? { path: selectedAudio.dataset.audioPath, name: selectedAudio.dataset.audioName }
+            : fallbackAudio,
+        filePath: document.getElementById('selectedFilePath')?.textContent
+    });
+    if (error) {
+        showToast(error, 'warning');
+        return;
     }
 
     // 添加到任务列表顶部（新任务在最前面）
@@ -752,7 +502,7 @@ function addTask() {
     // 重置表单
     resetForm();
 
-    showToast(`任务"${taskName}"已添加`, 'success');
+    showToast(`任务"${task.name}"已添加`, 'success');
 }
 
 // ============================================
@@ -821,11 +571,7 @@ function stopTask(taskId) {
         }
     }
 
-    // 移除遮罩层和 Toast
-    const overlay = document.getElementById(`alarm-overlay-${taskId}`);
-    if (overlay) overlay.remove();
-    const toast = document.getElementById(`alarm-toast-${taskId}`);
-    if (toast) toast.remove();
+    removeAlarmNotification(taskId, { animate: false });
 }
 
 // ============================================
@@ -903,196 +649,6 @@ function deleteTask(taskId) {
 }
 
 // ============================================
-// 显示通知（带音频控制）
-// ============================================
-async function showNotification(task, audioController = null) {
-    const taskId = task.id;
-
-    // 使用 Tauri v2 notification 插件（优先）
-    if (window.__TAURI__?.notification) {
-        try {
-            // 检查权限
-            let permissionGranted = await window.__TAURI__.notification.isPermissionGranted();
-            if (!permissionGranted) {
-                const permission = await window.__TAURI__.notification.requestPermission();
-                permissionGranted = permission === 'granted';
-            }
-
-            if (permissionGranted) {
-                // 发送系统通知
-                await window.__TAURI__.notification.sendNotification({
-                    title: '⏰ 闹钟响了！',
-                    body: `${task.name}`,
-                });
-                console.log('[AlarmClock] 系统通知已发送');
-
-                // 尝试聚焦窗口让用户能看到应用内的停止按钮
-                try {
-                    const { getCurrentWindow } = window.__TAURI__.window;
-                    if (getCurrentWindow) {
-                        const win = getCurrentWindow();
-                        await win.setFocus();
-                        await win.unminimize();
-                    }
-                } catch (e) {
-                    console.log('[AlarmClock] 聚焦窗口失败:', e);
-                }
-            }
-        } catch (err) {
-            console.error('[AlarmClock] Tauri通知失败:', err);
-        }
-    }
-
-    // 使用浏览器通知作为备选（当Tauri通知不可用时）
-    if (!window.__TAURI__?.notification && 'Notification' in window) {
-        if (Notification.permission === 'granted') {
-            const notification = new Notification('⏰ 定时提醒', {
-                body: task.name,
-                icon: '/src/assets/icon.png',
-                requireInteraction: true, // 保持通知直到用户交互
-                tag: `alarm-${taskId}` // 使用tag防止重复通知
-            });
-
-            // 点击通知时聚焦窗口
-            notification.onclick = () => {
-                window.focus();
-            };
-        } else if (Notification.permission !== 'denied') {
-            Notification.requestPermission().then(permission => {
-                if (permission === 'granted') {
-                    new Notification('⏰ 定时提醒', {
-                        body: task.name,
-                        icon: '/src/assets/icon.png',
-                        requireInteraction: true,
-                        tag: `alarm-${taskId}`
-                    });
-                }
-            });
-        }
-    }
-
-    // 如果有音频控制器，显示带关闭按钮的Toast
-    if (audioController) {
-        showToastWithAudioControl(task, audioController);
-    } else {
-        // 普通Toast
-        showToast(`⏰ ${task.name}`, 'info');
-    }
-}
-
-// 显示带音频控制的Toast（持久显示，不会自动消失）
-function showToastWithAudioControl(task, audioController) {
-    // 移除已存在的闹钟遮罩和toast
-    const existingOverlay = document.querySelector('.alarm-overlay');
-    if (existingOverlay) {
-        existingOverlay.remove();
-    }
-    const existingToast = document.querySelector('.dtkit-toast--alarm');
-    if (existingToast) {
-        existingToast.remove();
-    }
-
-    // 创建半透明遮罩层（确保用户注意到闹钟）
-    const overlay = document.createElement('div');
-    overlay.className = 'alarm-overlay';
-    overlay.id = `alarm-overlay-${task.id}`;
-
-    // 点击遮罩层也可以关闭闹钟
-    overlay.addEventListener('click', () => {
-        dismissAlarm();
-    });
-
-    document.body.appendChild(overlay);
-
-    // 关闭闹钟的函数 - 彻底清理所有资源
-    function dismissAlarm() {
-        console.log(`[AlarmClock] 用户关闭闹钟: ${task.name}`);
-
-        audioController.stop = true;
-
-        // 清除 setTimeout
-        if (audioController.timeoutId) {
-            clearTimeout(audioController.timeoutId);
-            audioController.timeoutId = null;
-        }
-
-        if (audioController.audio) {
-            // 移除事件监听器
-            if (audioController.onError) {
-                audioController.audio.removeEventListener('error', audioController.onError);
-                audioController.onError = null;
-            }
-
-            audioController.audio.pause();
-            audioController.audio.loop = false; // 重置 loop 属性
-            audioController.audio.src = '';
-            audioController.audio.load(); // 强制释放
-        }
-
-        // 释放 Blob URL
-        if (audioController.blobUrl) {
-            revokeBlobUrl(audioController.blobUrl);
-            audioController.blobUrl = null;
-        }
-
-        // 清空引用
-        audioController.audio = null;
-
-        // 清理控制器
-        alarmState.activeLoopControllers.delete(task.id);
-        if (alarmState.currentPlayingAudio === audioController) {
-            alarmState.currentPlayingAudio = null;
-        }
-
-        // 移除遮罩层
-        const overlayEl = document.getElementById(`alarm-overlay-${task.id}`);
-        if (overlayEl) {
-            overlayEl.classList.add('alarm-overlay--closing');
-            setTimeout(() => overlayEl.remove(), 300);
-        }
-
-        // 移除 Toast
-        const toastEl = document.getElementById(`alarm-toast-${task.id}`);
-        if (toastEl) {
-            toastEl.classList.add('dtkit-toast--alarm-closing');
-            setTimeout(() => toastEl.remove(), 300);
-        }
-
-        showToast('✓ 闹钟已停止', 'success');
-
-        // 处理队列中的下一个
-        processNextAudioInQueue();
-
-        console.log(`[AlarmClock] 闹钟资源已完全释放: ${task.name}`);
-    }
-
-    const toast = document.createElement('div');
-    toast.className = 'dtkit-toast dtkit-toast--alarm';
-
-    toast.id = `alarm-toast-${task.id}`;
-    toast.innerHTML = `
-        <div class="alarm-toast__content">
-            <i class="ri-alarm-warning-line alarm-toast__icon"></i>
-            <div class="alarm-toast__body">
-                <div class="alarm-toast__title">⏰ 闹钟响了！</div>
-                <div class="alarm-toast__task">${escapeHtml(task.name)}</div>
-            </div>
-            <button id="dismissAlarmBtn-${task.id}" class="alarm-dismiss-btn">🔔 停止闹钟</button>
-        </div>
-    `;
-
-    document.body.appendChild(toast);
-
-    const dismissBtn = document.getElementById(`dismissAlarmBtn-${task.id}`);
-    if (dismissBtn) {
-        dismissBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); // 防止事件冒泡到遮罩层
-            dismissAlarm();
-        });
-    }
-}
-
-// ============================================
 // 音频播放队列管理
 // ============================================
 
@@ -1164,9 +720,9 @@ async function playAudioLoop(task) {
     alarmState.currentPlayingAudio = controller;
     alarmState.activeLoopControllers.set(task.id, controller);
 
-    // Rust 已发送系统通知时，只保留应用内停止控件，避免重复通知。
-    if (task.__backendTriggered) showToastWithAudioControl(task, controller);
-    else showNotification(task, controller);
+    void showSoundAlarmNotification(task, cleanup, () => !controller.stop).catch(error => {
+        console.error('[AlarmClock] 显示闹钟通知失败', error);
+    });
 
     // 使用原生 loop 属性实现无缝循环播放
     audio.loop = true;
@@ -1276,19 +832,7 @@ async function playAudioLoop(task) {
             alarmState.currentPlayingAudio = null;
         }
 
-        // 移除对应的遮罩层
-        const overlay = document.getElementById(`alarm-overlay-${controller.taskId}`);
-        if (overlay) {
-            overlay.style.animation = 'overlayFadeOut 0.3s ease forwards';
-            setTimeout(() => overlay.remove(), 300);
-        }
-
-        // 移除对应的 toast
-        const toast = document.getElementById(`alarm-toast-${controller.taskId}`);
-        if (toast) {
-            toast.style.animation = 'alarmToastOut 0.3s ease forwards';
-            setTimeout(() => toast.remove(), 300);
-        }
+        removeAlarmNotification(controller.taskId);
 
         // 处理队列中的下一个
         processNextAudioInQueue();
@@ -1434,9 +978,7 @@ function stopAllAudio() {
     });
     alarmState.activeLoopControllers.clear();
 
-    // 移除所有遮罩层和 Toast（同时使用 id 和 class 选择器确保完整清理）
-    document.querySelectorAll('[id^="alarm-overlay-"], .alarm-overlay').forEach(el => el.remove());
-    document.querySelectorAll('[id^="alarm-toast-"], .dtkit-toast--alarm').forEach(el => el.remove());
+    clearAlarmNotifications();
 
     console.log('[AlarmClock] 已停止所有音频播放，资源已释放');
 }
@@ -1497,183 +1039,21 @@ function renderTaskList() {
     const panel = document.getElementById('taskListPanel');
     if (!panel) return;
 
-    // 清空现有内容
-    panel.innerHTML = '';
-
-    if (alarmState.tasks.length === 0) {
-        panel.innerHTML = `
-            <div class="alarm-list-empty" id="emptyListHint">
-                <i class="ri-alarm-line"></i>
-                <p>暂无定时任务</p>
-                <p class="alarm-list-empty-sub">在左侧创建你的第一个任务吧</p>
-            </div>`;
-        return;
-    }
-
-    // 渲染任务卡片
-    alarmState.tasks.forEach(task => {
-        const card = createTaskCard(task);
-        panel.appendChild(card);
-    });
-
-    // 初始化拖拽排序
-    initTaskReordering();
-}
-
-// ============================================
-// 初始化原生拖拽排序
-// ============================================
-function initTaskReordering() {
-    const panel = document.getElementById('taskListPanel');
-    if (!panel || alarmState.tasks.length === 0) return;
-
-    let draggedCard = null;
-    panel.querySelectorAll('.alarm-task-card').forEach(card => {
-        const handle = card.querySelector('.alarm-task-drag-handle');
-        handle?.addEventListener('pointerdown', () => {
-            card.draggable = true;
-        });
-        card.addEventListener('dragstart', event => {
-            draggedCard = card;
-            card.classList.add('sortable-drag', 'sortable-chosen');
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', card.dataset.taskId || '');
-            if (navigator.vibrate) navigator.vibrate(15);
-        });
-        card.addEventListener('dragend', () => {
-            card.draggable = false;
-            card.classList.remove('sortable-drag', 'sortable-chosen');
-            panel.querySelectorAll('.sortable-ghost').forEach(item => item.classList.remove('sortable-ghost'));
-            draggedCard = null;
-        });
-    });
-
-    panel.ondragover = event => {
-        event.preventDefault();
-        const target = event.target.closest('.alarm-task-card');
-        if (!draggedCard || !target || target === draggedCard) return;
-        const rect = target.getBoundingClientRect();
-        target.classList.add('sortable-ghost');
-        panel.insertBefore(draggedCard, event.clientY < rect.top + rect.height / 2 ? target : target.nextSibling);
-    };
-    panel.ondrop = event => {
-        event.preventDefault();
-        const taskById = new Map(alarmState.tasks.map(task => [task.id, task]));
-        alarmState.tasks = [...panel.querySelectorAll('.alarm-task-card')]
-            .map(card => taskById.get(card.dataset.taskId))
-            .filter(Boolean);
-        saveTasks({ sync: false });
-    };
-}
-
-// ============================================
-// 创建任务卡片
-// ============================================
-function createTaskCard(task) {
-    const card = document.createElement('div');
-
-    // 确定卡片状态类
-    let statusClass = '';
-    if (!task.enabled) {
-        statusClass = 'disabled';
-    } else if (task.paused) {
-        statusClass = 'paused';
-    }
-
-    card.className = `alarm-task-card ${statusClass}`;
-    card.dataset.taskId = task.id;
-
-    const countdown = getTaskCountdown(task);
-
-    // 确定按钮状态
-    const isRunning = task.enabled && !task.paused;
-    const isPaused = task.enabled && task.paused;
-    const isCompleted = !task.enabled && task.type === 'countdown' && task.config.remainingSeconds <= 0;
-
-    let actionButtons = '';
-    if (!task.enabled && !isCompleted) {
-        // 已停止的任务：显示启动按钮
-        actionButtons = `
-            <button class="alarm-task-btn alarm-task-btn--start"
-                data-task-id="${task.id}" title="启动任务">
-                <i class="ri-play-line"></i>
-            </button>
-        `;
-    } else if (isCompleted) {
-        // 已完成的倒计时任务：显示重新开始按钮
-        actionButtons = `
-            <button class="alarm-task-btn alarm-task-btn--restart"
-                data-task-id="${task.id}" title="重新开始">
-                <i class="ri-refresh-line"></i>
-            </button>
-        `;
-    } else if (isPaused) {
-        // 已暂停：显示恢复按钮
-        actionButtons = `
-            <button class="alarm-task-btn alarm-task-btn--resume"
-                data-task-id="${task.id}" title="恢复任务">
-                <i class="ri-play-line"></i>
-            </button>
-        `;
-    } else if (isRunning) {
-        // 运行中：显示暂停按钮
-        actionButtons = `
-            <button class="alarm-task-btn alarm-task-btn--pause"
-                data-task-id="${task.id}" title="暂停任务">
-                <i class="ri-pause-line"></i>
-            </button>
-        `;
-    }
-
-    card.innerHTML = `
-        <div class="alarm-task-drag-handle" title="拖拽排序">
-            <i class="ri-drag-move-2-line"></i>
-        </div>
-        <div class="alarm-task-countdown ${isPaused ? 'paused-state' : ''}" data-countdown-id="${task.id}">
-            ${countdown}
-        </div>
-        <div class="alarm-task-info">
-            <div class="alarm-task-name">${escapeHtml(task.name)}</div>
-            <div class="alarm-task-meta">
-                <span class="alarm-task-meta-item">
-                    <i class="ri-time-line"></i> ${TASK_TYPES[task.type]}
-                </span>
-                <span class="alarm-task-meta-item">
-                    <i class="ri-play-circle-line"></i> ${ACTION_TYPES[task.action]}
-                </span>
-                ${isPaused ? '<span class="alarm-task-paused-badge"><i class="ri-pause-circle-line"></i> 已暂停</span>' : ''}
-            </div>
-        </div>
-        <div class="alarm-task-actions">
-            ${actionButtons}
-            <button class="alarm-task-btn alarm-task-btn--delete"
-                data-task-id="${task.id}" title="删除">
-                <i class="ri-delete-bin-line"></i>
-            </button>
-        </div>
-        ${isPaused ? '<div class="alarm-task-paused-overlay"><i class="ri-pause-circle-line"></i></div>' : ''}
-    `;
-
-    // 绑定按钮事件
-    const pauseBtn = card.querySelector('.alarm-task-btn--pause');
-    const resumeBtn = card.querySelector('.alarm-task-btn--resume');
-    const startBtn = card.querySelector('.alarm-task-btn--start');
-    const restartBtn = card.querySelector('.alarm-task-btn--restart');
-    const deleteBtn = card.querySelector('.alarm-task-btn--delete');
-
-    if (pauseBtn) pauseBtn.addEventListener('click', () => pauseTask(task.id));
-    if (resumeBtn) resumeBtn.addEventListener('click', () => resumeTask(task.id));
-    if (startBtn) startBtn.addEventListener('click', () => toggleTask(task.id));
-    if (restartBtn) {
-        restartBtn.addEventListener('click', () => {
-            // 重新开始倒计时任务
+    renderAlarmTaskList(panel, alarmState.tasks, {
+        getCountdown: getTaskCountdown,
+        onPause: pauseTask,
+        onResume: resumeTask,
+        onToggle: toggleTask,
+        onRestart(task) {
             task.config.remainingSeconds = task.config.totalSeconds;
             toggleTask(task.id);
-        });
-    }
-    if (deleteBtn) deleteBtn.addEventListener('click', () => deleteTask(task.id));
-
-    return card;
+        },
+        onDelete: deleteTask,
+        onReorder(tasks) {
+            alarmState.tasks = tasks;
+            saveTasks({ sync: false });
+        }
+    });
 }
 
 // ============================================
@@ -1682,20 +1062,12 @@ function createTaskCard(task) {
 function getTaskCountdown(task) {
     if (!task.enabled) return '--:--:--';
     const remainingSeconds = getAlarmRemainingSeconds(task, Date.now(), { includePaused: true });
-    return Number.isFinite(remainingSeconds) ? formatSeconds(remainingSeconds) : '--:--:--';
+    return Number.isFinite(remainingSeconds) ? formatAlarmDuration(remainingSeconds) : '--:--:--';
 }
 
 // ============================================
 // 格式化秒数
 // ============================================
-function formatSeconds(seconds) {
-    if (seconds <= 0) return '00:00:00';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
 // ============================================
 // 更新统计信息
 // ============================================
@@ -1727,7 +1099,7 @@ function updateNextAlarmCountdown() {
     if (minSeconds === Infinity) {
         countdownEl.textContent = '--:--:--';
     } else {
-        countdownEl.textContent = formatSeconds(minSeconds);
+        countdownEl.textContent = formatAlarmDuration(minSeconds);
     }
 }
 
@@ -1800,15 +1172,6 @@ export async function handleBackgroundAlarmTrigger(task) {
 }
 
 // ============================================
-// HTML 转义
-// ============================================
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// ============================================
 // 销毁函数
 // ============================================
 function destroy() {
@@ -1863,7 +1226,7 @@ registerTool({
     icon: 'ri-alarm-line',
     description: '创建倒计时、固定时间、整点报时、间隔提醒等定时任务',
     category: 'utility',
-    template: getTemplate,
+    template: getAlarmTemplate,
     init,
     destroy
 });
