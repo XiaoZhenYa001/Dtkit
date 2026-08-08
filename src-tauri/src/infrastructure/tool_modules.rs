@@ -101,8 +101,7 @@ fn persist(app: &AppHandle, disabled_tool_ids: &[String]) -> Result<(), String> 
     fs::write(&temporary, bytes).map_err(|error| format!("写入工具模块配置失败: {error}"))?;
     if path.is_file() {
         let _ = fs::remove_file(&backup);
-        fs::rename(&path, &backup)
-            .map_err(|error| format!("备份工具模块配置失败: {error}"))?;
+        fs::rename(&path, &backup).map_err(|error| format!("备份工具模块配置失败: {error}"))?;
     }
     if let Err(error) = fs::rename(&temporary, &path) {
         if backup.is_file() {

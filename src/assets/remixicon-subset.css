@@ -26,6 +26,7 @@
 .ri-arrow-left-right-line:before { content: "\ea62"; }
 .ri-arrow-left-s-line:before { content: "\ea64"; }
 .ri-arrow-right-line:before { content: "\ea6c"; }
+.ri-arrow-down-line:before { content: "\ea4c"; }
 .ri-arrow-right-s-line:before { content: "\ea6e"; }
 .ri-arrow-right-up-line:before { content: "\ea70"; }
 .ri-attachment-2:before { content: "\ea84"; }
@@ -48,6 +49,9 @@
 .ri-contrast-2-line:before { content: "\ebd4"; }
 .ri-css3-line:before { content: "\ec04"; }
 .ri-cursor-line:before { content: "\ec0a"; }
+.ri-checkbox-fill:before { content: "\eb82"; }
+.ri-circle-line:before { content: "\f3c2"; }
+.ri-layout-row-line:before { content: "\ee9d"; }
 .ri-dashboard-line:before { content: "\ec14"; }
 .ri-database-2-line:before { content: "\ec16"; }
 .ri-delete-bin-6-line:before { content: "\ec26"; }
@@ -119,6 +123,7 @@
 .ri-search-line:before { content: "\f0d1"; }
 .ri-settings-3-line:before { content: "\f0e6"; }
 .ri-shape-line:before { content: "\f0f2"; }
+.ri-rounded-corner:before { content: "\f099"; }
 .ri-shield-check-line:before { content: "\f100"; }
 .ri-shield-flash-line:before { content: "\f105"; }
 .ri-speed-line:before { content: "\f177"; }

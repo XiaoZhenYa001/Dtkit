@@ -45,6 +45,19 @@ export function prepareAlarmTaskSchedule(task, { restart = false } = {}) {
     return task;
 }
 
+export function normalizeAlarmTask(task) {
+    if (!task || typeof task !== 'object') return task;
+    if (!task.config || typeof task.config !== 'object') task.config = {};
+    if (task.type === 'fixed' || task.type === 'hourly') {
+        if (task.config.repeatEnabled === undefined) task.config.repeatEnabled = true;
+        if (task.config.repeatEnabled && (!Array.isArray(task.config.repeatDays)
+            || task.config.repeatDays.length === 0)) {
+            task.config.repeatDays = [0, 1, 2, 3, 4, 5, 6];
+        }
+    }
+    return task;
+}
+
 export function pauseAlarmTaskSchedule(task) {
     if (!task?.config) return task;
     const now = Date.now();
@@ -67,6 +80,67 @@ export function getCountdownRemainingSeconds(task, now = Date.now()) {
     return Math.max(0, Math.ceil((task.config.deadlineAt - now) / 1000));
 }
 
+function getNextEnabledDayDistance(repeatDays, currentDay, includeToday) {
+    const enabledDays = new Set(Array.isArray(repeatDays) ? repeatDays.map(Number) : []);
+    for (let offset = includeToday ? 0 : 1; offset <= 7; offset++) {
+        if (enabledDays.has((currentDay + offset) % 7)) return offset;
+    }
+    return null;
+}
+
+export function getAlarmRemainingSeconds(task, now = Date.now(), { includePaused = false } = {}) {
+    if (!task?.enabled || !task.config || (task.paused && !includePaused)) return Infinity;
+
+    if (task.type === 'countdown') {
+        return getCountdownRemainingSeconds(task, now);
+    }
+
+    if (task.type === 'interval') {
+        if (task.paused) {
+            return Math.max(0, Math.ceil((Number(task.config.remainingIntervalMs) || 0) / 1000));
+        }
+        const nextTriggerAt = Number(task.config.nextTriggerAt);
+        const intervalMs = Math.max(1, Number(task.config.intervalMs) || 1);
+        const target = Number.isFinite(nextTriggerAt) && nextTriggerAt > now
+            ? nextTriggerAt
+            : now + intervalMs;
+        return Math.max(0, Math.ceil((target - now) / 1000));
+    }
+
+    const current = new Date(now);
+    let target;
+    if (task.type === 'hourly') {
+        target = new Date(current);
+        target.setHours(current.getHours() + 1, 0, 0, 0);
+    } else if (task.type === 'fixed') {
+        const match = /^(\d{1,2}):(\d{2})$/.exec(task.config.time || '');
+        if (!match) return Infinity;
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        if (hours > 23 || minutes > 59) return Infinity;
+        target = new Date(current);
+        target.setHours(hours, minutes, 0, 0);
+        if (target <= current) target.setDate(target.getDate() + 1);
+    } else {
+        return Infinity;
+    }
+
+    if (task.config.repeatEnabled !== false) {
+        const includeToday = target.getDay() === current.getDay();
+        const dayDistance = getNextEnabledDayDistance(
+            task.config.repeatDays,
+            current.getDay(),
+            includeToday
+        );
+        if (dayDistance === null) return Infinity;
+        const targetDayDistance = (target.getDay() - current.getDay() + 7) % 7;
+        const extraDays = (dayDistance - targetDayDistance + 7) % 7;
+        target.setDate(target.getDate() + extraDays);
+    }
+
+    return Math.max(0, Math.ceil((target.getTime() - now) / 1000));
+}
+
 export async function syncAlarmTasks(tasks) {
     const invoke = getInvoke();
     if (!invoke) return false;
@@ -87,6 +161,9 @@ function updateStoredTaskAfterTrigger(triggeredTask) {
         delete task.config.deadlineAt;
     } else if (task.type === 'interval') {
         task.config.nextTriggerAt = Date.now() + Math.max(1, Number(task.config.intervalMs) || 1);
+    } else if ((task.type === 'fixed' || task.type === 'hourly')
+        && task.config.repeatEnabled === false) {
+        task.enabled = false;
     }
 
     const today = new Date().toDateString();
@@ -127,7 +204,8 @@ export async function initializeAlarmService() {
     }
 
     const data = readAlarmData();
-    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, 200) : [];
+    tasks.forEach(normalizeAlarmTask);
     tasks.forEach(task => prepareAlarmTaskSchedule(task));
     if (tasks.length > 0) writeAlarmData({ ...data, tasks });
     await syncAlarmTasks(tasks);

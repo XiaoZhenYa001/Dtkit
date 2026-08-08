@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "color-picker-overlay",
+  "description": "Ephemeral full-desktop overlay used only while picking one color",
+  "windows": ["color-picker-overlay-*"],
+  "permissions": ["core:event:default"]
+}

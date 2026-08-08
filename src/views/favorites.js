@@ -17,6 +17,27 @@ let startIndex = -1;
 let hasMoved = false; // 标记是否发生了拖拽移动
 let cards = []; // 存储 { el, toolId, currentIndex }
 let gridConfig = { cols: 0, cardWidth: 0, cardHeight: 0, gap: 20 };
+let layoutFrame = null;
+let observedGridWidth = 0;
+
+const gridResizeObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(entries => {
+        const width = entries[0]?.contentRect?.width || 0;
+        if (!width || Math.abs(width - observedGridWidth) < 1) return;
+        observedGridWidth = width;
+        scheduleFavoriteGridLayout();
+    })
+    : null;
+
+function scheduleFavoriteGridLayout() {
+    if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+    layoutFrame = requestAnimationFrame(() => {
+        layoutFrame = null;
+        syncFavoriteGridLayout();
+    });
+}
+
+window.addEventListener('resize', scheduleFavoriteGridLayout, { passive: true });
 
 /**
  * 检查当前是否处于拖拽状态（供外部使用）
@@ -45,6 +66,33 @@ function getPosByIndex(index) {
     };
 }
 
+function readGridMetrics(grid) {
+    const styles = window.getComputedStyle(grid);
+    const columns = styles.gridTemplateColumns.trim().split(/\s+/).filter(Boolean);
+    const cardWidth = Number.parseFloat(columns[0]);
+    gridConfig.cols = Math.max(1, columns.length);
+    gridConfig.cardWidth = Number.isFinite(cardWidth) ? cardWidth : grid.clientWidth;
+    gridConfig.gap = Number.parseFloat(styles.columnGap || styles.gap) || 20;
+}
+
+function syncFavoriteGridLayout() {
+    const grid = DOM.favoritesGrid;
+    if (!grid || !cards.length || grid.clientWidth <= 0) return;
+
+    grid.classList.add('tool-grid--relayout');
+    readGridMetrics(grid);
+    cards.forEach(item => {
+        item.el.style.width = `${gridConfig.cardWidth}px`;
+        item.el.style.height = 'auto';
+    });
+    gridConfig.cardHeight = Math.max(180, ...cards.map(item => Math.ceil(item.el.getBoundingClientRect().height)));
+    cards.forEach(item => { item.el.style.height = `${gridConfig.cardHeight}px`; });
+    refreshPositions();
+    const rows = Math.ceil(cards.length / gridConfig.cols);
+    grid.style.height = `${rows * gridConfig.cardHeight + Math.max(0, rows - 1) * gridConfig.gap}px`;
+    requestAnimationFrame(() => grid.classList.remove('tool-grid--relayout'));
+}
+
 /**
  * 渲染收藏页面
  */
@@ -53,6 +101,7 @@ export function renderFavoritesPage() {
     if (!grid) return;
     
     grid.innerHTML = '';
+    grid.style.height = '';
     cards = [];
     
     if (appState.favorites.length === 0) {
@@ -63,7 +112,7 @@ export function renderFavoritesPage() {
     // 计算网格配置
     const gridStyles = window.getComputedStyle(grid);
     const templateColumns = gridStyles.gridTemplateColumns;
-    gridConfig.cols = templateColumns.split(' ').length;
+    gridConfig.cols = templateColumns.trim().split(/\s+/).filter(Boolean).length;
     
     // 计算单个卡片宽度（从 grid-template-columns 中提取）
     const colWidth = parseFloat(templateColumns.split(' ')[0]);
@@ -106,6 +155,11 @@ export function renderFavoritesPage() {
             cards.push({ el: card, toolId: favId, currentIndex: index });
         }
     });
+
+    if (cards.length) syncFavoriteGridLayout();
+    observedGridWidth = grid.getBoundingClientRect().width;
+    gridResizeObserver?.disconnect();
+    gridResizeObserver?.observe(grid);
 }
 
 /**

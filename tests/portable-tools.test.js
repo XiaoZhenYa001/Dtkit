@@ -30,8 +30,29 @@ test('screenshot capture releases every GDI resource and is user-triggered', () 
     assert.match(screenshotUi, /captureGeneration \+= 1/);
     assert.match(screenshotUi, /releaseBackground\(\)/);
     assert.doesNotMatch(screenshotUi, /\bprompt\(/);
-    assert.match(screenshotUi, /captureTextDialog/);
+    assert.match(screenshotUi, /captureInlineText/);
+    assert.match(screenshotUi, /function hitTestObject/);
+    assert.match(screenshotUi, /function translateObject/);
+    assert.match(screenshotUi, /captureShapeMenu/);
+    assert.match(screenshotUi, /captureCornerRadius/);
+    assert.match(screenshotUi, /event\.key === 'Enter' && !event\.shiftKey/);
+    assert.match(screenshotUi, /captureBrushCursor/);
     assert.match(screenshotUi, /if \(isQuickHost\(\)\) await capture\(\)/);
+    assert.match(screenshotUi, /screen-region-captured/);
+    assert.match(screenshotUi, /start_screen_region_capture/);
+    assert.doesNotMatch(screenshotUi, /capture_screen_for_annotation/);
+    assert.match(screenshot, /ScreenRegionCaptureManager/);
+    assert.match(screenshot, /start_screen_region_capture/);
+    assert.match(screenshot, /finish_screen_region_capture/);
+    assert.match(screenshot, /capture_automatic_long_region/);
+    assert.match(screenshot, /find_vertical_overlap/);
+    assert.match(screenshot, /WM_MOUSEWHEEL/);
+    assert.match(screenshot, /MAX_SCREENSHOT_BYTES/);
+    assert.match(screenshot, /DwmFlush/);
+    assert.match(screenshot, /wait_for_hidden_window\(\)\.await/);
+    assert.doesNotMatch(screenshot, /from_millis\(120\)/);
+    assert.match(screenshotUi, /function beginPan/);
+    assert.match(screenshotUi, /event\.ctrlKey/);
 });
 
 test('temporary QR reuses transfer station commands', () => {

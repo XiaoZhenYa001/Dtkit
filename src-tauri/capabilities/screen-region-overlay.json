@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "screen-region-overlay",
+  "description": "Ephemeral full-desktop overlay used only while selecting one screenshot region",
+  "windows": ["screen-region-overlay-*"],
+  "permissions": ["core:event:default"]
+}

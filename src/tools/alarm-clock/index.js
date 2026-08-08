@@ -8,7 +8,8 @@ import { registerTool } from '../toolRegistry.js';
 import { showToast } from '../../core/utils.js';
 import {
     ALARM_TRIGGER_EVENT,
-    getCountdownRemainingSeconds,
+    getAlarmRemainingSeconds,
+    normalizeAlarmTask,
     pauseAlarmTaskSchedule,
     prepareAlarmTaskSchedule,
     syncAlarmTasks
@@ -20,25 +21,18 @@ import {
 let alarmState = {
     tasks: [],              // 任务列表
     completedToday: 0,      // 今日完成数
-    nextAlarmTime: null,    // 下一个提醒时间
     countdownInterval: null, // 全局倒计时更新定时器
-    sortableInstance: null, // Sortable 实例引用（防止重复创建）
     abortController: null,  // 用于清理事件监听器
-    audioContext: null,     // 共享的 AudioContext 实例（已废弃，使用HTML5 Audio）
     activeLoopControllers: new Map(), // 音频循环控制器 { taskId: controller }
     currentPlayingAudio: null,        // 当前正在播放的音频控制器
     audioQueue: [],         // 音频播放队列
+    audioQueueProcessing: false,
     availableAudioFiles: [], // 可用的音频文件列表
-    preloadedAudios: new Map(), // 预加载的音频缓存 { taskId: Audio } - LRU缓存
     blobUrls: new Map()     // Blob URL 跟踪器 { url: true } - 用于防止内存泄漏
 };
 
-// 预加载配置
-const PRELOAD_CONFIG = {
-    MAX_CACHE_SIZE: 5,           // LRU缓存最大数量
-    PRELOAD_THRESHOLD_SECONDS: 300, // 5分钟内的任务才预加载
-    LOAD_TIMEOUT_MS: 5000        // 音频加载超时时间
-};
+const MAX_AUDIO_QUEUE_SIZE = 5;
+const MAX_ALARM_TASKS = 200;
 
 // 标记工具是否已经初始化过（用于区分首次加载和标签页切换）
 let isToolInitialized = false;
@@ -83,130 +77,6 @@ async function openAudioFolder() {
     }
 }
 
-// ============================================
-// 智能预加载判断
-// ============================================
-
-// 判断任务是否应该预加载音频（即将触发的任务）
-function shouldPreloadAudio(task) {
-    if (task.action !== 'sound' || !task.config.audioPath) {
-        return false;
-    }
-
-    if (!task.enabled || task.paused) {
-        return false;
-    }
-
-    const threshold = PRELOAD_CONFIG.PRELOAD_THRESHOLD_SECONDS;
-
-    switch (task.type) {
-        case 'countdown':
-            // 倒计时剩余时间 <= 5分钟
-            return task.config.remainingSeconds <= threshold;
-
-        case 'fixed':
-            // 固定时间距离现在 <= 5分钟
-            const [hours, minutes] = task.config.time.split(':').map(Number);
-            const now = new Date();
-            const target = new Date();
-            target.setHours(hours, minutes, 0, 0);
-
-            if (target <= now) {
-                target.setDate(target.getDate() + 1);
-            }
-
-            const diffSeconds = Math.floor((target - now) / 1000);
-            return diffSeconds <= threshold;
-
-        case 'hourly':
-            // 距离下一个整点 <= 5分钟
-            const nowHourly = new Date();
-            const nextHour = new Date();
-            nextHour.setHours(nowHourly.getHours() + 1, 0, 0, 0);
-            const diffSecondsHourly = Math.floor((nextHour - nowHourly) / 1000);
-            return diffSecondsHourly <= threshold;
-
-        case 'interval':
-            // 间隔提醒总是预加载（因为可能随时触发）
-            return true;
-
-        default:
-            return false;
-    }
-}
-
-// ============================================
-// LRU 缓存管理
-// ============================================
-
-// 添加到预加载缓存（实现 LRU）
-function addToPreloadCache(taskId, audio) {
-    // 如果已存在，先删除（更新为最新）
-    if (alarmState.preloadedAudios.has(taskId)) {
-        alarmState.preloadedAudios.delete(taskId);
-    }
-
-    // 如果超过缓存上限，删除最早的（Map的第一个元素）
-    if (alarmState.preloadedAudios.size >= PRELOAD_CONFIG.MAX_CACHE_SIZE) {
-        const firstKey = alarmState.preloadedAudios.keys().next().value;
-        console.log(`[AlarmClock] LRU缓存已满，移除最早的任务: ${firstKey}`);
-        cleanupPreloadedAudio(firstKey);
-    }
-
-    // 添加到缓存（作为最新的）
-    alarmState.preloadedAudios.set(taskId, audio);
-    console.log(`[AlarmClock] 当前预加载缓存: ${alarmState.preloadedAudios.size}/${PRELOAD_CONFIG.MAX_CACHE_SIZE}`);
-}
-
-// ============================================
-// 预加载音频文件
-// ============================================
-async function preloadAudio(task) {
-    if (task.action !== 'sound' || !task.config.audioPath) {
-        return null;
-    }
-
-    try {
-        const audio = new Audio();
-        const convertedPath = await convertPath(task.config.audioPath);
-        audio.src = convertedPath;
-        audio.volume = 0.7;
-        audio.preload = 'auto'; // 强制预加载
-
-        // 等待音频加载就绪
-        await new Promise((resolve, reject) => {
-            audio.addEventListener('canplaythrough', resolve, { once: true });
-            audio.addEventListener('error', reject, { once: true });
-
-            // 触发加载
-            audio.load();
-
-            // 超时保护
-            setTimeout(() => reject(new Error('音频加载超时')), PRELOAD_CONFIG.LOAD_TIMEOUT_MS);
-        });
-
-        console.log(`[AlarmClock] ✓ 音频预加载成功: ${task.name} (${task.config.audioName})`);
-        return audio;
-    } catch (err) {
-        console.error(`[AlarmClock] ✗ 音频预加载失败: ${task.name}`, err);
-        return null;
-    }
-}
-
-// 清理预加载的音频
-function cleanupPreloadedAudio(taskId) {
-    const audio = alarmState.preloadedAudios.get(taskId);
-    if (audio) {
-        // 释放 Blob URL（如果是 blob: 开头的 URL）
-        const audioSrc = audio.src;
-        audio.pause();
-        audio.src = '';
-        revokeBlobUrl(audioSrc);
-        alarmState.preloadedAudios.delete(taskId);
-        console.log(`[AlarmClock] 清理预加载音频: ${taskId}`);
-    }
-}
-
 // 释放 Blob URL 以防止内存泄漏
 function revokeBlobUrl(url) {
     if (url && url.startsWith('blob:')) {
@@ -242,7 +112,6 @@ const ACTION_TYPES = {
 // ============================================
 function getTemplate() {
     return `
-        <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
         <div class="view-container alarm-clock-view">
             <!-- 顶部统计栏 -->
             <div class="alarm-header-stats">
@@ -273,7 +142,7 @@ function getTemplate() {
 
                     <div class="alarm-input-group">
                         <label class="alarm-label">任务名称</label>
-                        <input type="text" id="alarmTaskName" class="alarm-input"
+                        <input type="text" id="alarmTaskName" class="alarm-input" maxlength="80"
                             placeholder="例如：该喝水了、下班打卡...">
                     </div>
 
@@ -281,7 +150,7 @@ function getTemplate() {
                         <label class="alarm-label">定时类型</label>
                         <select id="alarmTaskType" class="alarm-select">
                             <option value="countdown">倒计时</option>
-                            <option value="fixed">固定时间 (每天)</option>
+                            <option value="fixed">固定时间</option>
                             <option value="hourly">整点报时</option>
                             <option value="interval">间隔提醒</option>
                         </select>
@@ -573,7 +442,7 @@ function handleActionTypeChange() {
                     <div class="alarm-no-audio">
                         <i class="ri-music-line alarm-audio-empty__icon"></i>
                         <p>未找到音频文件</p>
-                        <p class="alarm-audio-empty__hint">请将音频文件放入 Kit/clock 文件夹</p>
+                        <p class="alarm-audio-empty__hint">请将音频放入应用数据目录的 Kits/Alarm 文件夹</p>
                     </div>
                 `;
 
@@ -748,51 +617,6 @@ function bindFileSelector() {
 }
 
 // ============================================
-// 获取或创建共享的 AudioContext
-// ============================================
-function getAudioContext() {
-    if (!alarmState.audioContext || alarmState.audioContext.state === 'closed') {
-        alarmState.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    return alarmState.audioContext;
-}
-
-// ============================================
-// 播放预览声音
-// ============================================
-function playPreviewSound(soundId) {
-    // 使用共享的音频上下文
-    try {
-        const audioContext = getAudioContext();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        // 根据不同声音ID设置不同频率
-        const frequencies = {
-            bell: 800,
-            alarm: 600,
-            chime: 1000,
-            beep: 440,
-            ding: 1200
-        };
-
-        oscillator.frequency.value = frequencies[soundId] || 440;
-        oscillator.type = 'sine';
-
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (err) {
-        console.error('[AlarmClock] 播放预览声音失败:', err);
-    }
-}
-
-// ============================================
 // 添加任务
 // ============================================
 function addTask() {
@@ -805,9 +629,14 @@ function addTask() {
         return;
     }
 
+    if (alarmState.tasks.length >= MAX_ALARM_TASKS) {
+        showToast(`最多创建 ${MAX_ALARM_TASKS} 个闹钟任务`, 'warning');
+        return;
+    }
+
     // 构建任务对象
     const task = {
-        id: Date.now().toString(),
+        id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         name: taskName,
         type: taskType,
         action: actionType,
@@ -820,9 +649,15 @@ function addTask() {
     // 根据任务类型获取时间配置
     switch (taskType) {
         case 'countdown':
-            const hours = parseInt(document.getElementById('countdownHours')?.value || 0);
-            const minutes = parseInt(document.getElementById('countdownMinutes')?.value || 0);
-            const seconds = parseInt(document.getElementById('countdownSeconds')?.value || 0);
+            const hours = Number(document.getElementById('countdownHours')?.value || 0);
+            const minutes = Number(document.getElementById('countdownMinutes')?.value || 0);
+            const seconds = Number(document.getElementById('countdownSeconds')?.value || 0);
+            if (!Number.isInteger(hours) || hours < 0 || hours > 23
+                || !Number.isInteger(minutes) || minutes < 0 || minutes > 59
+                || !Number.isInteger(seconds) || seconds < 0 || seconds > 59) {
+                showToast('倒计时时间超出有效范围', 'warning');
+                return;
+            }
             const totalSeconds = hours * 3600 + minutes * 60 + seconds;
 
             if (totalSeconds <= 0) {
@@ -841,16 +676,30 @@ function addTask() {
                 return;
             }
             task.config.time = timeValue;
+            task.config.repeatEnabled = document.getElementById('repeatEnabled')?.checked !== false;
             task.config.repeatDays = getSelectedRepeatDays();
+            if (task.config.repeatEnabled && task.config.repeatDays.length === 0) {
+                showToast('重复提醒至少选择一天', 'warning');
+                return;
+            }
             break;
 
         case 'hourly':
+            task.config.repeatEnabled = document.getElementById('repeatEnabled')?.checked !== false;
             task.config.repeatDays = getSelectedRepeatDays();
+            if (task.config.repeatEnabled && task.config.repeatDays.length === 0) {
+                showToast('重复提醒至少选择一天', 'warning');
+                return;
+            }
             break;
 
         case 'interval':
-            const intervalValue = parseInt(document.getElementById('intervalValue')?.value || 30);
+            const intervalValue = Number(document.getElementById('intervalValue')?.value || 30);
             const intervalUnit = document.getElementById('intervalUnit')?.value || 'minutes';
+            if (!Number.isInteger(intervalValue) || intervalValue < 1 || intervalValue > 999) {
+                showToast('提醒间隔必须是 1 到 999 的整数', 'warning');
+                return;
+            }
             const intervalMs = intervalUnit === 'hours'
                 ? intervalValue * 3600 * 1000
                 : intervalValue * 60 * 1000;
@@ -910,6 +759,7 @@ function addTask() {
 // 获取选中的重复日期
 // ============================================
 function getSelectedRepeatDays() {
+    if (document.getElementById('repeatEnabled')?.checked === false) return [];
     const days = [];
     const checkboxes = document.querySelectorAll('input[name="repeatDay"]:checked');
     checkboxes.forEach(cb => days.push(parseInt(cb.value)));
@@ -929,6 +779,9 @@ function resetForm() {
     if (countdownHours) countdownHours.value = '0';
     if (countdownMinutes) countdownMinutes.value = '5';
     if (countdownSeconds) countdownSeconds.value = '0';
+
+    const repeatEnabled = document.getElementById('repeatEnabled');
+    if (repeatEnabled) repeatEnabled.checked = true;
 }
 
 // ============================================
@@ -944,9 +797,7 @@ function startTask(task, options) {
 // ============================================
 function stopTask(taskId) {
     console.log(`[AlarmClock] 停止任务: ${taskId}`);
-
-    // 清理预加载的音频
-    cleanupPreloadedAudio(taskId);
+    alarmState.audioQueue = alarmState.audioQueue.filter(task => task.id !== taskId);
 
     // 清理该任务的音频控制器
     const audioController = alarmState.activeLoopControllers.get(taskId);
@@ -1247,22 +1098,31 @@ function showToastWithAudioControl(task, audioController) {
 
 // 使用队列播放音频（确保同时只播放一个）
 async function playAudioWithQueue(task) {
-    // 如果已有音频在播放，加入队列
-    if (alarmState.currentPlayingAudio && !alarmState.currentPlayingAudio.stop) {
-        console.log('[AlarmClock] 音频正在播放，加入队列');
-        alarmState.audioQueue.push(task);
+    if ((alarmState.currentPlayingAudio && !alarmState.currentPlayingAudio.stop
+        && alarmState.currentPlayingAudio.taskId === task.id)
+        || alarmState.audioQueue.some(item => item.id === task.id)) {
+        console.log(`[AlarmClock] 已合并重复音频提醒: ${task.id}`);
         return;
     }
 
-    // 直接播放
-    await playAudioLoop(task);
+    if (alarmState.audioQueue.length >= MAX_AUDIO_QUEUE_SIZE) {
+        alarmState.audioQueue.shift();
+    }
+    alarmState.audioQueue.push(task);
+    await processNextAudioInQueue();
 }
 
 // 处理队列中的下一个音频
 async function processNextAudioInQueue() {
-    if (alarmState.audioQueue.length > 0) {
-        const nextTask = alarmState.audioQueue.shift();
-        await playAudioLoop(nextTask);
+    if (alarmState.audioQueueProcessing || alarmState.currentPlayingAudio) return;
+    alarmState.audioQueueProcessing = true;
+    try {
+        while (alarmState.audioQueue.length > 0 && !alarmState.currentPlayingAudio) {
+            const nextTask = alarmState.audioQueue.shift();
+            if (await playAudioLoop(nextTask)) break;
+        }
+    } finally {
+        alarmState.audioQueueProcessing = false;
     }
 }
 
@@ -1276,7 +1136,7 @@ async function playAudioLoop(task) {
     // 如果没有音频文件，使用静默模式
     if (!audioPath || alarmState.availableAudioFiles.length === 0) {
         console.log('[AlarmClock] 无可用音频文件，静默模式');
-        return;
+        return false;
     }
 
     // 创建音频控制器
@@ -1292,30 +1152,12 @@ async function playAudioLoop(task) {
         onError: null    // 事件监听器引用
     };
 
-    // 优先使用预加载的音频（零延迟播放）
-    let audio = alarmState.preloadedAudios.get(task.id);
-
-    if (audio) {
-        console.log(`[AlarmClock] ⚡ 使用预加载音频，零延迟播放: ${audioName}`);
-        // 重置播放位置
-        audio.currentTime = 0;
-        // 从缓存中移除（播放时独占使用）
-        alarmState.preloadedAudios.delete(task.id);
-        // 预加载的音频可能有 Blob URL
-        if (audio.src && audio.src.startsWith('blob:')) {
-            controller.blobUrl = audio.src;
-        }
-    } else {
-        console.log(`[AlarmClock] ⏳ 未找到预加载音频，动态加载（可能有延迟）: ${audioName}`);
-        // 降级方案：动态创建
-        audio = new Audio();
-        const convertedPath = await convertPath(audioPath);
-        audio.src = convertedPath;
-        audio.volume = 0.7;
-        // 记录 Blob URL
-        if (convertedPath.startsWith('blob:')) {
-            controller.blobUrl = convertedPath;
-        }
+    const audio = new Audio();
+    const convertedPath = await convertPath(audioPath);
+    audio.src = convertedPath;
+    audio.volume = 0.7;
+    if (convertedPath.startsWith('blob:')) {
+        controller.blobUrl = convertedPath;
     }
 
     controller.audio = audio;
@@ -1456,6 +1298,7 @@ async function playAudioLoop(task) {
 
     // 立即开始播放
     startPlayback();
+    return true;
 }
 
 // 转换文件路径为Tauri可访问的URL
@@ -1556,6 +1399,7 @@ function stopAllAudio() {
 
     // 清空队列
     alarmState.audioQueue = [];
+    alarmState.audioQueueProcessing = false;
 
     // 清理所有控制器
     alarmState.activeLoopControllers.forEach((controller, taskId) => {
@@ -1598,26 +1442,20 @@ function stopAllAudio() {
 }
 
 // ============================================
-// 播放闹钟声音（已废弃，保留用于预览）
-// ============================================
-function playAlarmSound(soundId) {
-    // 此函数已被playAudioLoop替代，仅用于预览音频
-    console.log('[AlarmClock] playAlarmSound已废弃，请使用playAudioLoop');
-}
-
-// ============================================
 // 保存任务到 localStorage
 // ============================================
-function saveTasks() {
+function saveTasks({ sync = true } = {}) {
     const data = {
         tasks: alarmState.tasks,
         completedToday: alarmState.completedToday,
         lastDate: new Date().toDateString()
     };
     localStorage.setItem('alarm_clock_data', JSON.stringify(data));
-    syncAlarmTasks(alarmState.tasks).catch(error => {
-        console.error('[AlarmClock] 同步 Rust 调度器失败', error);
-    });
+    if (sync) {
+        syncAlarmTasks(alarmState.tasks).catch(error => {
+            console.error('[AlarmClock] 同步 Rust 调度器失败', error);
+        });
+    }
 }
 
 // ============================================
@@ -1628,7 +1466,7 @@ function loadTasks() {
         const saved = localStorage.getItem('alarm_clock_data');
         if (saved) {
             const data = JSON.parse(saved);
-            alarmState.tasks = data.tasks || [];
+            alarmState.tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, MAX_ALARM_TASKS) : [];
 
             // 检查日期，重置今日计数
             if (data.lastDate === new Date().toDateString()) {
@@ -1639,6 +1477,7 @@ function loadTasks() {
 
             // 为旧数据补齐绝对截止时间；不在前端启动任何后台计时器。
             alarmState.tasks.forEach(task => {
+                normalizeAlarmTask(task);
                 if (task.enabled) {
                     startTask(task);
                 }
@@ -1678,43 +1517,53 @@ function renderTaskList() {
     });
 
     // 初始化拖拽排序
-    initSortable();
+    initTaskReordering();
 }
 
 // ============================================
-// 初始化 Sortable.js 拖拽排序
+// 初始化原生拖拽排序
 // ============================================
-function initSortable() {
+function initTaskReordering() {
     const panel = document.getElementById('taskListPanel');
-    if (!panel || !window.Sortable || alarmState.tasks.length === 0) return;
+    if (!panel || alarmState.tasks.length === 0) return;
 
-    // 销毁旧的 Sortable 实例（防止累积）
-    if (alarmState.sortableInstance) {
-        alarmState.sortableInstance.destroy();
-        alarmState.sortableInstance = null;
-    }
-
-    alarmState.sortableInstance = new Sortable(panel, {
-        animation: 150,  // 动画速度稍微加快，体验更好
-        handle: '.alarm-task-drag-handle',  // 只有点击手柄才能拖拽
-        ghostClass: 'sortable-ghost',
-        dragClass: 'sortable-drag',
-        chosenClass: 'sortable-chosen',
-
-        onStart: function() {
+    let draggedCard = null;
+    panel.querySelectorAll('.alarm-task-card').forEach(card => {
+        const handle = card.querySelector('.alarm-task-drag-handle');
+        handle?.addEventListener('pointerdown', () => {
+            card.draggable = true;
+        });
+        card.addEventListener('dragstart', event => {
+            draggedCard = card;
+            card.classList.add('sortable-drag', 'sortable-chosen');
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', card.dataset.taskId || '');
             if (navigator.vibrate) navigator.vibrate(15);
-        },
-
-        onEnd: function(evt) {
-            // 修正：根据 DOM 索引同步内存数组
-            const tasks = [...alarmState.tasks];
-            const [movedItem] = tasks.splice(evt.oldIndex, 1);
-            tasks.splice(evt.newIndex, 0, movedItem);
-            alarmState.tasks = tasks;
-            saveTasks();
-            // 注意：不要在这里调用 renderTaskList()，否则会触发 DOM 重建导致拖拽卡顿
-        }
+        });
+        card.addEventListener('dragend', () => {
+            card.draggable = false;
+            card.classList.remove('sortable-drag', 'sortable-chosen');
+            panel.querySelectorAll('.sortable-ghost').forEach(item => item.classList.remove('sortable-ghost'));
+            draggedCard = null;
+        });
     });
+
+    panel.ondragover = event => {
+        event.preventDefault();
+        const target = event.target.closest('.alarm-task-card');
+        if (!draggedCard || !target || target === draggedCard) return;
+        const rect = target.getBoundingClientRect();
+        target.classList.add('sortable-ghost');
+        panel.insertBefore(draggedCard, event.clientY < rect.top + rect.height / 2 ? target : target.nextSibling);
+    };
+    panel.ondrop = event => {
+        event.preventDefault();
+        const taskById = new Map(alarmState.tasks.map(task => [task.id, task]));
+        alarmState.tasks = [...panel.querySelectorAll('.alarm-task-card')]
+            .map(card => taskById.get(card.dataset.taskId))
+            .filter(Boolean);
+        saveTasks({ sync: false });
+    };
 }
 
 // ============================================
@@ -1741,9 +1590,6 @@ function createTaskCard(task) {
     const isPaused = task.enabled && task.paused;
     const isCompleted = !task.enabled && task.type === 'countdown' && task.config.remainingSeconds <= 0;
 
-    // 检查整点报时是否时间已过
-    const isHourlyPassed = task.type === 'hourly' && isHourPassed();
-
     let actionButtons = '';
     if (!task.enabled && !isCompleted) {
         // 已停止的任务：显示启动按钮
@@ -1760,11 +1606,6 @@ function createTaskCard(task) {
                 data-task-id="${task.id}" title="重新开始">
                 <i class="ri-refresh-line"></i>
             </button>
-        `;
-    } else if (isHourlyPassed && task.type === 'hourly') {
-        // 整点报时时间已过：不显示暂停/恢复按钮
-        actionButtons = `
-            <span class="alarm-task-time-passed">整点已过</span>
         `;
     } else if (isPaused) {
         // 已暂停：显示恢复按钮
@@ -1835,34 +1676,13 @@ function createTaskCard(task) {
     return card;
 }
 
-// 检查当前小时是否已过
-function isHourPassed() {
-    const now = new Date();
-    return now.getMinutes() > 0;
-}
-
 // ============================================
 // 获取任务倒计时显示
 // ============================================
 function getTaskCountdown(task) {
     if (!task.enabled) return '--:--:--';
-
-    switch (task.type) {
-        case 'countdown':
-            return formatSeconds(getCountdownRemainingSeconds(task));
-
-        case 'fixed':
-            return getTimeUntilFixed(task.config.time);
-
-        case 'hourly':
-            return getTimeUntilNextHour();
-
-        case 'interval':
-            return `${task.config.intervalValue} ${task.config.intervalUnit === 'hours' ? '小时' : '分钟'}`;
-
-        default:
-            return '--:--:--';
-    }
+    const remainingSeconds = getAlarmRemainingSeconds(task, Date.now(), { includePaused: true });
+    return Number.isFinite(remainingSeconds) ? formatSeconds(remainingSeconds) : '--:--:--';
 }
 
 // ============================================
@@ -1874,38 +1694,6 @@ function formatSeconds(seconds) {
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-// ============================================
-// 获取距离固定时间的倒计时
-// ============================================
-function getTimeUntilFixed(timeStr) {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const now = new Date();
-    const target = new Date();
-    target.setHours(hours, minutes, 0, 0);
-
-    if (target <= now) {
-        // 明天的这个时间
-        target.setDate(target.getDate() + 1);
-    }
-
-    const diffMs = target - now;
-    const diffSeconds = Math.floor(diffMs / 1000);
-    return formatSeconds(diffSeconds);
-}
-
-// ============================================
-// 获取距离下一个整点的倒计时
-// ============================================
-function getTimeUntilNextHour() {
-    const now = new Date();
-    const nextHour = new Date();
-    nextHour.setHours(now.getHours() + 1, 0, 0, 0);
-
-    const diffMs = nextHour - now;
-    const diffSeconds = Math.floor(diffMs / 1000);
-    return formatSeconds(diffSeconds);
 }
 
 // ============================================
@@ -1929,16 +1717,11 @@ function updateNextAlarmCountdown() {
     const countdownEl = document.getElementById('nextAlarmCountdown');
     if (!countdownEl) return;
 
-    // 找到最近的倒计时任务
     let minSeconds = Infinity;
 
     alarmState.tasks.forEach(task => {
-        if (!task.enabled) return;
-
-        if (task.type === 'countdown') {
-            const remainingSeconds = getCountdownRemainingSeconds(task);
-            if (remainingSeconds < minSeconds) minSeconds = remainingSeconds;
-        }
+        const remainingSeconds = getAlarmRemainingSeconds(task);
+        if (remainingSeconds < minSeconds) minSeconds = remainingSeconds;
     });
 
     if (minSeconds === Infinity) {
@@ -1978,10 +1761,13 @@ function applyTriggeredTaskState(triggeredTask) {
         delete task.config.deadlineAt;
     } else if (task?.type === 'interval') {
         task.config.nextTriggerAt = Date.now() + Math.max(1, Number(task.config.intervalMs) || 1);
+    } else if (task && (task.type === 'fixed' || task.type === 'hourly')
+        && task.config.repeatEnabled === false) {
+        task.enabled = false;
     }
 
     alarmState.completedToday++;
-    if (document.getElementById('alarmTaskList')) renderTaskList();
+    if (document.getElementById('taskListPanel')) renderTaskList();
     updateStats();
 }
 
@@ -2000,8 +1786,7 @@ window.addEventListener('dtkit:power-state', event => {
             previewAudio.src = '';
             previewAudio = null;
         }
-        alarmState.preloadedAudios.forEach((_, taskId) => cleanupPreloadedAudio(taskId));
-    } else if (document.getElementById('alarmTaskList')) {
+    } else if (document.getElementById('taskListPanel')) {
         startGlobalCountdown();
         updateStats();
     }
@@ -2035,12 +1820,6 @@ function destroy() {
         alarmState.countdownInterval = null;
     }
 
-    // 销毁 Sortable 实例
-    if (alarmState.sortableInstance) {
-        alarmState.sortableInstance.destroy();
-        alarmState.sortableInstance = null;
-    }
-
     // 取消所有事件监听器
     if (alarmState.abortController) {
         alarmState.abortController.abort();
@@ -2057,12 +1836,6 @@ function destroy() {
         revokeBlobUrl(previewAudioBlobUrl);
         previewAudioBlobUrl = null;
     }
-
-    // 清理所有预加载的音频（释放内存）
-    console.log(`[AlarmClock] 清理 ${alarmState.preloadedAudios.size} 个预加载音频`);
-    alarmState.preloadedAudios.forEach((audio, taskId) => {
-        cleanupPreloadedAudio(taskId);
-    });
 
     // 释放所有未清理的 Blob URL（防止内存泄漏）
     console.log(`[AlarmClock] 释放 ${alarmState.blobUrls.size} 个 Blob URL`);

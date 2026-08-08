@@ -43,12 +43,21 @@ use infrastructure::passwords::{
     remove_password_entry, restore_password_entry, save_password_entry, set_password_settings,
     PasswordVaultManager,
 };
-use infrastructure::quick_host::{dismiss_quick_host, open_quick_host, QuickHostManager};
+use infrastructure::quick_host::{
+    dismiss_quick_host, open_quick_host, touch_quick_host_activity, QuickHostManager,
+};
 use infrastructure::resources::{
     get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
     set_resource_policy, MinimizeMode, ResourceGovernor,
 };
-use infrastructure::screenshot::{capture_screen_for_annotation, save_annotated_screenshot};
+use infrastructure::screen_color_picker::{
+    finish_screen_color_pick, get_screen_color_pick_capture, start_screen_color_pick,
+    ScreenColorPickerManager,
+};
+use infrastructure::screenshot::{
+    finish_screen_region_capture, get_screen_region_capture, save_annotated_screenshot,
+    start_screen_region_capture, ScreenRegionCaptureManager,
+};
 use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
@@ -455,7 +464,7 @@ struct AudioFileInfo {
     size: u64,
 }
 
-/// 扫描Kit/clock文件夹中的音频文件
+/// 扫描托管数据目录中的 Kits/Alarm 音频文件夹
 #[tauri::command]
 fn scan_audio_files(app: AppHandle) -> Result<Vec<AudioFileInfo>, String> {
     let audio_dir = app.state::<StorageManager>().layout()?.kits.join("Alarm");
@@ -709,6 +718,8 @@ pub fn run() {
         .manage(ResourceGovernor::default())
         .manage(ShortcutRegistry::default())
         .manage(QuickHostManager::default())
+        .manage(ScreenColorPickerManager::default())
+        .manage(ScreenRegionCaptureManager::default())
         .manage(WhiteboardEditManager::default())
         .manage(PasswordVaultManager::default())
         .manage(SnippetManager::default())
@@ -923,6 +934,7 @@ pub fn run() {
             replace_shortcut_bindings,
             open_quick_host,
             dismiss_quick_host,
+            touch_quick_host_activity,
             list_whiteboards,
             load_whiteboard,
             save_whiteboard,
@@ -946,8 +958,13 @@ pub fn run() {
             search_snippets,
             save_snippet,
             delete_snippet,
-            capture_screen_for_annotation,
+            start_screen_region_capture,
+            get_screen_region_capture,
+            finish_screen_region_capture,
             save_annotated_screenshot,
+            start_screen_color_pick,
+            get_screen_color_pick_capture,
+            finish_screen_color_pick,
             get_tool_module_settings,
             set_tool_module_enabled,
             // 桌面整理命令

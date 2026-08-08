@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>DtKit 屏幕取色</title>
+    <link rel="stylesheet" href="./color-pick/style.css">
+</head>
+<body>
+    <canvas id="screenCanvas" aria-label="点击选择屏幕颜色"></canvas>
+    <div id="pickCursor" class="pick-cursor" hidden aria-hidden="true">
+        <span class="pick-cursor__horizontal"></span>
+        <span class="pick-cursor__vertical"></span>
+        <span class="pick-cursor__ring"></span>
+    </div>
+    <aside id="magnifier" class="magnifier" hidden aria-hidden="true">
+        <canvas id="magnifierCanvas" width="132" height="132"></canvas>
+        <div class="magnifier__value"><i id="pickedSwatch"></i><strong id="pickedHex">#000000</strong></div>
+        <span id="pickedRgb">RGB 0, 0, 0</span>
+        <small>单击选择 · Esc 取消</small>
+    </aside>
+    <div id="loading" class="loading">正在准备屏幕取色…</div>
+    <script type="module" src="./color-pick/main.js"></script>
+</body>
+</html>

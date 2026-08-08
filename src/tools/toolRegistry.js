@@ -81,6 +81,7 @@ export function registerToolManifest(manifest) {
         colorClass: manifest.colorClass,
         category: manifest.category,
         description: manifest.description || '点击查看详情',
+        surface: manifest.surface || existing?.surface || 'tool',
         status,
         enabled: existing?.enabled ?? true,
         template: existing?.template || null,
@@ -126,6 +127,7 @@ export function registerTool(toolConfig) {
         colorClass,
         category,
         description: description || '点击查看详情',
+        surface: toolConfig.surface || existing?.surface || 'tool',
         status: normalizeToolStatus(toolConfig.status, existing?.status),
         enabled: existing?.enabled ?? true,
         template: template || null,
@@ -348,8 +350,9 @@ export function destroyTool(toolId) {
  * @returns {Array} 所有工具的扁平列表
  */
 export function getAllTools(options = {}) {
-    const tools = Array.from(toolsRegistry.values());
-    return options.includeDisabled ? tools : tools.filter(tool => tool.enabled);
+    return Array.from(toolsRegistry.values()).filter(tool =>
+        (options.includeDisabled || tool.enabled)
+        && (options.includePrimary || tool.surface !== 'primary'));
 }
 
 export function applyDisabledTools(disabledToolIds = []) {

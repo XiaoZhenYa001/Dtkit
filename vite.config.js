@@ -20,6 +20,9 @@ export default defineConfig({
             input: {
                 main: `${projectRoot}src/index.html`,
                 quick: `${projectRoot}src/quick.html`,
+                colorPicker: `${projectRoot}src/color-pick.html`,
+                screenRegion: `${projectRoot}src/screen-region.html`,
+                longCaptureBorder: `${projectRoot}src/long-capture-border.html`,
                 desktopOrganizer: `${projectRoot}src/desktop-organizer/index.html`
             }
         }

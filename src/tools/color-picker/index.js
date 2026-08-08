@@ -5,9 +5,12 @@ import '../../css/tools/color-picker.css';
  */
 import { registerTool } from '../toolRegistry.js';
 
+const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
+
 let colorState = {
     currentColor: '#3b82f6',
     abortController: null,
+    colorPickUnlisten: null,
 };
 
 /**
@@ -17,6 +20,10 @@ function getTemplate() {
     return `
         <div class="view-container">
             <div class="color-picker-container">
+                <header class="color-picker-hero">
+                    <div><span><i class="ri-palette-line"></i></span><div><strong>颜色工作台</strong><small>本地转换 · 屏幕取色仅在点击后运行一次</small></div></div>
+                    <button id="screenColorPicker" type="button"><i class="ri-pencil-line"></i><span>屏幕提取笔</span><small>点击桌面任意像素</small></button>
+                </header>
                 <!-- 颜色选择主区域 -->
                 <div class="color-picker-main">
                     <!-- 颜色预览 -->
@@ -119,7 +126,7 @@ let recentColors = [];
 /**
  * 初始化颜色选择器工具
  */
-function initColorPickerTool() {
+async function initColorPickerTool() {
     // 清理之前的事件监听器
     if (colorState.abortController) {
         colorState.abortController.abort();
@@ -140,10 +147,10 @@ function initColorPickerTool() {
     const copyRgb = document.getElementById('copyRgb');
     const copyHsl = document.getElementById('copyHsl');
     const copyRgba = document.getElementById('copyRgba');
+    const screenPicker = document.getElementById('screenColorPicker');
 
     if (!colorInput) return;
 
-    console.log('[ColorPicker] 初始化中...');
 
     // 加载最近使用的颜色
     try {
@@ -182,6 +189,21 @@ function initColorPickerTool() {
     copyRgb?.addEventListener('click', () => copyToClipboard(rgbInput.value, copyRgb), { signal });
     copyHsl?.addEventListener('click', () => copyToClipboard(hslInput.value, copyHsl), { signal });
     copyRgba?.addEventListener('click', () => copyToClipboard(rgbaInput.value, copyRgba), { signal });
+    screenPicker?.addEventListener('click', async () => {
+        screenPicker.disabled = true;
+        try { await invoke('start_screen_color_pick'); }
+        catch (error) {
+            screenPicker.disabled = false;
+            screenPicker.querySelector('small').textContent = String(error);
+        }
+    }, { signal });
+
+    colorState.colorPickUnlisten?.();
+    colorState.colorPickUnlisten = await globalThis.window?.__TAURI__?.event?.listen?.('screen-color-picked', event => {
+        screenPicker.disabled = false;
+        screenPicker.querySelector('small').textContent = event.payload?.cancelled ? '已取消，点击可重新选择' : '点击桌面任意像素';
+        if (event.payload?.color) updateColor(event.payload.color, true);
+    });
 
     // 渲染预设颜色
     renderPresetColors(colorPresetsGrid, signal);
@@ -196,7 +218,6 @@ function initColorPickerTool() {
     // 初始化显示
     updateColor(colorState.currentColor, false);
 
-    console.log('[ColorPicker] 初始化完成 ✓');
 }
 
 function renderPresetColors(grid, signal) {
@@ -425,7 +446,8 @@ function destroyColorPickerTool() {
         colorState.abortController.abort();
         colorState.abortController = null;
     }
-    console.log('[ColorPicker] 已销毁');
+    colorState.colorPickUnlisten?.();
+    colorState.colorPickUnlisten = null;
 }
 
 // 注册工具

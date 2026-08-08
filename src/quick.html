@@ -15,7 +15,20 @@
                 <span class="quick-brand__mark">DT</span>
                 <span id="quickTitle">快捷窗口</span>
             </div>
-            <button id="quickClose" class="quick-close" type="button" aria-label="关闭快捷窗口">×</button>
+            <div class="quick-window-actions">
+                <button id="quickPin" class="quick-window-button quick-pin" type="button" aria-label="置顶快捷窗口" aria-pressed="false" title="置顶窗口">
+                    <i class="ri-pushpin-line"></i>
+                </button>
+                <button id="quickMinimize" class="quick-window-button" type="button" aria-label="最小化快捷窗口" title="最小化">
+                    <i class="ri-subtract-line"></i>
+                </button>
+                <button id="quickMaximize" class="quick-window-button" type="button" aria-label="最大化或还原快捷窗口" title="最大化或还原">
+                    <i class="ri-checkbox-blank-line"></i>
+                </button>
+                <button id="quickClose" class="quick-window-button quick-close" type="button" aria-label="关闭快捷窗口" title="关闭">
+                    <i class="ri-close-line"></i>
+                </button>
+            </div>
         </header>
         <section class="quick-content" id="quickContent">
             <div class="quick-status" id="quickStatus" aria-live="polite">

@@ -14,7 +14,8 @@ import {
 test('startup registers metadata without loading tool implementations', () => {
     assert.equal(toolManifests.length, 20);
     assert.equal(new Set(toolManifests.map(tool => tool.id)).size, toolManifests.length);
-    assert.equal(getAllTools().length, toolManifests.length);
+    assert.equal(getAllTools({ includePrimary: true }).length, toolManifests.length);
+    assert.ok(!getAllTools().some(tool => tool.id === 'password-vault'));
     assert.ok(toolManifests.every(tool => !isToolLoaded(tool.id)));
     assert.deepEqual(
         toolManifests.filter(tool => tool.status === 'planned').map(tool => tool.id),

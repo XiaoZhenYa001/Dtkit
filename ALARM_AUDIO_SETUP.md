@@ -2,11 +2,11 @@
 
 ## 音频文件位置
 
-定时闹钟工具的音频文件存储在**应用数据目录**下的 `Kit/clock/` 文件夹中。
+定时闹钟工具的音频文件存储在**应用数据目录**下的 `Kits/Alarm/` 文件夹中。
 
 ### Windows系统路径
 ```
-C:\Users\<用户名>\AppData\Roaming\com.administrator.dtkit\Kit\clock\
+C:\Users\<用户名>\AppData\Roaming\com.administrator.dtkit\Kits\Alarm\
 ```
 
 ## 初始音频文件
@@ -18,7 +18,7 @@ C:\Users\<用户名>\AppData\Roaming\com.administrator.dtkit\Kit\clock\
 ## 首次运行
 
 应用首次运行时，Tauri会自动：
-1. 创建应用数据目录下的 `Kit/clock/` 文件夹
+1. 创建应用数据目录下的 `Kits/Alarm/` 文件夹
 2. 用户可以手动将项目根目录的音频文件复制到应用数据目录
 
 ## 添加自定义音频
@@ -32,7 +32,7 @@ C:\Users\<用户名>\AppData\Roaming\com.administrator.dtkit\Kit\clock\
 
 ### 方法2：手动复制
 1. 找到应用数据目录（见上方路径）
-2. 将音频文件复制到 `Kit/clock/` 文件夹
+2. 将音频文件复制到 `Kits/Alarm/` 文件夹
 3. 重新打开工具
 
 ## 支持的音频格式

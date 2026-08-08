@@ -5,6 +5,7 @@ pub(crate) mod palette;
 pub(crate) mod passwords;
 pub(crate) mod quick_host;
 pub(crate) mod resources;
+pub(crate) mod screen_color_picker;
 pub(crate) mod screenshot;
 pub(crate) mod shortcuts;
 pub(crate) mod snippets;

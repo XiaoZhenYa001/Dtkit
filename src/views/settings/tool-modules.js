@@ -29,7 +29,7 @@ const categoryLabels = Object.freeze({
 function render() {
     const list = document.getElementById('toolModuleList');
     if (!list) return;
-    const tools = getAllTools({ includeDisabled: true }).filter(tool => tool.status !== 'planned');
+    const tools = getAllTools({ includeDisabled: true, includePrimary: true }).filter(tool => tool.status !== 'planned');
     const needle = query.trim().toLowerCase();
     const visible = tools.filter(tool =>
         (category === 'all' || tool.category === category)

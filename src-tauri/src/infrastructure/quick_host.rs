@@ -1,13 +1,14 @@
 use super::resources::ResourceGovernor;
 use super::tool_modules::ToolModuleManager;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const QUICK_HOST_LABEL_PREFIX: &str = "quick-host-";
+const PALETTE_IDLE_TIMEOUT_SECONDS: u64 = 180;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -71,6 +72,7 @@ impl QuickHostTarget {
 pub(crate) struct QuickHostManager {
     next_label: AtomicU64,
     active_labels: RwLock<HashSet<String>>,
+    palette_activity: RwLock<HashMap<String, Instant>>,
 }
 
 impl QuickHostManager {
@@ -87,6 +89,7 @@ impl QuickHostManager {
         target: QuickHostTarget,
     ) -> Result<WebviewWindow, String> {
         target.validate()?;
+        let is_palette = target.kind == QuickHostKind::Palette;
         let sequence = self.next_label.fetch_add(1, Ordering::Relaxed) + 1;
         let label = format!("{QUICK_HOST_LABEL_PREFIX}{sequence}");
         let window =
@@ -97,8 +100,8 @@ impl QuickHostManager {
                 .resizable(true)
                 .decorations(false)
                 .transparent(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
+                .always_on_top(false)
+                .skip_taskbar(false)
                 .shadow(true)
                 .center()
                 .build()
@@ -107,6 +110,22 @@ impl QuickHostManager {
             .write()
             .map_err(|_| "快捷宿主状态不可用".to_string())?
             .insert(label);
+        if is_palette {
+            self.palette_activity
+                .write()
+                .map_err(|_| "快捷面板活动状态不可用".to_string())?
+                .insert(window.label().to_string(), Instant::now());
+            spawn_palette_idle_guard(app.clone(), window.label().to_string());
+        }
+        let app_handle = app.clone();
+        let window_label = window.label().to_string();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                app_handle
+                    .state::<QuickHostManager>()
+                    .remove_label(&window_label);
+            }
+        });
         Ok(window)
     }
 
@@ -141,6 +160,9 @@ impl QuickHostManager {
         if let Ok(mut labels) = self.active_labels.write() {
             labels.clear();
         }
+        if let Ok(mut activity) = self.palette_activity.write() {
+            activity.clear();
+        }
         for (label, window) in app.webview_windows() {
             if label.starts_with(QUICK_HOST_LABEL_PREFIX) {
                 let _ = window.close();
@@ -152,7 +174,51 @@ impl QuickHostManager {
         if let Ok(mut labels) = self.active_labels.write() {
             labels.remove(label);
         }
+        if let Ok(mut activity) = self.palette_activity.write() {
+            activity.remove(label);
+        }
     }
+
+    fn touch(&self, label: &str) -> Result<(), String> {
+        if !label.starts_with(QUICK_HOST_LABEL_PREFIX) {
+            return Err("只能更新当前快捷窗口活动时间".to_string());
+        }
+        if let Some(last_activity) = self
+            .palette_activity
+            .write()
+            .map_err(|_| "快捷面板活动状态不可用".to_string())?
+            .get_mut(label)
+        {
+            *last_activity = Instant::now();
+        }
+        Ok(())
+    }
+}
+
+fn spawn_palette_idle_guard(app: AppHandle, label: String) {
+    tauri::async_runtime::spawn(async move {
+        let timeout = Duration::from_secs(PALETTE_IDLE_TIMEOUT_SECONDS);
+        loop {
+            let remaining = {
+                let manager = app.state::<QuickHostManager>();
+                let Ok(activity) = manager.palette_activity.read() else {
+                    return;
+                };
+                let Some(last_activity) = activity.get(&label) else {
+                    return;
+                };
+                timeout.saturating_sub(last_activity.elapsed())
+            };
+            if remaining.is_zero() {
+                app.state::<QuickHostManager>().remove_label(&label);
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.close();
+                }
+                return;
+            }
+            tokio::time::sleep(remaining).await;
+        }
+    });
 }
 
 pub(crate) fn is_supported_tool_id(value: &str) -> bool {
@@ -201,6 +267,14 @@ pub(crate) async fn dismiss_quick_host(
 ) -> Result<(), String> {
     let label = window.label().to_string();
     manager.dismiss(window.app_handle(), &label)
+}
+
+#[tauri::command]
+pub(crate) fn touch_quick_host_activity(
+    window: WebviewWindow,
+    manager: tauri::State<'_, QuickHostManager>,
+) -> Result<(), String> {
+    manager.touch(window.label())
 }
 
 #[cfg(test)]

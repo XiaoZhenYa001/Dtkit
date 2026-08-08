@@ -46,8 +46,8 @@ with sync_playwright() as playwright:
     page.locator(".tool-card").first.wait_for(state="visible")
 
     cards = page.locator(".tool-card")
-    if cards.count() != 17:
-        raise AssertionError(f"Expected 17 tool cards, found {cards.count()}")
+    if cards.count() != 19:
+        raise AssertionError(f"Expected 19 tool cards, found {cards.count()}")
 
     icon_style = page.locator('[data-view="toolLibrary"] i').first.evaluate(
         "element => ({"
@@ -247,7 +247,7 @@ with sync_playwright() as playwright:
     organizer_page.close()
 
     print(
-        "UI smoke passed: 17 cards, stable favorites, lazy views/tools, subset icons, "
+        "UI smoke passed: 19 cards, stable favorites, lazy views/tools, subset icons, "
         "strict CSP, sandboxed preview JS."
     )
     context.close()

@@ -189,6 +189,10 @@
     animation-delay: 0ms;
 }
 
+#favoritesGrid.tool-grid--relayout .tool-card {
+    transition: none !important;
+}
+
 .tool-card::after {
     content: '';
     position: absolute;

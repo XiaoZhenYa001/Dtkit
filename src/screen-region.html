@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>DtKit 区域截图</title>
+    <link rel="stylesheet" href="./screen-region/style.css">
+</head>
+<body>
+    <canvas id="regionCanvas" aria-label="拖动选择截图区域"></canvas>
+    <div id="regionSelection" class="region-selection" hidden aria-hidden="true">
+        <span id="regionSize">0 × 0</span>
+    </div>
+    <div class="region-hint" aria-hidden="true">
+        <strong>拖动选择截图范围</strong>
+        <span>松开鼠标完成 · Esc 或右键取消</span>
+    </div>
+    <div id="regionLoading" class="region-loading">正在准备截图选区…</div>
+    <script type="module" src="./screen-region/main.js"></script>
+</body>
+</html>

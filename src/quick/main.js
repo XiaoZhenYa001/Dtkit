@@ -26,7 +26,10 @@ const results = document.getElementById('commandResults');
 const paletteHint = document.getElementById('paletteHint');
 const shell = document.querySelector('.quick-shell');
 const titlebar = document.querySelector('.quick-titlebar');
+const pinButton = document.getElementById('quickPin');
 let activeToolId = null;
+let alwaysOnTop = false;
+let pinBusy = false;
 let toolRuntime = null;
 let renderGeneration = 0;
 let searchGeneration = 0;
@@ -34,6 +37,7 @@ let searchDelay = null;
 let selectedIndex = 0;
 let currentActions = [];
 let disabledToolIds = new Set();
+let lastActivityTouch = 0;
 
 async function loadToolModulePolicy() {
     try {
@@ -47,7 +51,10 @@ async function loadToolModulePolicy() {
 function setToolChrome(toolId = null) {
     const isWhiteboard = toolId === 'whiteboard';
     shell?.classList.toggle('quick-shell--whiteboard', isWhiteboard);
-    document.documentElement.classList.toggle('quick-tool--whiteboard', isWhiteboard);
+    [...document.documentElement.classList]
+        .filter(name => name.startsWith('quick-tool--'))
+        .forEach(name => document.documentElement.classList.remove(name));
+    if (toolId) document.documentElement.classList.add(`quick-tool--${toolId}`);
 }
 
 async function getToolRuntime() {
@@ -63,6 +70,14 @@ function releaseTool() {
     setToolChrome();
     toolContainer.replaceChildren();
     content.classList.remove('quick-content--tool');
+}
+
+function schedulePaletteIdleDismiss() {
+    if (palette.hidden) return;
+    const now = Date.now();
+    if (now - lastActivityTouch < 750) return;
+    lastActivityTouch = now;
+    invoke('touch_quick_host_activity').catch(() => {});
 }
 
 function readRecent() {
@@ -139,8 +154,12 @@ function renderHome() {
             if (currentActions.length === 1) await executeAction(currentActions[0]);
         }
     }));
-    showActions(recent.length ? recent : toolActions().slice(0, 6),
-        recent.length ? '最近使用 · 输入内容可搜索工具' : '输入内容可搜索工具');
+    const tools = toolActions();
+    const toolLabels = new Set(tools.map(action => action.label));
+    const extraRecent = recent
+        .filter(action => !toolLabels.has(action.label))
+        .map(action => ({ ...action, detail: `最近操作 · ${action.detail || '再次执行'}` }));
+    showActions([...tools, ...extraRecent], `全部 ${tools.length} 个可用工具${extraRecent.length ? ` · ${extraRecent.length} 条最近操作` : ''}`);
 }
 
 function renderCalculation(command, rawQuery) {
@@ -238,6 +257,7 @@ async function renderTarget(target) {
         input.value = '';
         renderHome();
         input.focus();
+        schedulePaletteIdleDismiss();
         return;
     }
     content.classList.remove('quick-content--palette');
@@ -279,11 +299,39 @@ async function dismiss() {
 }
 
 document.getElementById('quickClose').addEventListener('click', dismiss);
+pinButton.addEventListener('click', async () => {
+    if (pinBusy) return;
+    pinBusy = true;
+    const next = !alwaysOnTop;
+    try {
+        await globalThis.window?.__TAURI__?.window?.getCurrentWindow?.().setAlwaysOnTop?.(next);
+        alwaysOnTop = next;
+        pinButton.classList.toggle('is-active', alwaysOnTop);
+        pinButton.setAttribute('aria-pressed', String(alwaysOnTop));
+        pinButton.setAttribute('aria-label', alwaysOnTop ? '取消置顶快捷窗口' : '置顶快捷窗口');
+        pinButton.title = alwaysOnTop ? '取消置顶' : '置顶窗口';
+        pinButton.querySelector('i').className = alwaysOnTop ? 'ri-pushpin-fill' : 'ri-pushpin-line';
+    } catch (error) {
+        pinButton.title = `置顶失败：${String(error)}`;
+    } finally {
+        pinBusy = false;
+    }
+});
+document.getElementById('quickMinimize').addEventListener('click', () => {
+    globalThis.window?.__TAURI__?.window?.getCurrentWindow?.().minimize?.();
+});
+document.getElementById('quickMaximize').addEventListener('click', () => {
+    globalThis.window?.__TAURI__?.window?.getCurrentWindow?.().toggleMaximize?.();
+});
 titlebar?.addEventListener('dblclick', event => {
     if (event.target.closest('button')) return;
     globalThis.window?.__TAURI__?.window?.getCurrentWindow?.().toggleMaximize?.();
 });
 input.addEventListener('input', refreshPalette);
+input.addEventListener('input', schedulePaletteIdleDismiss);
+['pointerdown', 'keydown', 'wheel', 'focusin'].forEach(type => {
+    document.addEventListener(type, schedulePaletteIdleDismiss, { passive: type === 'wheel' });
+});
 input.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();

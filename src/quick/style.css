@@ -60,7 +60,8 @@ button { font: inherit; }
     letter-spacing: 0.04em;
 }
 
-.quick-close {
+.quick-window-actions { display: flex; align-items: center; gap: 0.2rem; }
+.quick-window-button {
     width: 2rem;
     height: 2rem;
     border: 0;
@@ -70,6 +71,8 @@ button { font: inherit; }
     cursor: pointer;
 }
 
+.quick-window-button:hover { color: #c7673b; background: rgba(216, 111, 61, 0.08); }
+.quick-pin.is-active { color: #fff; background: linear-gradient(135deg, #e57a43, #cf6133); box-shadow: 0 4px 12px rgba(201, 91, 43, 0.2); }
 .quick-close:hover { color: #b54432; background: rgba(181, 68, 50, 0.08); }
 
 .quick-content {
@@ -220,7 +223,7 @@ kbd {
 
 .quick-shell--whiteboard .quick-brand__mark { display: none; }
 
-.quick-shell--whiteboard .quick-close {
+.quick-shell--whiteboard .quick-window-button {
     width: 1.45rem;
     height: 1.45rem;
     border: 0;

@@ -12,12 +12,16 @@ test('quick host is a separate minimal frontend entry', () => {
 
     assert.match(vite, /quick:\s*`\$\{projectRoot\}src\/quick\.html`/);
     assert.match(html, /\.\/quick\/main\.js/);
+    assert.match(html, /id="quickMaximize"/);
+    assert.match(html, /id="quickPin"/);
     assert.doesNotMatch(html, /src=["']\.\/main\.js|tools\/index|alarmService/);
     assert.doesNotMatch(script, /setInterval|requestAnimationFrame|alarmService/);
     assert.match(script, /import\('\.\.\/tools\/index\.js'\)/);
     assert.match(script, /runtime\.loadTool\(target\.toolId\)/);
     assert.match(script, /search_local_files/);
     assert.match(script, /create_quick_countdown/);
+    assert.match(script, /schedulePaletteIdleDismiss/);
+    assert.match(read('src-tauri/src/infrastructure/quick_host.rs'), /PALETTE_IDLE_TIMEOUT_SECONDS: u64 = 180/);
 });
 
 test('quick host capability follows least privilege', () => {
@@ -27,6 +31,19 @@ test('quick host capability follows least privilege', () => {
     assert.ok(capability.permissions.includes('core:event:default'));
     assert.ok(capability.permissions.includes('core:window:allow-start-dragging'));
     assert.ok(capability.permissions.includes('core:window:allow-toggle-maximize'));
+    assert.ok(capability.permissions.includes('core:window:allow-minimize'));
+    assert.ok(capability.permissions.includes('core:window:allow-set-always-on-top'));
+    assert.ok(!capability.permissions.some(permission => /fs|shell|global-shortcut/.test(permission)));
+});
+
+test('screen region selector is an isolated ephemeral frontend entry', () => {
+    const vite = read('vite.config.js');
+    const html = read('src/screen-region.html');
+    const capability = JSON.parse(read('src-tauri/capabilities/screen-region-overlay.json'));
+
+    assert.match(vite, /screenRegion:\s*`\$\{projectRoot\}src\/screen-region\.html`/);
+    assert.match(html, /\.\/screen-region\/main\.js/);
+    assert.deepEqual(capability.windows, ['screen-region-overlay-*']);
     assert.ok(!capability.permissions.some(permission => /fs|shell|global-shortcut/.test(permission)));
 });
 

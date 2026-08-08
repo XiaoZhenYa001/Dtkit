@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+    getAlarmRemainingSeconds,
     getCountdownRemainingSeconds,
+    normalizeAlarmTask,
     pauseAlarmTaskSchedule,
     prepareAlarmTaskSchedule
 } from '../src/core/alarmService.js';
@@ -39,6 +41,38 @@ test('pausing a countdown preserves remaining time without keeping a timer alive
     assert.equal(getCountdownRemainingSeconds(task), task.config.remainingSeconds);
 });
 
+test('next alarm countdown covers fixed, interval and one-time schedules', () => {
+    const now = new Date(2026, 7, 3, 10, 0, 0, 0).getTime(); // Monday
+    const fixed = {
+        type: 'fixed', enabled: true, paused: false,
+        config: { time: '09:00', repeatEnabled: true, repeatDays: [2] }
+    };
+    const oneTime = {
+        type: 'fixed', enabled: true, paused: false,
+        config: { time: '11:00', repeatEnabled: false, repeatDays: [] }
+    };
+    const interval = {
+        type: 'interval', enabled: true, paused: false,
+        config: { intervalMs: 60_000, nextTriggerAt: now + 30_000 }
+    };
+
+    assert.equal(getAlarmRemainingSeconds(fixed, now), 23 * 60 * 60);
+    assert.equal(getAlarmRemainingSeconds(oneTime, now), 60 * 60);
+    assert.equal(getAlarmRemainingSeconds(interval, now), 30);
+
+    interval.paused = true;
+    interval.config.remainingIntervalMs = 12_000;
+    assert.equal(getAlarmRemainingSeconds(interval, now), Infinity);
+    assert.equal(getAlarmRemainingSeconds(interval, now, { includePaused: true }), 12);
+});
+
+test('legacy repeating alarms are migrated to an explicit all-days schedule', () => {
+    const task = { type: 'fixed', config: { time: '09:00', repeatDays: [] } };
+    normalizeAlarmTask(task);
+    assert.equal(task.config.repeatEnabled, true);
+    assert.deepEqual(task.config.repeatDays, [0, 1, 2, 3, 4, 5, 6]);
+});
+
 test('alarm tool contains only the visible countdown refresh interval', async () => {
     const source = await readFile(new URL('../src/tools/alarm-clock/index.js', import.meta.url), 'utf8');
     const intervals = source.match(/setInterval\s*\(/g) || [];
@@ -48,6 +82,10 @@ test('alarm tool contains only the visible countdown refresh interval', async ()
     assert.match(source, /syncAlarmTasks\(alarmState\.tasks\)/);
     assert.match(source, /dtkit:power-state/);
     assert.match(source, /clearInterval\(alarmState\.countdownInterval\)/);
+    assert.match(source, /getElementById\('taskListPanel'\)/);
+    assert.match(source, /MAX_AUDIO_QUEUE_SIZE/);
+    assert.match(source, /saveTasks\(\{ sync: false \}\)/);
+    assert.doesNotMatch(source, /cdn\.jsdelivr\.net|window\.Sortable|preloadedAudios/);
 });
 
 test('desktop organizer webview is created lazily instead of at app startup', async () => {

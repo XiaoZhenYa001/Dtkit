@@ -3,7 +3,7 @@ use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, Local, LocalResult, TimeZone, Timelike,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
@@ -11,6 +11,11 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 
 const CLOCK_RECHECK_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_ALARM_TASKS: usize = 200;
+
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +30,8 @@ pub(crate) struct AlarmConfig {
     pub(crate) time: Option<String>,
     #[serde(default)]
     pub(crate) repeat_days: Vec<u32>,
+    #[serde(default = "default_true")]
+    pub(crate) repeat_enabled: bool,
     #[serde(default)]
     pub(crate) interval_ms: Option<i64>,
     #[serde(default)]
@@ -59,7 +66,7 @@ pub(crate) struct AlarmTask {
 pub(crate) struct AlarmScheduler {
     handles: Mutex<HashMap<String, JoinHandle<()>>>,
     quick_handles: std::sync::Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    missed_triggers: Mutex<Vec<AlarmTask>>,
+    missed_triggers: Mutex<HashMap<String, AlarmTask>>,
 }
 
 impl AlarmScheduler {
@@ -101,11 +108,16 @@ impl AlarmScheduler {
 
 impl AlarmScheduler {
     async fn record_missed_trigger(&self, task: AlarmTask) {
-        self.missed_triggers.lock().await.push(task);
+        self.missed_triggers
+            .lock()
+            .await
+            .insert(task.id.clone(), task);
     }
 
     async fn take_missed_triggers(&self) -> Vec<AlarmTask> {
         std::mem::take(&mut *self.missed_triggers.lock().await)
+            .into_values()
+            .collect()
     }
 }
 
@@ -115,8 +127,60 @@ pub(crate) async fn sync_alarm_tasks(
     scheduler: tauri::State<'_, AlarmScheduler>,
     tasks: Vec<AlarmTask>,
 ) -> Result<(), String> {
+    if tasks.len() > MAX_ALARM_TASKS {
+        return Err(format!("闹钟任务最多允许 {MAX_ALARM_TASKS} 个"));
+    }
+    let mut task_ids = HashSet::with_capacity(tasks.len());
+    if tasks
+        .iter()
+        .any(|task| task.id.is_empty() || !task_ids.insert(task.id.as_str()))
+    {
+        return Err("闹钟任务 ID 不能为空或重复".to_string());
+    }
+    for task in &tasks {
+        validate_task(task)?;
+    }
     scheduler.replace_tasks(app, tasks).await;
     Ok(())
+}
+
+fn validate_task(task: &AlarmTask) -> Result<(), String> {
+    if task.id.len() > 128 || task.name.trim().is_empty() || task.name.chars().count() > 80 {
+        return Err("闹钟任务名称或 ID 无效".to_string());
+    }
+    if !matches!(
+        task.action.as_str(),
+        "notify" | "sound" | "run" | "shutdown" | "lock"
+    ) {
+        return Err(format!("不支持的闹钟动作：{}", task.action));
+    }
+    if task.config.repeat_days.len() > 7 || task.config.repeat_days.iter().any(|day| *day > 6) {
+        return Err("重复日期无效".to_string());
+    }
+
+    match task.task_type.as_str() {
+        "countdown"
+            if task.config.deadline_at.is_some()
+                || task.config.remaining_seconds.is_some()
+                || task.config.total_seconds.is_some() =>
+        {
+            Ok(())
+        }
+        "interval" if task.config.interval_ms.is_some_and(|value| value >= 60_000) => Ok(()),
+        "fixed"
+            if task
+                .config
+                .time
+                .as_deref()
+                .and_then(parse_clock_time)
+                .is_some()
+                && (!task.config.repeat_enabled || !task.config.repeat_days.is_empty()) =>
+        {
+            Ok(())
+        }
+        "hourly" if !task.config.repeat_enabled || !task.config.repeat_days.is_empty() => Ok(()),
+        _ => Err(format!("闹钟任务配置无效：{}", task.name)),
+    }
 }
 
 #[tauri::command]
@@ -171,6 +235,7 @@ pub(crate) async fn create_quick_countdown(
             deadline_at: Some(deadline_at),
             time: None,
             repeat_days: Vec::new(),
+            repeat_enabled: false,
             interval_ms: None,
             next_trigger_at: None,
             interval_value: None,
@@ -203,7 +268,10 @@ async fn run_task(app: AppHandle, task: AlarmTask) {
                 .await;
         }
 
-        if task.task_type == "countdown" {
+        if task.task_type == "countdown"
+            || (!task.config.repeat_enabled
+                && matches!(task.task_type.as_str(), "fixed" | "hourly"))
+        {
             return;
         }
     }
@@ -283,10 +351,11 @@ fn next_fixed_time(task: &AlarmTask, after: DateTime<Local>) -> Option<DateTime<
             continue;
         };
         if candidate > after
-            && day_is_enabled(
-                &task.config.repeat_days,
-                candidate.weekday().num_days_from_sunday(),
-            )
+            && (!task.config.repeat_enabled
+                || day_is_enabled(
+                    &task.config.repeat_days,
+                    candidate.weekday().num_days_from_sunday(),
+                ))
         {
             return Some(candidate);
         }
@@ -302,10 +371,11 @@ fn next_hourly_time(task: &AlarmTask, after: DateTime<Local>) -> Option<DateTime
             continue;
         };
         if candidate > after
-            && day_is_enabled(
-                &task.config.repeat_days,
-                candidate.weekday().num_days_from_sunday(),
-            )
+            && (!task.config.repeat_enabled
+                || day_is_enabled(
+                    &task.config.repeat_days,
+                    candidate.weekday().num_days_from_sunday(),
+                ))
         {
             return Some(candidate);
         }
@@ -355,6 +425,7 @@ mod tests {
                 deadline_at: None,
                 time: None,
                 repeat_days: vec![],
+                repeat_enabled: true,
                 interval_ms: None,
                 next_trigger_at: None,
                 interval_value: None,
@@ -403,6 +474,35 @@ mod tests {
         let next = next_trigger_at(&alarm, now).unwrap();
         assert_eq!(next.weekday(), tomorrow.weekday());
         assert_eq!((next.hour(), next.minute()), (23, 59));
+    }
+
+    #[test]
+    fn one_time_fixed_alarm_ignores_repeat_days() {
+        let now = Local::now();
+        let mut alarm = task("fixed");
+        alarm.config.time = Some("23:59".into());
+        alarm.config.repeat_enabled = false;
+
+        assert!(next_trigger_at(&alarm, now).is_some());
+    }
+
+    #[tokio::test]
+    async fn missed_triggers_are_coalesced_by_task() {
+        let scheduler = AlarmScheduler::default();
+        let alarm = task("interval");
+
+        scheduler.record_missed_trigger(alarm.clone()).await;
+        scheduler.record_missed_trigger(alarm).await;
+
+        assert_eq!(scheduler.take_missed_triggers().await.len(), 1);
+    }
+
+    #[test]
+    fn unsafe_high_frequency_intervals_are_rejected() {
+        let mut alarm = task("interval");
+        alarm.config.interval_ms = Some(999);
+
+        assert!(validate_task(&alarm).is_err());
     }
 
     #[test]

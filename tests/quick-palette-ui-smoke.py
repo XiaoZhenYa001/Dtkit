@@ -10,6 +10,7 @@ with sync_playwright() as playwright:
     page = browser.new_page(viewport={"width": 760, "height": 580})
     page.add_init_script("""
         window.__invocations = [];
+        window.__minimized = 0;
         window.__TAURI__ = {
             core: { invoke: async (command, args) => {
                 window.__invocations.push({ command, args });
@@ -20,7 +21,11 @@ with sync_playwright() as playwright:
                 };
                 return {};
             }},
-            event: { listen: async () => () => {} }
+            event: { listen: async () => () => {} },
+            window: { getCurrentWindow: () => ({
+                minimize: async () => { window.__minimized += 1; },
+                toggleMaximize: async () => {}
+            }) }
         };
     """)
     errors = []
@@ -55,7 +60,12 @@ with sync_playwright() as playwright:
     assert "JSON 格式化" in page.locator(".command-result strong").text_content()
     command.press("Escape")
     assert command.input_value() == ""
-    assert page.locator(".command-result").count() > 0
+    assert page.locator(".command-result").count() >= 18
+    assert page.locator(".command-result").filter(has_text="HTML 预览").count() == 1
+    assert page.locator(".command-result").filter(has_text="截图与标注").count() == 1
+
+    page.locator("#quickMinimize").click()
+    assert page.evaluate("window.__minimized") == 1
 
     page.screenshot(path=str(SCREENSHOT))
     assert not errors, errors

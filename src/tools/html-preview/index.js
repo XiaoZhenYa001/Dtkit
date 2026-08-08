@@ -692,7 +692,7 @@ registerTool({
     id: 'html-preview',
     name: 'HTML 预览',
     icon: 'ri-code-box-line',
-    colorClass: 'tool-card--orange',
+    colorClass: 'tool-card__icon--orange',
     category: 'design',
     description: '实时预览 HTML/CSS/JS 代码效果',
     template: getTemplate,

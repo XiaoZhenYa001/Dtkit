@@ -1296,7 +1296,8 @@ fn clear_clipboard_if_unchanged(sequence: u32, expected_hash: &[u8]) -> Result<(
         return Ok(());
     }
     let mut current = clipboard_text()?;
-    let matches = clipboard_content_matches_ticket(current_sequence, sequence, &current, expected_hash);
+    let matches =
+        clipboard_content_matches_ticket(current_sequence, sequence, &current, expected_hash);
     wipe_string(&mut current);
     if !matches {
         return Ok(());
@@ -1415,16 +1416,46 @@ mod tests {
         let first_hash = Sha256::digest(b"first-password").to_vec();
         let second_hash = Sha256::digest(b"second-password").to_vec();
 
-        assert!(clipboard_content_matches_ticket(10, 10, "first-password", &first_hash));
-        assert!(clipboard_content_matches_ticket(11, 11, "second-password", &second_hash));
+        assert!(clipboard_content_matches_ticket(
+            10,
+            10,
+            "first-password",
+            &first_hash
+        ));
+        assert!(clipboard_content_matches_ticket(
+            11,
+            11,
+            "second-password",
+            &second_hash
+        ));
 
         // The first timer cannot clear the newer password, even if both timers are still alive.
-        assert!(!clipboard_content_matches_ticket(11, 10, "second-password", &first_hash));
+        assert!(!clipboard_content_matches_ticket(
+            11,
+            10,
+            "second-password",
+            &first_hash
+        ));
         // Re-copying an identical password receives a new sequence and is owned by the new timer.
-        assert!(!clipboard_content_matches_ticket(12, 10, "first-password", &first_hash));
+        assert!(!clipboard_content_matches_ticket(
+            12,
+            10,
+            "first-password",
+            &first_hash
+        ));
         // Ordinary clipboard text written afterwards must never be cleared by either password timer.
-        assert!(!clipboard_content_matches_ticket(13, 10, "ordinary text", &first_hash));
-        assert!(!clipboard_content_matches_ticket(13, 11, "ordinary text", &second_hash));
+        assert!(!clipboard_content_matches_ticket(
+            13,
+            10,
+            "ordinary text",
+            &first_hash
+        ));
+        assert!(!clipboard_content_matches_ticket(
+            13,
+            11,
+            "ordinary text",
+            &second_hash
+        ));
     }
 
     #[cfg(target_os = "windows")]

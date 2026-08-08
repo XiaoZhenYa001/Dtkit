@@ -155,7 +155,7 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__powerListener !== null")
     page.evaluate("window.__powerListener({ payload: { suspended: true, mode: 'efficient' } })")
     page.locator('[data-view="toolLibrary"]').click()
-    page.wait_for_function("document.querySelectorAll('.tool-card').length === 17")
+    page.wait_for_function("document.querySelectorAll('.tool-card').length === 19")
     suspended = page.evaluate("""() => ({
         className: document.documentElement.classList.contains('app-is-suspended'),
         opacity: getComputedStyle(document.querySelector('.tool-card')).opacity,
