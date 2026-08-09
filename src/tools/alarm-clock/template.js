@@ -14,7 +14,11 @@ export function getAlarmTemplate() {
                     <div class="alarm-stat-label">距离下个提醒</div>
                     <div class="alarm-stat-value alarm-stat-value--accent" id="nextAlarmCountdown">--:--:--</div>
                 </div>
-                <button id="stopAllAlarmsBtn" class="alarm-stop-all-btn" title="停止所有正在播放的闹钟">
+                <div class="alarm-sync-status" id="alarmSyncStatus" data-state="idle" role="status" aria-live="polite">
+                    <i class="ri-check-line"></i>
+                    <span>调度就绪</span>
+                </div>
+                <button id="stopAllAlarmsBtn" class="alarm-stop-all-btn" type="button" title="停止所有正在播放的闹钟">
                     <i class="ri-stop-circle-line"></i> 停止所有闹钟
                 </button>
             </div>
@@ -98,7 +102,7 @@ export function getAlarmTemplate() {
                         </div>
                     </div>
 
-                    <button id="addTaskBtn" class="alarm-btn-add">
+                    <button id="addTaskBtn" class="alarm-btn-add" type="button">
                         <i class="ri-add-line"></i> 添加到任务列表
                     </button>
                 </div>

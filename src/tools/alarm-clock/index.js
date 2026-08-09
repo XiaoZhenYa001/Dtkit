@@ -7,18 +7,31 @@ import '../../css/tools/alarm-clock.css';
 import { registerTool } from '../toolRegistry.js';
 import { showToast } from '../../core/utils.js';
 import { getAlarmTemplate } from './template.js';
-import { formatAlarmDuration, renderAlarmTaskList } from './taskListView.js';
 import {
-    clearAlarmNotifications,
-    removeAlarmNotification,
-    showSoundAlarmNotification
-} from './notifications.js';
+    formatAlarmDuration,
+    renderAlarmTaskList,
+    updateAlarmTaskCountdowns
+} from './taskListView.js';
+import { AlarmAudioManager } from './audioManager.js';
+import { renderAlarmActionConfig } from './actionConfigView.js';
 import { createAlarmTask } from './taskFactory.js';
 import {
+    pauseAlarmTask,
+    restartCountdownTask,
+    resumeAlarmTask,
+    toggleAlarmTask
+} from './taskState.js';
+import {
+    applyTriggeredAlarmTaskState,
+    readAlarmData,
+    writeAlarmData
+} from '../../core/alarmStore.js';
+import {
+    ALARM_SYNC_STATUS_EVENT,
     ALARM_TRIGGER_EVENT,
+    getAlarmSyncStatus,
     getAlarmRemainingSeconds,
     normalizeAlarmTask,
-    pauseAlarmTaskSchedule,
     prepareAlarmTaskSchedule,
     syncAlarmTasks
 } from '../../core/alarmService.js';
@@ -30,17 +43,11 @@ let alarmState = {
     tasks: [],              // 任务列表
     completedToday: 0,      // 今日完成数
     countdownInterval: null, // 全局倒计时更新定时器
-    abortController: null,  // 用于清理事件监听器
-    activeLoopControllers: new Map(), // 音频循环控制器 { taskId: controller }
-    currentPlayingAudio: null,        // 当前正在播放的音频控制器
-    audioQueue: [],         // 音频播放队列
-    audioQueueProcessing: false,
-    availableAudioFiles: [], // 可用的音频文件列表
-    blobUrls: new Map()     // Blob URL 跟踪器 { url: true } - 用于防止内存泄漏
+    abortController: null   // 用于清理事件监听器
 };
 
-const MAX_AUDIO_QUEUE_SIZE = 5;
 const MAX_ALARM_TASKS = 200;
+const audioManager = new AlarmAudioManager();
 
 // 标记工具是否已经初始化过（用于区分首次加载和标签页切换）
 let isToolInitialized = false;
@@ -52,49 +59,22 @@ let isToolInitialized = false;
 // 扫描并加载可用的音频文件
 async function loadAvailableAudioFiles() {
     try {
-        if (!window.__TAURI__) {
-            console.log('[AlarmClock] 非Tauri环境，使用默认音频列表');
-            alarmState.availableAudioFiles = [
-                { name: '默认提示音', path: '', size: 0 }
-            ];
-            return;
-        }
-
-        const audioFiles = await window.__TAURI__.core.invoke('scan_audio_files');
-        alarmState.availableAudioFiles = audioFiles;
+        const audioFiles = await audioManager.loadAvailableFiles();
         console.log(`[AlarmClock] 加载了 ${audioFiles.length} 个音频文件`);
     } catch (err) {
         console.error('[AlarmClock] 加载音频文件失败:', err);
-        alarmState.availableAudioFiles = [];
+        audioManager.availableFiles = [];
     }
 }
 
 // 打开音频文件夹
 async function openAudioFolder() {
     try {
-        if (!window.__TAURI__) {
-            showToast('此功能需要在Tauri环境中使用', 'error');
-            return;
-        }
-
-        await window.__TAURI__.core.invoke('open_audio_folder');
+        await audioManager.openAudioFolder();
         showToast('已打开音频文件夹', 'success');
     } catch (err) {
         console.error('[AlarmClock] 打开音频文件夹失败:', err);
         showToast('打开文件夹失败: ' + err, 'error');
-    }
-}
-
-// 释放 Blob URL 以防止内存泄漏
-function revokeBlobUrl(url) {
-    if (url && url.startsWith('blob:')) {
-        try {
-            URL.revokeObjectURL(url);
-            alarmState.blobUrls.delete(url);
-            console.log('[AlarmClock] 释放 Blob URL:', url.substring(0, 50) + '...');
-        } catch (e) {
-            // 忽略错误
-        }
     }
 }
 
@@ -132,6 +112,7 @@ async function init() {
 
     // 更新统计信息
     updateStats();
+    updateAlarmSyncStatus(getAlarmSyncStatus());
 }
 
 // ============================================
@@ -166,11 +147,11 @@ function bindEvents() {
     const stopAllBtn = document.getElementById('stopAllAlarmsBtn');
     if (stopAllBtn) {
         stopAllBtn.addEventListener('click', () => {
-            if (alarmState.activeLoopControllers.size === 0 && !alarmState.currentPlayingAudio) {
+            if (!audioManager.hasActiveAudio) {
                 showToast('当前没有正在播放的闹钟', 'info');
                 return;
             }
-            stopAllAudio();
+            audioManager.stopAll();
             showToast('已停止所有闹钟', 'success');
         }, { signal });
     }
@@ -244,210 +225,66 @@ function handleTaskTypeChange() {
 // ============================================
 // 动作类型变化处理
 // ============================================
-function handleActionTypeChange() {
+async function handleActionTypeChange() {
     const actionType = document.getElementById('alarmActionType')?.value;
     const configArea = document.getElementById('actionConfigArea');
 
     if (!configArea) return;
-
-    // 清空配置区域
-    configArea.innerHTML = '';
-
-    switch (actionType) {
-        case 'sound':
-            // 显示音频文件选择器
-            const audioListHTML = alarmState.availableAudioFiles.length > 0
-                ? alarmState.availableAudioFiles.map((audio, index) => `
-                    <div class="alarm-audio-item ${index === 0 ? 'selected' : ''}"
-                        data-audio-path="${audio.path}"
-                        data-audio-name="${audio.name}">
-                        <div class="alarm-audio-icon">
-                            <i class="ri-music-2-line"></i>
-                        </div>
-                        <div class="alarm-audio-info">
-                            <div class="alarm-audio-name">${audio.name}</div>
-                            <div class="alarm-audio-size">${formatFileSize(audio.size)}</div>
-                        </div>
-                        <button class="alarm-audio-preview-btn" data-audio-path="${audio.path}">
-                            <i class="ri-play-line"></i>
-                        </button>
-                    </div>
-                `).join('')
-                : `
-                    <div class="alarm-no-audio">
-                        <i class="ri-music-line alarm-audio-empty__icon"></i>
-                        <p>未找到音频文件</p>
-                        <p class="alarm-audio-empty__hint">请将音频放入应用数据目录的 Kits/Alarm 文件夹</p>
-                    </div>
-                `;
-
-            configArea.innerHTML = `
-                <div class="alarm-input-group">
-                    <label class="alarm-label">
-                        选择提示音
-                        <button class="alarm-open-folder-btn" id="openAudioFolderBtn" title="打开音频文件夹">
-                            <i class="ri-folder-open-line"></i>
-                        </button>
-                    </label>
-                    <div class="alarm-audio-list" id="audioList">
-                        ${audioListHTML}
-                    </div>
-                </div>
-            `;
-            // 绑定音频选择事件
-            bindAudioOptions();
-            break;
-
-        case 'run':
-            // 显示文件选择器
-            configArea.innerHTML = `
-                <div class="alarm-input-group">
-                    <label class="alarm-label">选择程序或脚本</label>
-                    <div class="alarm-file-picker">
-                        <div class="alarm-file-path" id="selectedFilePath">未选择文件</div>
-                        <button class="alarm-file-btn" id="selectFileBtn">
-                            <i class="ri-folder-open-line"></i> 浏览
-                        </button>
-                    </div>
-                </div>
-            `;
-            // 绑定文件选择事件
-            bindFileSelector();
-            break;
-
-        case 'notify':
-        case 'shutdown':
-        case 'lock':
-        default:
-            // 不需要额外配置
-            break;
+    if (actionType === 'sound') {
+        await loadAvailableAudioFiles();
+        if (document.getElementById('alarmActionType')?.value !== actionType) return;
+    }
+    const canCreate = renderAlarmActionConfig(
+        configArea,
+        actionType,
+        audioManager.availableFiles,
+        {
+            signal: alarmState.abortController?.signal,
+            onPreview: playPreviewAudio,
+            onOpenFolder: openAudioFolder,
+            onSelectProgram: selectProgramFile
+        }
+    );
+    const addButton = document.getElementById('addTaskBtn');
+    if (addButton) {
+        addButton.disabled = !canCreate;
+        addButton.title = canCreate ? '' : '请先将提示音添加到 Kits/Alarm 文件夹';
     }
 }
-
-// 格式化文件大小
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-}
-
-// ============================================
-// 音频选择绑定
-// ============================================
-function bindAudioOptions() {
-    const signal = alarmState.abortController?.signal;
-
-    // 音频项选择
-    const audioItems = document.querySelectorAll('.alarm-audio-item');
-    audioItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            // 如果点击的是预览按钮，不切换选中状态
-            if (e.target.closest('.alarm-audio-preview-btn')) return;
-
-            audioItems.forEach(i => i.classList.remove('selected'));
-            item.classList.add('selected');
-        }, { signal });
-    });
-
-    // 预览按钮
-    const previewBtns = document.querySelectorAll('.alarm-audio-preview-btn');
-    previewBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const audioPath = btn.dataset.audioPath;
-            playPreviewAudio(audioPath);
-        }, { signal });
-    });
-
-    // 打开文件夹按钮
-    const openFolderBtn = document.getElementById('openAudioFolderBtn');
-    if (openFolderBtn) {
-        openFolderBtn.addEventListener('click', async () => {
-            await openAudioFolder();
-        }, { signal });
-    }
-}
-
-// 预览音频播放器
-let previewAudio = null;
-let previewAudioBlobUrl = null; // 跟踪预览音频的 Blob URL
 
 // 播放预览音频
 async function playPreviewAudio(audioPath) {
-    // 停止之前的预览并清理
-    if (previewAudio) {
-        previewAudio.pause();
-        previewAudio.src = '';
-        previewAudio = null;
-    }
-    // 释放之前的 Blob URL
-    if (previewAudioBlobUrl) {
-        revokeBlobUrl(previewAudioBlobUrl);
-        previewAudioBlobUrl = null;
-    }
-
-    if (!audioPath) return;
-
-    previewAudio = new Audio();
-    const convertedPath = await convertPath(audioPath);
-    // 记录 Blob URL 以便后续清理
-    if (convertedPath.startsWith('blob:')) {
-        previewAudioBlobUrl = convertedPath;
-    }
-    previewAudio.src = convertedPath;
-    previewAudio.volume = 0.5;
-
-    // 只播放3秒作为预览
-    previewAudio.play().catch(err => {
+    try {
+        await audioManager.preview(audioPath);
+    } catch (err) {
         console.error('[AlarmClock] 预览播放失败:', err);
         showToast('预览播放失败', 'error');
-    });
-
-    setTimeout(() => {
-        if (previewAudio) {
-            previewAudio.pause();
-            previewAudio.src = '';
-            previewAudio = null;
-        }
-        // 释放 Blob URL
-        if (previewAudioBlobUrl) {
-            revokeBlobUrl(previewAudioBlobUrl);
-            previewAudioBlobUrl = null;
-        }
-    }, 3000);
+    }
 }
 
 // ============================================
-// 文件选择绑定
+// 文件选择
 // ============================================
-function bindFileSelector() {
-    const signal = alarmState.abortController?.signal;
-    const selectBtn = document.getElementById('selectFileBtn');
-    if (selectBtn) {
-        selectBtn.addEventListener('click', async () => {
-            try {
-                const result = await window.__TAURI__.dialog.open({
-                    multiple: false,
-                    filters: [
-                        { name: '可执行文件', extensions: ['exe', 'com', 'bat', 'cmd', 'ps1'] },
-                        { name: '所有文件', extensions: ['*'] }
-                    ]
-                });
+async function selectProgramFile() {
+    try {
+        const result = await window.__TAURI__.dialog.open({
+            multiple: false,
+            filters: [
+                { name: '可执行文件', extensions: ['exe', 'com', 'bat', 'cmd', 'ps1'] },
+                { name: '所有文件', extensions: ['*'] }
+            ]
+        });
 
-                if (result) {
-                    const pathDisplay = document.getElementById('selectedFilePath');
-                    if (pathDisplay) {
-                        pathDisplay.textContent = result;
-                        pathDisplay.title = result;
-                    }
-                }
-            } catch (err) {
-                console.error('[AlarmClock] 选择文件失败:', err);
-                showToast('选择文件失败', 'error');
+        if (result) {
+            const pathDisplay = document.getElementById('selectedFilePath');
+            if (pathDisplay) {
+                pathDisplay.textContent = result;
+                pathDisplay.title = result;
             }
-        }, { signal });
+        }
+    } catch (err) {
+        console.error('[AlarmClock] 选择文件失败:', err);
+        showToast('选择文件失败', 'error');
     }
 }
 
@@ -461,7 +298,7 @@ function addTask() {
     }
 
     const selectedAudio = document.querySelector('.alarm-audio-item.selected');
-    const fallbackAudio = alarmState.availableAudioFiles[0];
+    const fallbackAudio = audioManager.availableFiles[0];
     const { task, error } = createAlarmTask({
         name: document.getElementById('alarmTaskName')?.value,
         type: document.getElementById('alarmTaskType')?.value,
@@ -547,43 +384,15 @@ function startTask(task, options) {
 // ============================================
 function stopTask(taskId) {
     console.log(`[AlarmClock] 停止任务: ${taskId}`);
-    alarmState.audioQueue = alarmState.audioQueue.filter(task => task.id !== taskId);
-
-    // 清理该任务的音频控制器
-    const audioController = alarmState.activeLoopControllers.get(taskId);
-    if (audioController) {
-        audioController.stop = true;
-        if (audioController.audio) {
-            audioController.audio.pause();
-            audioController.audio.src = '';
-        }
-        // 释放 Blob URL
-        if (audioController.blobUrl) {
-            revokeBlobUrl(audioController.blobUrl);
-            audioController.blobUrl = null;
-        }
-        alarmState.activeLoopControllers.delete(taskId);
-
-        // 如果是当前播放的音频，清空引用
-        if (alarmState.currentPlayingAudio === audioController) {
-            alarmState.currentPlayingAudio = null;
-            processNextAudioInQueue();
-        }
-    }
-
-    removeAlarmNotification(taskId, { animate: false });
+    audioManager.stop(taskId);
 }
 
 // ============================================
 // 暂停任务
 // ============================================
 function pauseTask(taskId) {
-    const task = alarmState.tasks.find(t => t.id === taskId);
-    if (!task || !task.enabled) return;
-
-    task.paused = true;
-    task.pausedAt = Date.now();
-    pauseAlarmTaskSchedule(task);
+    const task = pauseAlarmTask(alarmState.tasks, taskId);
+    if (!task) return;
 
     saveTasks();
     renderTaskList();
@@ -595,12 +404,8 @@ function pauseTask(taskId) {
 // 恢复任务
 // ============================================
 function resumeTask(taskId) {
-    const task = alarmState.tasks.find(t => t.id === taskId);
-    if (!task || !task.enabled) return;
-
-    task.paused = false;
-    delete task.pausedAt;
-    prepareAlarmTaskSchedule(task, { restart: true });
+    const task = resumeAlarmTask(alarmState.tasks, taskId);
+    if (!task) return;
 
     saveTasks();
     renderTaskList();
@@ -612,24 +417,9 @@ function resumeTask(taskId) {
 // 切换任务状态（启用/禁用）
 // ============================================
 function toggleTask(taskId) {
-    const task = alarmState.tasks.find(t => t.id === taskId);
+    const task = toggleAlarmTask(alarmState.tasks, taskId);
     if (!task) return;
-
-    task.enabled = !task.enabled;
-
-    if (task.enabled) {
-        // 重新启动任务
-        task.paused = false; // 清除暂停状态
-        if (task.type === 'countdown') {
-            // 如果是已完成的倒计时任务，重置时间
-            if (task.config.remainingSeconds <= 0) {
-                task.config.remainingSeconds = task.config.totalSeconds;
-            }
-        }
-        startTask(task, { restart: true });
-    } else {
-        stopTask(taskId);
-    }
+    if (!task.enabled) stopTask(taskId);
 
     saveTasks();
     renderTaskList();
@@ -649,341 +439,6 @@ function deleteTask(taskId) {
 }
 
 // ============================================
-// 音频播放队列管理
-// ============================================
-
-// 使用队列播放音频（确保同时只播放一个）
-async function playAudioWithQueue(task) {
-    if ((alarmState.currentPlayingAudio && !alarmState.currentPlayingAudio.stop
-        && alarmState.currentPlayingAudio.taskId === task.id)
-        || alarmState.audioQueue.some(item => item.id === task.id)) {
-        console.log(`[AlarmClock] 已合并重复音频提醒: ${task.id}`);
-        return;
-    }
-
-    if (alarmState.audioQueue.length >= MAX_AUDIO_QUEUE_SIZE) {
-        alarmState.audioQueue.shift();
-    }
-    alarmState.audioQueue.push(task);
-    await processNextAudioInQueue();
-}
-
-// 处理队列中的下一个音频
-async function processNextAudioInQueue() {
-    if (alarmState.audioQueueProcessing || alarmState.currentPlayingAudio) return;
-    alarmState.audioQueueProcessing = true;
-    try {
-        while (alarmState.audioQueue.length > 0 && !alarmState.currentPlayingAudio) {
-            const nextTask = alarmState.audioQueue.shift();
-            if (await playAudioLoop(nextTask)) break;
-        }
-    } finally {
-        alarmState.audioQueueProcessing = false;
-    }
-}
-
-// 循环播放音频（7分钟）
-async function playAudioLoop(task) {
-    const audioPath = task.config.audioPath;
-    const audioName = task.config.audioName || '默认提示音';
-
-    console.log(`[AlarmClock] 开始播放音频: ${audioName}`);
-
-    // 如果没有音频文件，使用静默模式
-    if (!audioPath || alarmState.availableAudioFiles.length === 0) {
-        console.log('[AlarmClock] 无可用音频文件，静默模式');
-        return false;
-    }
-
-    // 创建音频控制器
-    const controller = {
-        stop: false,
-        audio: null,
-        taskName: task.name,
-        taskId: task.id,
-        startTime: Date.now(),
-        blobUrl: null,  // 跟踪 Blob URL 用于清理
-        timeoutId: null, // 跟踪 setTimeout 用于清理
-        onEnded: null,   // 事件监听器引用
-        onError: null    // 事件监听器引用
-    };
-
-    const audio = new Audio();
-    const convertedPath = await convertPath(audioPath);
-    audio.src = convertedPath;
-    audio.volume = 0.7;
-    if (convertedPath.startsWith('blob:')) {
-        controller.blobUrl = convertedPath;
-    }
-
-    controller.audio = audio;
-    alarmState.currentPlayingAudio = controller;
-    alarmState.activeLoopControllers.set(task.id, controller);
-
-    void showSoundAlarmNotification(task, cleanup, () => !controller.stop).catch(error => {
-        console.error('[AlarmClock] 显示闹钟通知失败', error);
-    });
-
-    // 使用原生 loop 属性实现无缝循环播放
-    audio.loop = true;
-    const maxDuration = 7 * 60 * 1000; // 7分钟
-
-    // 7分钟后自动停止
-    controller.timeoutId = setTimeout(() => {
-        console.log('[AlarmClock] 音频播放时长已达7分钟，自动停止');
-        cleanup();
-    }, maxDuration);
-
-    // 音频加载错误 - 使用命名函数以便移除
-    controller.onError = (e) => {
-        console.error('[AlarmClock] 音频加载失败:', e);
-        showToast(`音频加载失败: ${audioName}`, 'error');
-        cleanup();
-    };
-    audio.addEventListener('error', controller.onError);
-
-    // 开始播放
-    const startPlayback = async () => {
-        try {
-            // 确保音频可以播放
-            if (audio.readyState < 2) {
-                // 等待音频加载
-                await new Promise((resolve, reject) => {
-                    let timeoutId;
-                    const onCanPlay = () => {
-                        audio.removeEventListener('canplay', onCanPlay);
-                        audio.removeEventListener('error', onLoadError);
-                        clearTimeout(timeoutId);
-                        resolve();
-                    };
-                    const onLoadError = (e) => {
-                        audio.removeEventListener('canplay', onCanPlay);
-                        audio.removeEventListener('error', onLoadError);
-                        clearTimeout(timeoutId);
-                        reject(e);
-                    };
-                    audio.addEventListener('canplay', onCanPlay);
-                    audio.addEventListener('error', onLoadError);
-                    // 超时保护
-                    timeoutId = setTimeout(() => {
-                        audio.removeEventListener('canplay', onCanPlay);
-                        audio.removeEventListener('error', onLoadError);
-                        reject(new Error('音频加载超时'));
-                    }, 5000);
-                });
-            }
-
-            if (!controller.stop) {
-                await audio.play();
-                console.log('[AlarmClock] 音频开始循环播放（原生loop模式）');
-            }
-        } catch (err) {
-            console.error('[AlarmClock] 播放音频失败:', err);
-            if (err.name !== 'AbortError') {
-                cleanup();
-            }
-        }
-    };
-
-    // 清理函数 - 彻底释放所有资源
-    function cleanup() {
-        if (controller.stop && !controller.audio) {
-            // 已经清理过了
-            return;
-        }
-
-        console.log(`[AlarmClock] 清理音频资源: ${controller.taskName}`);
-        controller.stop = true;
-
-        // 清除自动停止定时器
-        if (controller.timeoutId) {
-            clearTimeout(controller.timeoutId);
-            controller.timeoutId = null;
-        }
-
-        if (audio) {
-            // 移除事件监听器（防止内存泄漏）
-            if (controller.onError) {
-                audio.removeEventListener('error', controller.onError);
-                controller.onError = null;
-            }
-
-            // 停止并清理音频
-            audio.pause();
-            audio.loop = false; // 重置 loop 属性
-            audio.src = '';
-            audio.load(); // 强制释放音频资源
-
-            // 释放 Blob URL
-            if (controller.blobUrl) {
-                revokeBlobUrl(controller.blobUrl);
-                controller.blobUrl = null;
-            }
-        }
-
-        // 清空引用
-        controller.audio = null;
-
-        // 从控制器 Map 中移除
-        alarmState.activeLoopControllers.delete(controller.taskId);
-
-        // 如果是当前播放的音频，清空引用
-        if (alarmState.currentPlayingAudio === controller) {
-            alarmState.currentPlayingAudio = null;
-        }
-
-        removeAlarmNotification(controller.taskId);
-
-        // 处理队列中的下一个
-        processNextAudioInQueue();
-
-        console.log(`[AlarmClock] 音频资源已完全释放: ${controller.taskName}`);
-    }
-
-    // 立即开始播放
-    startPlayback();
-    return true;
-}
-
-// 转换文件路径为Tauri可访问的URL
-async function convertPath(filePath) {
-    if (!window.__TAURI__) {
-        return filePath;
-    }
-
-    console.log('[AlarmClock] 原始路径:', filePath);
-
-    // 优先使用 convertFileSrc（最可靠的方式）
-    if (window.__TAURI__.core?.convertFileSrc) {
-        try {
-            const converted = window.__TAURI__.core.convertFileSrc(filePath);
-            console.log('[AlarmClock] 使用 convertFileSrc:', converted);
-            return converted;
-        } catch (e) {
-            console.error('[AlarmClock] convertFileSrc 失败:', e);
-        }
-    }
-
-    // 降级方案：尝试读取文件为 Blob
-    try {
-        // Tauri v2: 读取文件为 Blob，然后创建 Object URL
-        const fs = window.__TAURI__.fs;
-        if (fs && typeof fs.readFile === 'function') {
-            // 读取音频文件
-            const audioData = await fs.readFile(filePath);
-
-            // 根据文件扩展名确定 MIME 类型
-            const ext = filePath.toLowerCase().split('.').pop();
-            const mimeTypes = {
-                'wav': 'audio/wav',
-                'mp3': 'audio/mpeg',
-                'ogg': 'audio/ogg',
-                'm4a': 'audio/mp4'
-            };
-            const mimeType = mimeTypes[ext] || 'audio/wav';
-
-            // 创建 Blob 和 Object URL
-            const blob = new Blob([audioData], { type: mimeType });
-            const url = URL.createObjectURL(blob);
-
-            // 记录 Blob URL 以便后续清理，防止内存泄漏
-            alarmState.blobUrls.set(url, true);
-
-            console.log('[AlarmClock] 创建 Blob URL:', url);
-            return url;
-        }
-    } catch (err) {
-        console.error('[AlarmClock] 文件读取失败:', err);
-    }
-
-    // 最后的降级：返回原始路径
-    console.warn('[AlarmClock] 无法转换路径，返回原始路径:', filePath);
-    return filePath;
-}
-
-// ============================================
-// 停止所有音频播放
-// ============================================
-function stopAllAudio() {
-    console.log('[AlarmClock] 正在停止所有音频播放...');
-
-    // 停止当前播放
-    if (alarmState.currentPlayingAudio) {
-        const controller = alarmState.currentPlayingAudio;
-        controller.stop = true;
-
-        // 清除 setTimeout
-        if (controller.timeoutId) {
-            clearTimeout(controller.timeoutId);
-            controller.timeoutId = null;
-        }
-
-        if (controller.audio) {
-            // 移除事件监听器
-            if (controller.onError) {
-                controller.audio.removeEventListener('error', controller.onError);
-                controller.onError = null;
-            }
-
-            controller.audio.pause();
-            controller.audio.loop = false; // 重置 loop 属性
-            controller.audio.src = '';
-            controller.audio.load(); // 强制释放
-            controller.audio = null;
-        }
-
-        // 释放 Blob URL
-        if (controller.blobUrl) {
-            revokeBlobUrl(controller.blobUrl);
-            controller.blobUrl = null;
-        }
-
-        alarmState.currentPlayingAudio = null;
-    }
-
-    // 清空队列
-    alarmState.audioQueue = [];
-    alarmState.audioQueueProcessing = false;
-
-    // 清理所有控制器
-    alarmState.activeLoopControllers.forEach((controller, taskId) => {
-        console.log(`[AlarmClock] 清理控制器: ${taskId}`);
-        controller.stop = true;
-
-        // 清除 setTimeout
-        if (controller.timeoutId) {
-            clearTimeout(controller.timeoutId);
-            controller.timeoutId = null;
-        }
-
-        if (controller.audio) {
-            // 移除事件监听器
-            if (controller.onError) {
-                controller.audio.removeEventListener('error', controller.onError);
-                controller.onError = null;
-            }
-
-            controller.audio.pause();
-            controller.audio.loop = false; // 重置 loop 属性
-            controller.audio.src = '';
-            controller.audio.load(); // 强制释放
-            controller.audio = null;
-        }
-
-        // 释放 Blob URL
-        if (controller.blobUrl) {
-            revokeBlobUrl(controller.blobUrl);
-            controller.blobUrl = null;
-        }
-    });
-    alarmState.activeLoopControllers.clear();
-
-    clearAlarmNotifications();
-
-    console.log('[AlarmClock] 已停止所有音频播放，资源已释放');
-}
-
-// ============================================
 // 保存任务到 localStorage
 // ============================================
 function saveTasks({ sync = true } = {}) {
@@ -992,12 +447,16 @@ function saveTasks({ sync = true } = {}) {
         completedToday: alarmState.completedToday,
         lastDate: new Date().toDateString()
     };
-    localStorage.setItem('alarm_clock_data', JSON.stringify(data));
+    if (!writeAlarmData(data)) {
+        showToast('保存闹钟数据失败，请检查可用存储空间', 'error');
+        return false;
+    }
     if (sync) {
         syncAlarmTasks(alarmState.tasks).catch(error => {
             console.error('[AlarmClock] 同步 Rust 调度器失败', error);
         });
     }
+    return true;
 }
 
 // ============================================
@@ -1005,27 +464,23 @@ function saveTasks({ sync = true } = {}) {
 // ============================================
 function loadTasks() {
     try {
-        const saved = localStorage.getItem('alarm_clock_data');
-        if (saved) {
-            const data = JSON.parse(saved);
-            alarmState.tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, MAX_ALARM_TASKS) : [];
+        const data = readAlarmData();
+        if (Object.keys(data).length === 0) return;
+        alarmState.tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, MAX_ALARM_TASKS) : [];
 
-            // 检查日期，重置今日计数
-            if (data.lastDate === new Date().toDateString()) {
-                alarmState.completedToday = data.completedToday || 0;
-            } else {
-                alarmState.completedToday = 0;
-            }
-
-            // 为旧数据补齐绝对截止时间；不在前端启动任何后台计时器。
-            alarmState.tasks.forEach(task => {
-                normalizeAlarmTask(task);
-                if (task.enabled) {
-                    startTask(task);
-                }
-            });
-            saveTasks();
+        // 检查日期，重置今日计数
+        if (data.lastDate === new Date().toDateString()) {
+            alarmState.completedToday = Number(data.completedToday) || 0;
+        } else {
+            alarmState.completedToday = 0;
         }
+
+        // 为旧数据补齐绝对截止时间；不在前端启动任何后台计时器。
+        alarmState.tasks.forEach(task => {
+            normalizeAlarmTask(task);
+            if (task.enabled) startTask(task);
+        });
+        saveTasks();
     } catch (err) {
         console.error('[AlarmClock] 加载任务失败:', err);
         alarmState.tasks = [];
@@ -1045,8 +500,10 @@ function renderTaskList() {
         onResume: resumeTask,
         onToggle: toggleTask,
         onRestart(task) {
-            task.config.remainingSeconds = task.config.totalSeconds;
-            toggleTask(task.id);
+            if (!restartCountdownTask(alarmState.tasks, task.id)) return;
+            saveTasks();
+            renderTaskList();
+            updateStats();
         },
         onDelete: deleteTask,
         onReorder(tasks) {
@@ -1112,13 +569,11 @@ function startGlobalCountdown() {
     }
 
     alarmState.countdownInterval = setInterval(() => {
-        // 更新所有任务卡片的倒计时显示
-        alarmState.tasks.forEach(task => {
-            const el = document.querySelector(`[data-countdown-id="${task.id}"]`);
-            if (el) {
-                el.textContent = getTaskCountdown(task);
-            }
-        });
+        updateAlarmTaskCountdowns(
+            document.getElementById('taskListPanel'),
+            alarmState.tasks,
+            getTaskCountdown
+        );
 
         // 更新统计区域的倒计时
         updateNextAlarmCountdown();
@@ -1127,24 +582,50 @@ function startGlobalCountdown() {
 
 function applyTriggeredTaskState(triggeredTask) {
     const task = alarmState.tasks.find(item => item.id === triggeredTask.id);
-    if (task?.type === 'countdown') {
-        task.enabled = false;
-        task.config.remainingSeconds = 0;
-        delete task.config.deadlineAt;
-    } else if (task?.type === 'interval') {
-        task.config.nextTriggerAt = Date.now() + Math.max(1, Number(task.config.intervalMs) || 1);
-    } else if (task && (task.type === 'fixed' || task.type === 'hourly')
-        && task.config.repeatEnabled === false) {
-        task.enabled = false;
-    }
+    if (!applyTriggeredAlarmTaskState(task)) return;
 
     alarmState.completedToday++;
     if (document.getElementById('taskListPanel')) renderTaskList();
     updateStats();
 }
 
+function updateAlarmSyncStatus(status, { notify = false } = {}) {
+    const element = document.getElementById('alarmSyncStatus');
+    if (!element || !status) return;
+    const icon = element.querySelector('i');
+    const label = element.querySelector('span');
+    const labels = {
+        idle: '调度就绪',
+        syncing: '正在同步',
+        retrying: `正在重试 ${Math.min(status.attempt + 1, status.maxAttempts)}/${status.maxAttempts}`,
+        synced: status.attempt > 1 ? '调度已恢复' : '调度已同步',
+        failed: '调度未同步'
+    };
+    const icons = {
+        idle: 'ri-check-line',
+        syncing: 'ri-loader-4-line',
+        retrying: 'ri-refresh-line',
+        synced: 'ri-check-line',
+        failed: 'ri-error-warning-line'
+    };
+    element.dataset.state = status.state;
+    element.title = status.error ? String(status.error) : '';
+    if (icon) icon.className = icons[status.state] || icons.idle;
+    if (label) label.textContent = labels[status.state] || labels.idle;
+
+    if (notify && status.state === 'failed') {
+        showToast('任务已保存，但后台调度同步失败；请保持应用开启并稍后重试', 'error');
+    } else if (notify && status.state === 'synced' && status.attempt > 1) {
+        showToast('后台调度已恢复同步', 'success');
+    }
+}
+
 window.addEventListener(ALARM_TRIGGER_EVENT, event => {
     applyTriggeredTaskState(event.detail);
+});
+
+window.addEventListener(ALARM_SYNC_STATUS_EVENT, event => {
+    updateAlarmSyncStatus(event.detail, { notify: true });
 });
 
 window.addEventListener('dtkit:power-state', event => {
@@ -1153,11 +634,7 @@ window.addEventListener('dtkit:power-state', event => {
             clearInterval(alarmState.countdownInterval);
             alarmState.countdownInterval = null;
         }
-        if (previewAudio) {
-            previewAudio.pause();
-            previewAudio.src = '';
-            previewAudio = null;
-        }
+        audioManager.suspend();
     } else if (document.getElementById('taskListPanel')) {
         startGlobalCountdown();
         updateStats();
@@ -1166,9 +643,9 @@ window.addEventListener('dtkit:power-state', event => {
 
 export async function handleBackgroundAlarmTrigger(task) {
     if (task.action !== 'sound') return;
-    if (alarmState.availableAudioFiles.length === 0) await loadAvailableAudioFiles();
+    if (audioManager.availableFiles.length === 0) await loadAvailableAudioFiles();
     task.__backendTriggered = true;
-    await playAudioWithQueue(task);
+    await audioManager.play(task);
 }
 
 // ============================================
@@ -1189,27 +666,7 @@ function destroy() {
         alarmState.abortController = null;
     }
 
-    // 停止预览音频并清理
-    if (previewAudio) {
-        previewAudio.pause();
-        previewAudio.src = '';
-        previewAudio = null;
-    }
-    if (previewAudioBlobUrl) {
-        revokeBlobUrl(previewAudioBlobUrl);
-        previewAudioBlobUrl = null;
-    }
-
-    // 释放所有未清理的 Blob URL（防止内存泄漏）
-    console.log(`[AlarmClock] 释放 ${alarmState.blobUrls.size} 个 Blob URL`);
-    alarmState.blobUrls.forEach((_, url) => {
-        try {
-            URL.revokeObjectURL(url);
-        } catch (e) {
-            // 忽略错误
-        }
-    });
-    alarmState.blobUrls.clear();
+    audioManager.suspend();
 
     // 注意：不清除任务定时器和音频循环，让它们在后台继续运行
     // 这样即使切换到其他工具，定时任务仍然会执行

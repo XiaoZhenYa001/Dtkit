@@ -11,6 +11,22 @@ import {
 } from '../src/core/alarmService.js';
 import { formatAlarmDuration } from '../src/tools/alarm-clock/taskListView.js';
 import { createAlarmTask } from '../src/tools/alarm-clock/taskFactory.js';
+import { enqueueUniqueAudioTask } from '../src/tools/alarm-clock/audioManager.js';
+import { formatAudioFileSize } from '../src/tools/alarm-clock/actionConfigView.js';
+import {
+    ALARM_STORAGE_KEY,
+    applyTriggeredAlarmTaskState,
+    readAlarmData,
+    recordTriggeredAlarm,
+    writeAlarmData
+} from '../src/core/alarmStore.js';
+import {
+    pauseAlarmTask,
+    restartCountdownTask,
+    resumeAlarmTask,
+    toggleAlarmTask
+} from '../src/tools/alarm-clock/taskState.js';
+import { AlarmSyncQueue } from '../src/core/alarmSync.js';
 
 function countdownTask(seconds = 60) {
     return {
@@ -108,6 +124,157 @@ test('alarm task factory validates schedules and produces serializable tasks', (
     }).error, '重复提醒至少选择一天');
 });
 
+test('alarm audio queue coalesces duplicates and stays bounded', () => {
+    const first = { id: 'alarm-1' };
+    const second = { id: 'alarm-2' };
+    const third = { id: 'alarm-3' };
+
+    assert.deepEqual(enqueueUniqueAudioTask([first], 'alarm-0', first, 2), {
+        queue: [first],
+        added: false
+    });
+    assert.deepEqual(enqueueUniqueAudioTask([first], 'alarm-2', second, 2), {
+        queue: [first],
+        added: false
+    });
+    assert.deepEqual(enqueueUniqueAudioTask([first, second], 'alarm-0', third, 2), {
+        queue: [second, third],
+        added: true
+    });
+});
+
+test('sound alarms require a playable file and audio sizes handle invalid input', () => {
+    assert.equal(createAlarmTask({
+        name: '无声闹钟',
+        type: 'countdown',
+        action: 'sound',
+        hours: 0,
+        minutes: 1,
+        seconds: 0
+    }).error, '请先添加并选择提示音');
+
+    const { task } = createAlarmTask({
+        name: '有声闹钟',
+        type: 'countdown',
+        action: 'sound',
+        hours: 0,
+        minutes: 1,
+        seconds: 0,
+        audio: { path: 'C:\\Alarm\\tone.mp3', name: 'tone.mp3' }
+    }, { id: 'sound-1' });
+    assert.equal(task.config.audioPath, 'C:\\Alarm\\tone.mp3');
+    assert.equal(formatAudioFileSize(Number.NaN), '0 B');
+    assert.equal(formatAudioFileSize(1536), '1.5 KB');
+});
+
+test('alarm store owns persistence and applies trigger state consistently', () => {
+    const values = new Map();
+    const storage = {
+        getItem: key => values.get(key) ?? null,
+        setItem: (key, value) => values.set(key, value)
+    };
+    const stored = { tasks: [{ id: 'countdown-1', type: 'countdown', enabled: true, config: {
+        remainingSeconds: 30,
+        deadlineAt: 123
+    } }] };
+    assert.equal(writeAlarmData(stored, storage), true);
+    assert.deepEqual(readAlarmData(storage), stored);
+    assert.ok(values.has(ALARM_STORAGE_KEY));
+
+    const now = new Date(2026, 7, 8, 12, 0, 0).getTime();
+    const data = {
+        ...stored,
+        completedToday: 2,
+        lastDate: new Date(now).toDateString()
+    };
+    assert.equal(recordTriggeredAlarm(data, { id: 'countdown-1' }, now), true);
+    assert.equal(data.tasks[0].enabled, false);
+    assert.equal(data.tasks[0].config.remainingSeconds, 0);
+    assert.equal('deadlineAt' in data.tasks[0].config, false);
+    assert.equal(data.completedToday, 3);
+
+    const interval = { type: 'interval', config: { intervalMs: 60_000 } };
+    assert.equal(applyTriggeredAlarmTaskState(interval, now), true);
+    assert.equal(interval.config.nextTriggerAt, now + 60_000);
+    assert.equal(recordTriggeredAlarm(data, { id: 'missing' }, now), false);
+    assert.equal(data.completedToday, 3);
+});
+
+test('alarm task state transitions preserve deterministic countdown schedules', () => {
+    const now = 1_800_000_000_000;
+    const task = countdownTask(120);
+    task.config.deadlineAt = now + 45_000;
+    const tasks = [task];
+
+    assert.equal(pauseAlarmTask(tasks, task.id, now), task);
+    assert.equal(task.paused, true);
+    assert.equal(task.pausedAt, now);
+    assert.equal(task.config.remainingSeconds, 45);
+
+    assert.equal(resumeAlarmTask(tasks, task.id, now + 5_000), task);
+    assert.equal(task.paused, false);
+    assert.equal('pausedAt' in task, false);
+    assert.equal(task.config.deadlineAt, now + 50_000);
+
+    assert.equal(toggleAlarmTask(tasks, task.id, now + 10_000), task);
+    assert.equal(task.enabled, false);
+    task.config.remainingSeconds = 0;
+    assert.equal(restartCountdownTask(tasks, task.id, now + 20_000), task);
+    assert.equal(task.enabled, true);
+    assert.equal(task.config.remainingSeconds, 120);
+    assert.equal(task.config.deadlineAt, now + 140_000);
+});
+
+test('alarm sync queue retries transient failures and reports recovery', async () => {
+    let attempts = 0;
+    const delays = [];
+    const states = [];
+    const queue = new AlarmSyncQueue(async () => {
+        attempts++;
+        if (attempts < 3) throw new Error('temporary IPC failure');
+        return true;
+    }, {
+        retryDelays: [10, 20],
+        wait: async delay => delays.push(delay),
+        onStatus: status => states.push(status.state)
+    });
+
+    assert.equal(await queue.request([{ id: 'alarm-1' }]), true);
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [10, 20]);
+    assert.deepEqual(states, ['syncing', 'retrying', 'syncing', 'retrying', 'syncing', 'synced']);
+});
+
+test('alarm sync queue always finishes with the newest pending snapshot', async () => {
+    let releaseFirst;
+    const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+    const syncedIds = [];
+    const queue = new AlarmSyncQueue(async tasks => {
+        syncedIds.push(tasks.map(task => task.id));
+        if (syncedIds.length === 1) await firstGate;
+        return true;
+    }, { retryDelays: [] });
+
+    const firstRequest = queue.request([{ id: 'old' }]);
+    const latestRequest = queue.request([{ id: 'latest' }]);
+    releaseFirst();
+    await Promise.all([firstRequest, latestRequest]);
+    assert.deepEqual(syncedIds, [['old'], ['latest']]);
+});
+
+test('alarm sync queue exposes a final failure after bounded retries', async () => {
+    const states = [];
+    const queue = new AlarmSyncQueue(async () => {
+        throw new Error('persistent IPC failure');
+    }, {
+        retryDelays: [],
+        onStatus: status => states.push(status.state)
+    });
+
+    await assert.rejects(queue.request([{ id: 'alarm-1' }]), /persistent IPC failure/);
+    assert.deepEqual(states, ['syncing', 'failed']);
+});
+
 test('alarm tool contains only the visible countdown refresh interval', async () => {
     const source = await readFile(new URL('../src/tools/alarm-clock/index.js', import.meta.url), 'utf8');
     const intervals = source.match(/setInterval\s*\(/g) || [];
@@ -118,7 +285,9 @@ test('alarm tool contains only the visible countdown refresh interval', async ()
     assert.match(source, /dtkit:power-state/);
     assert.match(source, /clearInterval\(alarmState\.countdownInterval\)/);
     assert.match(source, /getElementById\('taskListPanel'\)/);
-    assert.match(source, /MAX_AUDIO_QUEUE_SIZE/);
+    assert.match(source, /new AlarmAudioManager\(\)/);
+    assert.match(source, /updateAlarmTaskCountdowns\(/);
+    assert.doesNotMatch(source, /querySelector\(`\[data-countdown-id=/);
     assert.match(source, /saveTasks\(\{ sync: false \}\)/);
     assert.doesNotMatch(source, /cdn\.jsdelivr\.net|window\.Sortable|preloadedAudios/);
 });

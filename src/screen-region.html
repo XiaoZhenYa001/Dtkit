@@ -4,16 +4,72 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>DtKit 区域截图</title>
+    <link rel="stylesheet" href="./assets/remixicon-subset.css">
     <link rel="stylesheet" href="./screen-region/style.css">
 </head>
 <body>
     <canvas id="regionCanvas" aria-label="拖动选择截图区域"></canvas>
-    <div id="regionSelection" class="region-selection" hidden aria-hidden="true">
-        <span id="regionSize">0 × 0</span>
+
+    <div id="regionSelection" class="region-selection" data-state="idle" hidden aria-hidden="true">
+        <button class="region-handle is-nw" data-handle="nw" aria-label="调整左上角"></button>
+        <button class="region-handle is-n" data-handle="n" aria-label="调整上边缘"></button>
+        <button class="region-handle is-ne" data-handle="ne" aria-label="调整右上角"></button>
+        <button class="region-handle is-e" data-handle="e" aria-label="调整右边缘"></button>
+        <button class="region-handle is-se" data-handle="se" aria-label="调整右下角"></button>
+        <button class="region-handle is-s" data-handle="s" aria-label="调整下边缘"></button>
+        <button class="region-handle is-sw" data-handle="sw" aria-label="调整左下角"></button>
+        <button class="region-handle is-w" data-handle="w" aria-label="调整左边缘"></button>
     </div>
-    <div class="region-hint" aria-hidden="true">
+
+    <section id="regionTopbar" class="region-topbar" hidden aria-label="选区属性">
+        <output id="regionSize">0 × 0</output>
+        <label class="region-radius-control" title="设置截图圆角">
+            <span>圆角</span>
+            <input id="regionRadius" type="range" min="0" max="48" value="0">
+            <output id="regionRadiusValue">0</output>
+        </label>
+        <label class="region-check">
+            <span>阴影</span>
+            <input id="regionShadow" type="checkbox">
+        </label>
+    </section>
+
+    <nav id="regionToolbar" class="region-toolbar" hidden aria-label="截图操作">
+        <div class="region-tool-group region-edit-tools">
+            <button type="button" data-tool="move" class="is-active" aria-pressed="true" title="移动选区"><i class="ri-drag-move-2-line"></i><span>调整</span></button>
+            <button type="button" data-tool="rect" aria-pressed="false" title="矩形"><i class="ri-checkbox-blank-line"></i><span>矩形</span></button>
+            <button type="button" data-tool="ellipse" aria-pressed="false" title="椭圆"><i class="ri-circle-line"></i><span>椭圆</span></button>
+            <button type="button" data-tool="arrow" aria-pressed="false" title="箭头"><i class="ri-arrow-right-up-line"></i><span>箭头</span></button>
+            <button type="button" data-tool="pen" aria-pressed="false" title="画笔"><i class="ri-pencil-line"></i><span>画笔</span></button>
+            <button type="button" data-tool="text" aria-pressed="false" title="文字"><i class="ri-text"></i><span>文字</span></button>
+            <button type="button" data-tool="mosaic" aria-pressed="false" title="马赛克"><i class="ri-layout-grid-line"></i><span>马赛克</span></button>
+        </div>
+        <span class="region-divider region-edit-tools" aria-hidden="true"></span>
+        <label class="region-color region-edit-tools" title="标注颜色"><input id="regionColor" type="color" value="#ff5f38"><span></span></label>
+        <label class="region-size-control region-edit-tools" title="标注粗细"><input id="regionStrokeSize" type="range" min="2" max="24" value="5"><output id="regionStrokeValue">5</output></label>
+        <button id="regionUndo" class="region-edit-tools" type="button" title="撤销" disabled><i class="ri-arrow-go-back-line"></i><span>撤销</span></button>
+        <div id="regionLongControl" class="region-long">
+            <button id="regionLong" type="button" aria-haspopup="true" aria-expanded="false" title="将当前选区作为长截图范围"><i class="ri-layout-row-line"></i><span>长截图</span><i class="ri-arrow-down-s-line region-menu-chevron"></i></button>
+            <div id="regionLongMenu" class="region-long-menu" hidden>
+                <strong>拼接方向</strong>
+                <span>使用当前选区直接开始</span>
+                <div>
+                    <button type="button" data-region-long-direction="vertical"><b aria-hidden="true">↓</b><span>纵向</span></button>
+                    <button type="button" data-region-long-direction="horizontal"><b aria-hidden="true">→</b><span>横向</span></button>
+                </div>
+            </div>
+        </div>
+        <span class="region-divider" aria-hidden="true"></span>
+        <button id="regionCancel" type="button" class="is-danger" title="取消截图"><i class="ri-close-line"></i><span>取消</span></button>
+        <button id="regionConfirm" type="button" class="is-confirm" title="完成截图"><i class="ri-check-line"></i><span>完成</span></button>
+    </nav>
+
+    <textarea id="regionInlineText" class="region-inline-text" rows="1" maxlength="300" hidden aria-label="输入文字标注" spellcheck="false"></textarea>
+    <div id="regionBrushCursor" class="region-brush-cursor" hidden aria-hidden="true"></div>
+
+    <div id="regionHint" class="region-hint" aria-hidden="true">
         <strong>拖动选择截图范围</strong>
-        <span>松开鼠标完成 · Esc 或右键取消</span>
+        <span>松开后可继续调整 · 右键或 Esc 取消</span>
     </div>
     <div id="regionLoading" class="region-loading">正在准备截图选区…</div>
     <script type="module" src="./screen-region/main.js"></script>

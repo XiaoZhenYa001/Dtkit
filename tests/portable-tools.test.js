@@ -50,6 +50,10 @@ test('screenshot capture releases every GDI resource and is user-triggered', () 
     assert.match(screenshot, /MAX_SCREENSHOT_BYTES/);
     assert.match(screenshot, /DwmFlush/);
     assert.match(screenshot, /wait_for_hidden_window\(\)\.await/);
+    assert.match(screenshot, /hide_quick_hosts_for_capture/);
+    assert.match(screenshot, /QUICK_HOST_LABEL_PREFIX/);
+    assert.match(screenshot, /long_direction:\s*Option<String>/);
+    assert.match(screenshotUi, /isQuickHost\(\)\s*\?\s*''/);
     assert.doesNotMatch(screenshot, /from_millis\(120\)/);
     assert.match(screenshotUi, /function beginPan/);
     assert.match(screenshotUi, /event\.ctrlKey/);

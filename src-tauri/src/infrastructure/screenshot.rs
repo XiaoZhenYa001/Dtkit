@@ -1,3 +1,4 @@
+use super::quick_host::QUICK_HOST_LABEL_PREFIX;
 use super::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use base64::Engine;
@@ -41,10 +42,18 @@ pub(crate) struct ScreenCapture {
 #[derive(Clone)]
 struct ScreenRegionCaptureSession {
     owner_label: String,
+    hidden_quick_hosts: Vec<TemporarilyHiddenQuickHost>,
     capture: Option<ScreenCapture>,
     long_direction: Option<String>,
     max_segments: u8,
     source_rect: (i32, i32, u32, u32),
+}
+
+#[derive(Clone)]
+struct TemporarilyHiddenQuickHost {
+    label: String,
+    was_visible: bool,
+    was_minimized: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,6 +77,57 @@ struct ScreenRegionCaptureResult {
     capture: Option<ScreenCapture>,
 }
 
+fn hide_quick_hosts_for_capture(
+    owner: &WebviewWindow,
+) -> Result<Vec<TemporarilyHiddenQuickHost>, String> {
+    let owner_label = owner.label();
+    let mut hidden = Vec::new();
+    for (label, candidate) in owner.app_handle().webview_windows() {
+        if label != owner_label && !label.starts_with(QUICK_HOST_LABEL_PREFIX) {
+            continue;
+        }
+        let was_visible = candidate.is_visible().unwrap_or(true);
+        let was_minimized = candidate.is_minimized().unwrap_or(false);
+        if was_visible {
+            if let Err(error) = candidate.hide() {
+                if label == owner_label {
+                    return Err(format!("隐藏截图来源窗口失败: {error}"));
+                }
+                continue;
+            }
+        }
+        hidden.push(TemporarilyHiddenQuickHost {
+            label,
+            was_visible,
+            was_minimized,
+        });
+    }
+    Ok(hidden)
+}
+
+fn restore_capture_windows(
+    app: &AppHandle,
+    owner_label: &str,
+    hidden_quick_hosts: &[TemporarilyHiddenQuickHost],
+) {
+    for state in hidden_quick_hosts {
+        if state.label == owner_label || !state.was_visible {
+            continue;
+        }
+        if let Some(window) = app.get_webview_window(&state.label) {
+            let _ = window.show();
+            if state.was_minimized {
+                let _ = window.minimize();
+            }
+        }
+    }
+    if let Some(owner) = app.get_webview_window(owner_label) {
+        let _ = owner.show();
+        let _ = owner.unminimize();
+        let _ = owner.set_focus();
+    }
+}
+
 fn restore_region_capture_owner(
     app: &AppHandle,
     session: ScreenRegionCaptureSession,
@@ -79,10 +139,8 @@ fn restore_region_capture_owner(
             capture,
         };
         let _ = owner.emit("screen-region-captured", result);
-        let _ = owner.show();
-        let _ = owner.unminimize();
-        let _ = owner.set_focus();
     }
+    restore_capture_windows(app, &session.owner_label, &session.hidden_quick_hosts);
 }
 
 fn validate_selected_capture(
@@ -645,20 +703,16 @@ pub(crate) async fn start_screen_region_capture(
         }
     }
     let owner_label = window.label().to_string();
-    window
-        .hide()
-        .map_err(|error| format!("隐藏截图来源窗口失败: {error}"))?;
+    let hidden_quick_hosts = hide_quick_hosts_for_capture(&window)?;
     wait_for_hidden_window().await;
     let capture = match tauri::async_runtime::spawn_blocking(capture_virtual_screen).await {
         Ok(Ok(capture)) => capture,
         Ok(Err(error)) => {
-            let _ = window.show();
-            let _ = window.set_focus();
+            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
             return Err(error);
         }
         Err(error) => {
-            let _ = window.show();
-            let _ = window.set_focus();
+            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
             return Err(format!("截图任务异常结束: {error}"));
         }
     };
@@ -682,36 +736,41 @@ pub(crate) async fn start_screen_region_capture(
     {
         Ok(overlay) => overlay,
         Err(error) => {
-            let _ = window.show();
-            let _ = window.set_focus();
+            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
             return Err(format!("创建截图选区覆盖层失败: {error}"));
         }
     };
     if let Err(error) = overlay.set_position(PhysicalPosition::new(capture.x, capture.y)) {
         let _ = overlay.close();
-        let _ = window.show();
+        restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
         return Err(format!("定位截图选区覆盖层失败: {error}"));
     }
     if let Err(error) = overlay.set_size(PhysicalSize::new(capture.width, capture.height)) {
         let _ = overlay.close();
-        let _ = window.show();
+        restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
         return Err(format!("调整截图选区覆盖层失败: {error}"));
     }
     let source_rect = (capture.x, capture.y, capture.width, capture.height);
-    manager
-        .sessions
-        .lock()
-        .map_err(|_| "截图选区状态不可用".to_string())?
-        .insert(
-            label.clone(),
-            ScreenRegionCaptureSession {
-                owner_label,
-                capture: Some(capture),
-                long_direction,
-                max_segments: max_segments.unwrap_or(12).clamp(2, 20),
-                source_rect,
-            },
-        );
+    let mut sessions = match manager.sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(_) => {
+            let _ = overlay.close();
+            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
+            return Err("截图选区状态不可用".to_string());
+        }
+    };
+    sessions.insert(
+        label.clone(),
+        ScreenRegionCaptureSession {
+            owner_label,
+            hidden_quick_hosts,
+            capture: Some(capture),
+            long_direction,
+            max_segments: max_segments.unwrap_or(12).clamp(2, 20),
+            source_rect,
+        },
+    );
+    drop(sessions);
     let app = window.app_handle().clone();
     overlay.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
@@ -727,11 +786,19 @@ pub(crate) async fn start_screen_region_capture(
         }
     });
     overlay.show().map_err(|error| {
-        if let Ok(mut sessions) = manager.sessions.lock() {
-            sessions.remove(overlay.label());
-        }
+        let session = manager
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut sessions| sessions.remove(overlay.label()));
         let _ = overlay.close();
-        let _ = window.show();
+        if let Some(session) = session {
+            restore_capture_windows(
+                window.app_handle(),
+                &session.owner_label,
+                &session.hidden_quick_hosts,
+            );
+        }
         format!("显示截图选区覆盖层失败: {error}")
     })?;
     let _ = overlay.set_focus();
@@ -769,8 +836,10 @@ pub(crate) async fn finish_screen_region_capture(
     height: Option<u32>,
     x: Option<i32>,
     y: Option<i32>,
+    long_direction: Option<String>,
+    max_segments: Option<u8>,
 ) -> Result<(), String> {
-    let session = manager
+    let mut session = manager
         .sessions
         .lock()
         .map_err(|_| "截图选区状态不可用".to_string())?
@@ -779,7 +848,18 @@ pub(crate) async fn finish_screen_region_capture(
     let app = window.app_handle().clone();
     let _ = window.close();
 
-    let Some(direction) = session.long_direction.clone() else {
+    let direction = long_direction.or_else(|| session.long_direction.clone());
+    if direction
+        .as_deref()
+        .is_some_and(|value| value != "vertical" && value != "horizontal")
+    {
+        restore_region_capture_owner(&app, session, None);
+        return Err("长截图方向无效".to_string());
+    }
+    if let Some(value) = max_segments {
+        session.max_segments = value.clamp(2, 20);
+    }
+    let Some(direction) = direction else {
         return match validate_selected_capture(data_url, width, height) {
             Ok(capture) => {
                 restore_region_capture_owner(&app, session, capture);

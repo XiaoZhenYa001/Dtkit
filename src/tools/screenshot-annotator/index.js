@@ -36,6 +36,18 @@ let unlistenRegionCapture = null;
 let editingTextIndex = -1;
 
 function template() {
+    const footerStatus = isQuickHost() ? '支持原位文字、形状、圆角与截图调整。' : '支持原位文字、形状、圆角与自动长截图。';
+    const longCaptureAction = isQuickHost() ? '' : '<button id="captureLong" type="button" title="选择固定区域并自动滚动拼接" disabled><i class="ri-layout-row-line"></i><span>长截图</span></button>';
+    const longCaptureDialog = isQuickHost() ? '' : `<dialog id="captureLongDialog" class="capture-long-dialog"><form method="dialog">
+        <header><span><i class="ri-layout-row-line"></i></span><div><strong>自动长截图</strong><small>只需选择一次范围，DtKit 会自动滚动并拼接</small></div></header>
+        <div class="capture-long-directions" role="group" aria-label="拼接方向">
+          <button class="is-active" data-long-direction="vertical" type="button" aria-pressed="true"><i class="ri-arrow-down-line"></i><span>纵向拼接</span></button>
+          <button data-long-direction="horizontal" type="button" aria-pressed="false"><i class="ri-arrow-right-line"></i><span>横向拼接</span></button>
+        </div>
+        <label>最多采集 <span><input id="captureLongSegments" type="number" min="2" max="20" value="12"> 段</span></label>
+        <p>选区会显示高亮边框。DtKit 将向目标窗口发送滚动并自动识别重叠位置；到达页面末端或内容不再变化时会自动结束。</p>
+        <footer><button id="captureLongCancel" type="button">取消</button><button id="captureLongStart" class="capture-long-primary" type="button">选择范围并开始</button></footer>
+      </form></dialog>`;
     return `<div class="capture-shell">
       <header class="capture-toolbar">
         <div class="capture-identity"><span><i class="ri-screenshot-2-line"></i></span><div><strong>截图标注</strong><small id="captureDimensions">等待截图</small></div></div>
@@ -81,7 +93,7 @@ function template() {
               <input id="captureCornerRadius" type="range" min="0" max="64" value="0">
             </div>
           </div>
-          <button id="captureLong" type="button" title="选择固定区域并自动滚动拼接" disabled><i class="ri-layout-row-line"></i><span>长截图</span></button>
+          ${longCaptureAction}
           <button id="captureAgain"><i class="ri-screenshot-2-line"></i> <span id="captureAgainLabel">开始截图</span></button>
           <button id="captureSave" class="capture-save" disabled><i class="ri-save-3-line"></i> 保存 PNG</button>
         </div>
@@ -92,17 +104,8 @@ function template() {
         <div id="captureBrushCursor" class="capture-brush-cursor" hidden aria-hidden="true"></div>
         <textarea id="captureInlineText" class="capture-inline-text" maxlength="500" rows="1" hidden aria-label="输入文字标注" spellcheck="false"></textarea>
       </div>
-      <footer><span id="captureStatus"><i class="ri-information-line"></i> 支持原位文字、形状、圆角与自动长截图。</span><span class="capture-shortcuts"><kbd>Ctrl</kbd> + <kbd>Z</kbd> 撤销　<kbd>Delete</kbd> 删除选中标注</span></footer>
-      <dialog id="captureLongDialog" class="capture-long-dialog"><form method="dialog">
-        <header><span><i class="ri-layout-row-line"></i></span><div><strong>自动长截图</strong><small>只需选择一次范围，DtKit 会自动滚动并拼接</small></div></header>
-        <div class="capture-long-directions" role="group" aria-label="拼接方向">
-          <button class="is-active" data-long-direction="vertical" type="button" aria-pressed="true"><i class="ri-arrow-down-line"></i><span>纵向拼接</span></button>
-          <button data-long-direction="horizontal" type="button" aria-pressed="false"><i class="ri-arrow-right-line"></i><span>横向拼接</span></button>
-        </div>
-        <label>最多采集 <span><input id="captureLongSegments" type="number" min="2" max="20" value="12"> 段</span></label>
-        <p>选区会显示高亮边框。DtKit 将向目标窗口发送滚动并自动识别重叠位置；到达页面末端或内容不再变化时会自动结束。</p>
-        <footer><button id="captureLongCancel" type="button">取消</button><button id="captureLongStart" class="capture-long-primary" type="button">选择范围并开始</button></footer>
-      </form></dialog>
+      <footer><span id="captureStatus"><i class="ri-information-line"></i> ${footerStatus}</span><span class="capture-shortcuts"><kbd>Ctrl</kbd> + <kbd>Z</kbd> 撤销　<kbd>Delete</kbd> 删除选中标注</span></footer>
+      ${longCaptureDialog}
     </div>`;
 }
 
@@ -743,9 +746,9 @@ async function init() {
     byId('captureDelete').addEventListener('click', clearCapture, { signal });
     byId('captureAgain').addEventListener('click', capture, { signal });
     byId('captureSave').addEventListener('click', save, { signal });
-    byId('captureLong').addEventListener('click', openLongDialog, { signal });
-    byId('captureLongStart').addEventListener('click', startLongCapture, { signal });
-    byId('captureLongCancel').addEventListener('click', () => byId('captureLongDialog').close(), { signal });
+    byId('captureLong')?.addEventListener('click', openLongDialog, { signal });
+    byId('captureLongStart')?.addEventListener('click', startLongCapture, { signal });
+    byId('captureLongCancel')?.addEventListener('click', () => byId('captureLongDialog')?.close(), { signal });
     byId('captureCanvasTrigger').addEventListener('click', () => toggleToolMenu('captureCanvasMenu', 'captureCanvasTrigger'), { signal });
     byId('captureCornerRadius').addEventListener('input', event => {
         cornerRadius = Number(event.target.value);

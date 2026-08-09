@@ -1,8 +1,29 @@
-const STORAGE_KEY = 'alarm_clock_data';
+import {
+    ALARM_STORAGE_KEY,
+    readAlarmData,
+    recordTriggeredAlarm,
+    writeAlarmData
+} from './alarmStore.js';
+import { AlarmSyncQueue } from './alarmSync.js';
+
 const TRIGGER_EVENT = 'dtkit:alarm-triggered';
+const SYNC_STATUS_EVENT = 'dtkit:alarm-sync-status';
 
 let initialized = false;
 let unlistenAlarm = null;
+let alarmSyncStatus = { state: 'idle', attempt: 0, maxAttempts: 4 };
+
+function emitSyncStatus(detail) {
+    alarmSyncStatus = detail;
+    globalThis.window?.dispatchEvent(new CustomEvent(SYNC_STATUS_EVENT, { detail }));
+}
+
+const alarmSyncQueue = new AlarmSyncQueue(async tasks => {
+    const invoke = getInvoke();
+    if (!invoke) return false;
+    await invoke('sync_alarm_tasks', { tasks });
+    return true;
+}, { onStatus: emitSyncStatus });
 
 function getInvoke() {
     return globalThis.window?.__TAURI__?.core?.invoke || null;
@@ -12,23 +33,9 @@ function getListen() {
     return globalThis.window?.__TAURI__?.event?.listen || null;
 }
 
-function readAlarmData() {
-    try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    } catch (error) {
-        console.error('[AlarmService] 读取闹钟数据失败', error);
-        return {};
-    }
-}
-
-function writeAlarmData(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-
-export function prepareAlarmTaskSchedule(task, { restart = false } = {}) {
+export function prepareAlarmTaskSchedule(task, { restart = false, now = Date.now() } = {}) {
     if (!task?.config || !task.enabled || task.paused) return task;
 
-    const now = Date.now();
     if (task.type === 'countdown') {
         const remainingSeconds = Math.max(0, Number(task.config.remainingSeconds) || 0);
         if (restart || !Number.isFinite(task.config.deadlineAt)) {
@@ -58,9 +65,8 @@ export function normalizeAlarmTask(task) {
     return task;
 }
 
-export function pauseAlarmTaskSchedule(task) {
+export function pauseAlarmTaskSchedule(task, now = Date.now()) {
     if (!task?.config) return task;
-    const now = Date.now();
 
     if (task.type === 'countdown' && Number.isFinite(task.config.deadlineAt)) {
         task.config.remainingSeconds = Math.max(0, Math.ceil((task.config.deadlineAt - now) / 1000));
@@ -141,35 +147,18 @@ export function getAlarmRemainingSeconds(task, now = Date.now(), { includePaused
     return Math.max(0, Math.ceil((target.getTime() - now) / 1000));
 }
 
-export async function syncAlarmTasks(tasks) {
-    const invoke = getInvoke();
-    if (!invoke) return false;
+export function syncAlarmTasks(tasks) {
+    if (!getInvoke()) return Promise.resolve(false);
+    return alarmSyncQueue.request(tasks);
+}
 
-    await invoke('sync_alarm_tasks', { tasks });
-    return true;
+export function getAlarmSyncStatus() {
+    return alarmSyncStatus;
 }
 
 function updateStoredTaskAfterTrigger(triggeredTask) {
     const data = readAlarmData();
-    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-    const task = tasks.find(item => item.id === triggeredTask.id);
-    if (!task) return;
-
-    if (task.type === 'countdown') {
-        task.enabled = false;
-        task.config.remainingSeconds = 0;
-        delete task.config.deadlineAt;
-    } else if (task.type === 'interval') {
-        task.config.nextTriggerAt = Date.now() + Math.max(1, Number(task.config.intervalMs) || 1);
-    } else if ((task.type === 'fixed' || task.type === 'hourly')
-        && task.config.repeatEnabled === false) {
-        task.enabled = false;
-    }
-
-    const today = new Date().toDateString();
-    data.completedToday = data.lastDate === today ? (Number(data.completedToday) || 0) + 1 : 1;
-    data.lastDate = today;
-    writeAlarmData(data);
+    if (recordTriggeredAlarm(data, triggeredTask)) writeAlarmData(data);
 }
 
 async function handleAlarmTriggered(task) {
@@ -217,4 +206,8 @@ export function destroyAlarmService() {
     initialized = false;
 }
 
-export { STORAGE_KEY as ALARM_STORAGE_KEY, TRIGGER_EVENT as ALARM_TRIGGER_EVENT };
+export {
+    ALARM_STORAGE_KEY,
+    SYNC_STATUS_EVENT as ALARM_SYNC_STATUS_EVENT,
+    TRIGGER_EVENT as ALARM_TRIGGER_EVENT
+};

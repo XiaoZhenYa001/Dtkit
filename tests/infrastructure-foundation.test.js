@@ -43,6 +43,12 @@ test('screen region selector is an isolated ephemeral frontend entry', () => {
 
     assert.match(vite, /screenRegion:\s*`\$\{projectRoot\}src\/screen-region\.html`/);
     assert.match(html, /\.\/screen-region\/main\.js/);
+    assert.match(html, /id="regionTopbar"/);
+    assert.match(html, /id="regionToolbar"/);
+    assert.match(html, /id="regionConfirm"/);
+    assert.match(html, /id="regionLong"/);
+    assert.match(html, /data-region-long-direction="vertical"/);
+    assert.match(html, /data-region-long-direction="horizontal"/);
     assert.deepEqual(capability.windows, ['screen-region-overlay-*']);
     assert.ok(!capability.permissions.some(permission => /fs|shell|global-shortcut/.test(permission)));
 });

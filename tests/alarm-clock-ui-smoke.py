@@ -23,6 +23,24 @@ with sync_playwright() as playwright:
     page.goto(BASE_URL, wait_until="networkidle")
     page.locator('#toolLibraryView [data-tool-id="alarm-clock"]').click()
     page.locator(".alarm-clock-view").wait_for(state="visible")
+    expect(page.locator("#alarmSyncStatus")).to_contain_text("调度就绪")
+    page.evaluate(
+        "window.dispatchEvent(new CustomEvent('dtkit:alarm-sync-status', "
+        "{ detail: { state: 'failed', attempt: 4, maxAttempts: 4, error: 'test' } }))"
+    )
+    expect(page.locator("#alarmSyncStatus")).to_have_attribute("data-state", "failed")
+    expect(page.locator("#alarmSyncStatus")).to_contain_text("调度未同步")
+    page.evaluate(
+        "window.dispatchEvent(new CustomEvent('dtkit:alarm-sync-status', "
+        "{ detail: { state: 'synced', attempt: 2, maxAttempts: 4 } }))"
+    )
+    expect(page.locator("#alarmSyncStatus")).to_contain_text("调度已恢复")
+
+    page.locator("#alarmActionType").select_option("sound")
+    expect(page.locator("#addTaskBtn")).to_be_disabled()
+    expect(page.locator(".alarm-no-audio")).to_contain_text("未找到音频文件")
+    page.locator("#alarmActionType").select_option("notify")
+    expect(page.locator("#addTaskBtn")).to_be_enabled()
 
     page.locator("#alarmTaskType").select_option("fixed")
     page.locator("#alarmTaskName").fill("一次提醒")
@@ -53,6 +71,16 @@ with sync_playwright() as playwright:
         page.locator("#addTaskBtn").click()
 
     expect(page.locator(".alarm-task-card")).to_have_count(3)
+    page.locator(".alarm-task-card").first.locator(".alarm-task-btn--pause").click()
+    expect(page.locator(".alarm-task-card.paused")).to_have_count(1)
+    paused_tasks = page.evaluate(
+        "JSON.parse(localStorage.getItem('alarm_clock_data')).tasks.filter(task => task.paused)"
+    )
+    if len(paused_tasks) != 1:
+        raise AssertionError(f"Paused task state was not persisted: {paused_tasks!r}")
+    page.locator(".alarm-task-card.paused .alarm-task-btn--resume").click()
+    expect(page.locator(".alarm-task-card.paused")).to_have_count(0)
+
     order_before = page.evaluate(
         "JSON.parse(localStorage.getItem('alarm_clock_data')).tasks.map(task => task.id)"
     )

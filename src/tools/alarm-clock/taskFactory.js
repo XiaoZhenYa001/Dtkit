@@ -54,9 +54,10 @@ function applyScheduleConfig(task, draft) {
 }
 
 function applyActionConfig(task, draft) {
-    if (task.action === 'sound' && draft.audio) {
-        task.config.audioPath = draft.audio.path || '';
-        task.config.audioName = draft.audio.name || '';
+    if (task.action === 'sound') {
+        if (!draft.audio?.path) return '请先添加并选择提示音';
+        task.config.audioPath = draft.audio.path;
+        task.config.audioName = draft.audio.name || '默认提示音';
     }
     if (task.action === 'run') {
         if (!draft.filePath || draft.filePath === '未选择文件') return '请选择要运行的程序';

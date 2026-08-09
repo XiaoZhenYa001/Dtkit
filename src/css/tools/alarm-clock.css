@@ -49,6 +49,48 @@
             font-family: 'Courier New', monospace;
         }
 
+        .alarm-sync-status {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-width: 112px;
+            padding: 8px 12px;
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            color: var(--color-text-secondary);
+            background: var(--color-bg-secondary);
+            font-size: var(--font-size-sm);
+            white-space: nowrap;
+        }
+
+        .alarm-sync-status[data-state="syncing"] i,
+        .alarm-sync-status[data-state="retrying"] i {
+            animation: alarmSyncSpin 1s linear infinite;
+        }
+
+        .alarm-sync-status[data-state="synced"] {
+            color: #15803d;
+            border-color: #86efac;
+            background: #f0fdf4;
+        }
+
+        .alarm-sync-status[data-state="retrying"] {
+            color: #a16207;
+            border-color: #fde047;
+            background: #fefce8;
+        }
+
+        .alarm-sync-status[data-state="failed"] {
+            color: #b91c1c;
+            border-color: #fca5a5;
+            background: #fef2f2;
+        }
+
+        @keyframes alarmSyncSpin {
+            to { transform: rotate(360deg); }
+        }
+
         /* 主体布局 */
         .alarm-main-container {
             display: grid;
@@ -235,6 +277,13 @@
             border-color: var(--color-primary);
             background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
             box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+        }
+
+        .alarm-audio-item:focus-visible,
+        .alarm-audio-preview-btn:focus-visible,
+        .alarm-open-folder-btn:focus-visible {
+            outline: 3px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+            outline-offset: 2px;
         }
 
         .alarm-audio-icon {
@@ -486,13 +535,20 @@
             box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
         }
 
-        .alarm-btn-add:hover {
+        .alarm-btn-add:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
         }
 
         .alarm-btn-add:active {
             transform: translateY(0);
+        }
+
+        .alarm-btn-add:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+            box-shadow: none;
+            filter: grayscale(0.35);
         }
 
         /* 停止所有闹钟按钮 */

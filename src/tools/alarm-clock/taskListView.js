@@ -140,4 +140,13 @@ export function renderAlarmTaskList(panel, tasks, handlers) {
     panel.appendChild(fragment);
     bindTaskReordering(panel, tasks, handlers.onReorder);
 }
+
+export function updateAlarmTaskCountdowns(panel, tasks, getCountdown) {
+    if (!panel) return;
+    const taskById = new Map(tasks.map(task => [String(task.id), task]));
+    panel.querySelectorAll('[data-countdown-id]').forEach(element => {
+        const task = taskById.get(element.dataset.countdownId);
+        if (task) element.textContent = getCountdown(task);
+    });
+}
 import { escapeHtml } from '../../core/html.js';

@@ -7,7 +7,7 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-const QUICK_HOST_LABEL_PREFIX: &str = "quick-host-";
+pub(crate) const QUICK_HOST_LABEL_PREFIX: &str = "quick-host-";
 const PALETTE_IDLE_TIMEOUT_SECONDS: u64 = 180;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
