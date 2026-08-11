@@ -1145,7 +1145,11 @@
 
 .modal-btn--secondary { border-color: var(--color-border); background: rgba(255, 255, 255, 0.7); }
 .modal-btn--primary { color: #fff; background: linear-gradient(135deg, var(--color-primary), var(--color-primary-strong)); }
-.modal-btn:hover { transform: translateY(-1px); }
+.modal-btn--secondary:hover:not(:disabled) { border-color: rgba(216, 111, 61, 0.25); color: var(--color-primary); background: #fff; transform: translateY(-1px); }
+.modal-btn--primary:hover:not(:disabled) { color: #fff; background: linear-gradient(135deg, var(--color-primary-strong), #bd4f25); box-shadow: 0 0.55rem 1.2rem rgba(216, 111, 61, 0.18); transform: translateY(-1px); }
+.modal-btn--danger:hover:not(:disabled) { color: #fff; background: linear-gradient(135deg, #b94343, #913232); box-shadow: 0 0.55rem 1.2rem rgba(169, 62, 62, 0.18); transform: translateY(-1px); }
+.modal-btn:active:not(:disabled) { transform: translateY(0); }
+.modal-btn:focus-visible { outline: 3px solid rgba(216, 111, 61, 0.17); outline-offset: 2px; }
 
 @media (max-width: 64rem) {
     .settings-workspace { grid-template-columns: 1fr; }

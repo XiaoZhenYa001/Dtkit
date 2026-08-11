@@ -36,6 +36,16 @@ struct PasswordRecord {
     note: String,
     #[serde(default)]
     category: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    favorite: bool,
+    #[serde(default)]
+    last_used_at: Option<i64>,
+    #[serde(default)]
+    use_count: u64,
+    #[serde(default)]
+    custom_fields: Vec<PasswordCustomField>,
     created_at: i64,
     updated_at: i64,
     #[serde(default)]
@@ -50,6 +60,8 @@ impl PasswordRecord {
             username: self.username.clone(),
             note: self.note.clone(),
             category: self.category.clone(),
+            favorite: self.favorite,
+            last_used_at: self.last_used_at,
             deleted_at: self.deleted_at,
         }
     }
@@ -60,7 +72,23 @@ impl PasswordRecord {
 
     fn wipe_secret(&mut self) {
         wipe_string(&mut self.password);
+        for field in &mut self.custom_fields {
+            if field.sensitive {
+                wipe_string(&mut field.value);
+            }
+        }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PasswordCustomField {
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    value: String,
+    #[serde(default)]
+    sensitive: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -87,7 +115,26 @@ pub(crate) struct PasswordSummary {
     username: String,
     note: String,
     category: String,
+    favorite: bool,
+    last_used_at: Option<i64>,
     deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PasswordOverview {
+    total: usize,
+    favorite_count: usize,
+    recent_count: usize,
+    trash_count: usize,
+    categories: Vec<PasswordCategoryCount>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasswordCategoryCount {
+    name: String,
+    count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +154,7 @@ struct IndexedPassword {
     phone: Range<usize>,
     note: Range<usize>,
     category: Range<usize>,
+    url: Range<usize>,
 }
 
 struct PasswordIndexCache {
@@ -131,6 +179,12 @@ pub(crate) struct PasswordDraft {
     note: String,
     #[serde(default)]
     category: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    favorite: bool,
+    #[serde(default)]
+    custom_fields: Vec<PasswordCustomField>,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,12 +198,68 @@ pub(crate) struct PasswordEditorEntry {
     password: String,
     note: String,
     category: String,
+    url: String,
+    favorite: bool,
+    custom_fields: Vec<PasswordCustomField>,
 }
 
 impl Drop for PasswordEditorEntry {
     fn drop(&mut self) {
         wipe_string(&mut self.password);
+        for field in &mut self.custom_fields {
+            if field.sensitive {
+                wipe_string(&mut field.value);
+            }
+        }
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PasswordDetail {
+    id: String,
+    service: String,
+    username: String,
+    phone: String,
+    email: String,
+    note: String,
+    category: String,
+    url: String,
+    favorite: bool,
+    created_at: i64,
+    updated_at: i64,
+    last_used_at: Option<i64>,
+    use_count: u64,
+    custom_fields: Vec<PasswordDetailField>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasswordDetailField {
+    index: usize,
+    label: String,
+    value: String,
+    sensitive: bool,
+    has_value: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PasswordSecurityReport {
+    total: usize,
+    weak: usize,
+    reused: usize,
+    stale: usize,
+    incomplete: usize,
+    issues: Vec<PasswordSecurityIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasswordSecurityIssue {
+    id: String,
+    service: String,
+    kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +305,27 @@ pub(crate) struct ImportPreview {
     invalid: usize,
     warnings: Vec<String>,
     items: Vec<PasswordSummary>,
+    issues: Vec<ImportIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportIssue {
+    source: String,
+    service: String,
+    username: String,
+    email: String,
+    note: String,
+    category: String,
+    errors: Vec<String>,
+}
+
+struct ParsedImport {
+    entries: Vec<PasswordRecord>,
+    total: usize,
+    invalid: usize,
+    warnings: Vec<String>,
+    issues: Vec<ImportIssue>,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,6 +388,8 @@ impl PasswordVaultManager {
         scope: &SearchScope,
         needle: &str,
         include_deleted: bool,
+        view: &str,
+        category: &str,
         limit: usize,
     ) -> Option<PasswordSearchResponse> {
         let index = self.index.read().ok()?;
@@ -268,7 +401,20 @@ impl PasswordVaultManager {
         {
             return None;
         }
-        Some(cache.search(scope, needle, include_deleted, limit))
+        Some(cache.search(scope, needle, include_deleted, view, category, limit))
+    }
+
+    fn overview_cached(&self, vault_path: &Path, now: i64) -> Option<PasswordOverview> {
+        let index = self.index.read().ok()?;
+        let cache = index.as_ref()?;
+        if cache.vault_path != vault_path
+            || cache
+                .next_purge_at
+                .is_some_and(|next_purge_at| now >= next_purge_at)
+        {
+            return None;
+        }
+        Some(cache.overview())
     }
 }
 
@@ -332,7 +478,13 @@ fn validate_draft(draft: &PasswordDraft) -> Result<(), String> {
         || draft.email.chars().count() > 500
         || draft.note.chars().count() > 10_000
         || draft.category.chars().count() > 200
+        || draft.url.chars().count() > 2_000
         || draft.password.chars().count() > 10_000
+        || draft.custom_fields.len() > 20
+        || draft
+            .custom_fields
+            .iter()
+            .any(|field| field.label.chars().count() > 100 || field.value.chars().count() > 10_000)
     {
         return Err("密码条目包含超出限制的字段".to_string());
     }
@@ -465,6 +617,7 @@ enum SearchScope {
     Phone,
     Note,
     Category,
+    Url,
 }
 
 fn parse_search(query: &str) -> (SearchScope, String) {
@@ -482,6 +635,7 @@ fn parse_search(query: &str) -> (SearchScope, String) {
         "phone" | "手机号" | "电话" => SearchScope::Phone,
         "note" | "备注" => SearchScope::Note,
         "category" | "分类" => SearchScope::Category,
+        "url" | "website" | "网址" | "网站" => SearchScope::Url,
         _ => SearchScope::Global,
     };
     (scope, normalize(value))
@@ -505,6 +659,7 @@ impl IndexedPassword {
         let phone = append_normalized(&mut search_text, &entry.phone);
         let note = append_normalized(&mut search_text, &entry.note);
         let category = append_normalized(&mut search_text, &entry.category);
+        let url = append_normalized(&mut search_text, &entry.url);
         Self {
             summary: entry.safe_summary(),
             search_text,
@@ -514,6 +669,7 @@ impl IndexedPassword {
             phone,
             note,
             category,
+            url,
         }
     }
 
@@ -533,6 +689,7 @@ impl IndexedPassword {
             SearchScope::Phone => self.field(&self.phone).contains(needle),
             SearchScope::Note => self.field(&self.note).contains(needle),
             SearchScope::Category => self.field(&self.category).contains(needle),
+            SearchScope::Url => self.field(&self.url).contains(needle),
         }
     }
 }
@@ -549,6 +706,8 @@ impl PasswordIndexCache {
                 .deleted_at
                 .is_some()
                 .cmp(&right.summary.deleted_at.is_some())
+                .then_with(|| right.summary.last_used_at.cmp(&left.summary.last_used_at))
+                .then_with(|| right.summary.favorite.cmp(&left.summary.favorite))
                 .then_with(|| left.field(&left.service).cmp(right.field(&right.service)))
         });
         let next_purge_at = vault
@@ -569,12 +728,25 @@ impl PasswordIndexCache {
         scope: &SearchScope,
         needle: &str,
         include_deleted: bool,
+        view: &str,
+        category: &str,
         limit: usize,
     ) -> PasswordSearchResponse {
         let mut items = Vec::with_capacity(limit.min(self.items.len()));
         let mut total = 0;
         for entry in self.items.iter().filter(|entry| {
-            (include_deleted || entry.summary.deleted_at.is_none()) && entry.matches(scope, needle)
+            let visible = if include_deleted {
+                entry.summary.deleted_at.is_some()
+            } else {
+                entry.summary.deleted_at.is_none()
+            };
+            let in_view = match view {
+                "favorites" => entry.summary.favorite,
+                "recent" => entry.summary.last_used_at.is_some(),
+                "category" => entry.summary.category == category,
+                _ => true,
+            };
+            visible && in_view && entry.matches(scope, needle)
         }) {
             total += 1;
             if items.len() < limit {
@@ -585,6 +757,44 @@ impl PasswordIndexCache {
             truncated: total > items.len(),
             items,
             total,
+        }
+    }
+
+    fn overview(&self) -> PasswordOverview {
+        let mut categories = HashMap::<String, usize>::new();
+        let mut total = 0;
+        let mut favorite_count = 0;
+        let mut recent_count = 0;
+        let mut trash_count = 0;
+        for entry in &self.items {
+            if entry.summary.deleted_at.is_some() {
+                trash_count += 1;
+                continue;
+            }
+            total += 1;
+            favorite_count += usize::from(entry.summary.favorite);
+            recent_count += usize::from(entry.summary.last_used_at.is_some());
+            let category = entry.summary.category.trim();
+            if !category.is_empty() {
+                *categories.entry(category.to_string()).or_default() += 1;
+            }
+        }
+        let mut categories = categories
+            .into_iter()
+            .map(|(name, count)| PasswordCategoryCount { name, count })
+            .collect::<Vec<_>>();
+        categories.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        PasswordOverview {
+            total,
+            favorite_count,
+            recent_count,
+            trash_count,
+            categories,
         }
     }
 }
@@ -603,13 +813,51 @@ fn imported_record(entry: ImportedPassword) -> Option<PasswordRecord> {
         password: entry.password,
         note: entry.note,
         category: entry.category,
+        url: String::new(),
+        favorite: false,
+        last_used_at: None,
+        use_count: 0,
+        custom_fields: Vec::new(),
         created_at: now,
         updated_at: now,
         deleted_at: None,
     })
 }
 
-fn parse_json_import(bytes: &[u8]) -> Result<(Vec<PasswordRecord>, usize, Vec<String>), String> {
+fn import_validation_errors(entry: &ImportedPassword) -> Vec<String> {
+    let mut errors = Vec::with_capacity(2);
+    if entry.service.trim().is_empty() {
+        errors.push("名称为空".to_string());
+    }
+    if entry.password.is_empty() {
+        errors.push("密码为空".to_string());
+    }
+    errors
+}
+
+fn safe_import_metadata(value: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let trimmed = value.trim();
+    let mut safe = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    if trimmed.chars().count() > MAX_CHARS {
+        safe.push('…');
+    }
+    safe
+}
+
+fn import_issue(source: String, entry: &ImportedPassword, errors: Vec<String>) -> ImportIssue {
+    ImportIssue {
+        source,
+        service: safe_import_metadata(&entry.service),
+        username: safe_import_metadata(&entry.username),
+        email: safe_import_metadata(&entry.email),
+        note: safe_import_metadata(&entry.note),
+        category: safe_import_metadata(&entry.category),
+        errors,
+    }
+}
+
+fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
     let mut payload: RePassCardJson =
         serde_json::from_slice(bytes).map_err(|error| format!("JSON 格式无效: {error}"))?;
     if payload.app != "REPassCard" || payload.version != 1 {
@@ -623,12 +871,27 @@ fn parse_json_import(bytes: &[u8]) -> Result<(Vec<PasswordRecord>, usize, Vec<St
             payload.count, total
         ));
     }
-    let entries = payload
-        .passwords
-        .drain(..)
-        .filter_map(imported_record)
-        .collect();
-    Ok((entries, total, warnings))
+    let mut entries = Vec::with_capacity(total);
+    let mut issues = Vec::new();
+    let mut invalid = 0;
+    for (index, mut imported) in payload.passwords.drain(..).enumerate() {
+        let errors = import_validation_errors(&imported);
+        if errors.is_empty() {
+            if let Some(entry) = imported_record(imported) {
+                entries.push(entry);
+            }
+        } else {
+            invalid += 1;
+            if issues.len() < 100 {
+                issues.push(import_issue(format!("第 {} 条", index + 1), &imported, errors));
+            }
+            wipe_string(&mut imported.password);
+        }
+    }
+    if invalid > issues.len() {
+        warnings.push(format!("另有 {} 条错误条目未展开显示", invalid - issues.len()));
+    }
+    Ok(ParsedImport { entries, total, invalid, warnings, issues })
 }
 
 fn csv_column(headers: &csv::StringRecord, aliases: &[&str]) -> Option<usize> {
@@ -638,7 +901,7 @@ fn csv_column(headers: &csv::StringRecord, aliases: &[&str]) -> Option<usize> {
     })
 }
 
-fn parse_csv_import(bytes: &[u8]) -> Result<(Vec<PasswordRecord>, usize, Vec<String>), String> {
+fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
     let mut reader = csv::ReaderBuilder::new().flexible(true).from_reader(bytes);
     let headers = reader
         .headers()
@@ -655,16 +918,43 @@ fn parse_csv_import(bytes: &[u8]) -> Result<(Vec<PasswordRecord>, usize, Vec<Str
     let category = csv_column(&headers, &["分类", "category"]);
     let mut total = 0;
     let mut entries = Vec::new();
-    for record in reader.records() {
-        let record = record.map_err(|error| format!("CSV 内容无效: {error}"))?;
+    let mut invalid = 0;
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    for record_result in reader.records() {
+        let record = match record_result {
+            Ok(record) => record,
+            Err(error) => {
+                total += 1;
+                invalid += 1;
+                if issues.len() < 100 {
+                    let line = error.position().map(|position| position.line()).unwrap_or((total + 1) as u64);
+                    issues.push(ImportIssue {
+                        source: format!("第 {line} 行"),
+                        service: String::new(),
+                        username: String::new(),
+                        email: String::new(),
+                        note: String::new(),
+                        category: String::new(),
+                        errors: vec!["CSV 行格式无效".to_string()],
+                    });
+                }
+                continue;
+            }
+        };
         total += 1;
+        // csv::StringRecord keeps the position immediately before the record; account for the header line.
+        let source_line = record
+            .position()
+            .map(|position| position.line().saturating_add(1))
+            .unwrap_or((total + 1) as u64);
         let value = |column: Option<usize>| {
             column
                 .and_then(|index| record.get(index))
                 .unwrap_or_default()
                 .to_string()
         };
-        let imported = ImportedPassword {
+        let mut imported = ImportedPassword {
             service: record.get(service).unwrap_or_default().to_string(),
             username: value(username),
             phone: value(phone),
@@ -673,11 +963,23 @@ fn parse_csv_import(bytes: &[u8]) -> Result<(Vec<PasswordRecord>, usize, Vec<Str
             note: value(note),
             category: value(category),
         };
-        if let Some(entry) = imported_record(imported) {
-            entries.push(entry);
+        let errors = import_validation_errors(&imported);
+        if errors.is_empty() {
+            if let Some(entry) = imported_record(imported) {
+                entries.push(entry);
+            }
+        } else {
+            invalid += 1;
+            if issues.len() < 100 {
+                issues.push(import_issue(format!("第 {source_line} 行"), &imported, errors));
+            }
+            wipe_string(&mut imported.password);
         }
     }
-    Ok((entries, total, Vec::new()))
+    if invalid > issues.len() {
+        warnings.push(format!("另有 {} 条错误条目未展开显示", invalid - issues.len()));
+    }
+    Ok(ParsedImport { entries, total, invalid, warnings, issues })
 }
 
 fn load_settings(storage: &StorageManager) -> PasswordSettings {
@@ -699,18 +1001,29 @@ pub(crate) fn list_passwords(
     manager: tauri::State<'_, PasswordVaultManager>,
     query: Option<String>,
     include_deleted: Option<bool>,
+    view: Option<String>,
+    category: Option<String>,
     limit: Option<usize>,
 ) -> Result<PasswordSearchResponse, String> {
     let now = Utc::now().timestamp_millis();
     let vault_path = expected_vault_path(&storage)?;
     let (scope, needle) = parse_search(query.as_deref().unwrap_or_default());
     let include_deleted = include_deleted.unwrap_or(false);
+    let view = view.unwrap_or_else(|| "all".to_string());
+    let category = category.unwrap_or_default();
     let limit = limit
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
-    if let Some(response) =
-        manager.search_cached(&vault_path, now, &scope, &needle, include_deleted, limit)
-    {
+    if let Some(response) = manager.search_cached(
+        &vault_path,
+        now,
+        &scope,
+        &needle,
+        include_deleted,
+        &view,
+        &category,
+        limit,
+    ) {
         return Ok(response);
     }
 
@@ -719,9 +1032,16 @@ pub(crate) fn list_passwords(
         .index_build
         .lock()
         .map_err(|_| "密码索引状态不可用".to_string())?;
-    if let Some(response) =
-        manager.search_cached(&vault_path, now, &scope, &needle, include_deleted, limit)
-    {
+    if let Some(response) = manager.search_cached(
+        &vault_path,
+        now,
+        &scope,
+        &needle,
+        include_deleted,
+        &view,
+        &category,
+        limit,
+    ) {
         return Ok(response);
     }
 
@@ -731,7 +1051,16 @@ pub(crate) fn list_passwords(
     }
     manager.replace_index(vault_path.clone(), &vault);
     manager
-        .search_cached(&vault_path, now, &scope, &needle, include_deleted, limit)
+        .search_cached(
+            &vault_path,
+            now,
+            &scope,
+            &needle,
+            include_deleted,
+            &view,
+            &category,
+            limit,
+        )
         .ok_or_else(|| "密码索引构建失败".to_string())
 }
 
@@ -755,7 +1084,105 @@ pub(crate) fn get_password_entry_for_edit(
         password: entry.password.clone(),
         note: entry.note.clone(),
         category: entry.category.clone(),
+        url: entry.url.clone(),
+        favorite: entry.favorite,
+        custom_fields: entry.custom_fields.clone(),
     })
+}
+
+#[tauri::command]
+pub(crate) fn get_password_detail(
+    storage: tauri::State<'_, StorageManager>,
+    id: String,
+) -> Result<PasswordDetail, String> {
+    let vault = load_vault(&storage)?;
+    let entry = vault
+        .items
+        .iter()
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
+        .ok_or_else(|| "密码条目不存在或已进入回收站".to_string())?;
+    Ok(PasswordDetail {
+        id: entry.id.clone(),
+        service: entry.service.clone(),
+        username: entry.username.clone(),
+        phone: entry.phone.clone(),
+        email: entry.email.clone(),
+        note: entry.note.clone(),
+        category: entry.category.clone(),
+        url: entry.url.clone(),
+        favorite: entry.favorite,
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
+        last_used_at: entry.last_used_at,
+        use_count: entry.use_count,
+        custom_fields: entry
+            .custom_fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| PasswordDetailField {
+                index,
+                label: field.label.clone(),
+                value: if field.sensitive {
+                    String::new()
+                } else {
+                    field.value.clone()
+                },
+                sensitive: field.sensitive,
+                has_value: !field.value.is_empty(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_password_overview(
+    storage: tauri::State<'_, StorageManager>,
+    manager: tauri::State<'_, PasswordVaultManager>,
+) -> Result<PasswordOverview, String> {
+    let now = Utc::now().timestamp_millis();
+    let vault_path = expected_vault_path(&storage)?;
+    if let Some(overview) = manager.overview_cached(&vault_path, now) {
+        return Ok(overview);
+    }
+    let _build = manager
+        .index_build
+        .lock()
+        .map_err(|_| "密码索引状态不可用".to_string())?;
+    if let Some(overview) = manager.overview_cached(&vault_path, now) {
+        return Ok(overview);
+    }
+    let mut vault = load_vault(&storage)?;
+    if purge_expired(&mut vault, now) {
+        save_vault(&storage, &vault)?;
+    }
+    manager.replace_index(vault_path.clone(), &vault);
+    manager
+        .overview_cached(&vault_path, now)
+        .ok_or_else(|| "密码概览构建失败".to_string())
+}
+
+#[tauri::command]
+pub(crate) fn set_password_favorite(
+    storage: tauri::State<'_, StorageManager>,
+    manager: tauri::State<'_, PasswordVaultManager>,
+    id: String,
+    favorite: bool,
+) -> Result<(), String> {
+    let _access = manager
+        .index_build
+        .lock()
+        .map_err(|_| "密码库写入状态不可用".to_string())?;
+    let mut vault = load_vault(&storage)?;
+    let entry = vault
+        .items
+        .iter_mut()
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
+        .ok_or_else(|| "密码条目不存在或已进入回收站".to_string())?;
+    entry.favorite = favorite;
+    entry.updated_at = Utc::now().timestamp_millis();
+    save_vault(&storage, &vault)?;
+    manager.replace_index(expected_vault_path(&storage)?, &vault);
+    Ok(())
 }
 
 #[tauri::command]
@@ -787,6 +1214,14 @@ pub(crate) fn save_password_entry(
         existing.password = entry.password;
         existing.note = entry.note;
         existing.category = entry.category;
+        existing.url = entry.url;
+        existing.favorite = entry.favorite;
+        for field in &mut existing.custom_fields {
+            if field.sensitive {
+                wipe_string(&mut field.value);
+            }
+        }
+        existing.custom_fields = entry.custom_fields;
         existing.updated_at = now;
     } else {
         vault.items.push(PasswordRecord {
@@ -798,6 +1233,11 @@ pub(crate) fn save_password_entry(
             password: entry.password,
             note: entry.note,
             category: entry.category,
+            url: entry.url,
+            favorite: entry.favorite,
+            last_used_at: None,
+            use_count: 0,
+            custom_fields: entry.custom_fields,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -918,17 +1358,16 @@ pub(crate) fn preview_password_import(
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_lowercase();
-    let (entries, total, warnings, format) = match extension.as_str() {
+    let (parsed, format) = match extension.as_str() {
         "json" => {
-            let (entries, total, warnings) = parse_json_import(&bytes)?;
-            (entries, total, warnings, "JSON v1")
+            (parse_json_import(&bytes)?, "JSON v1")
         }
         "csv" => {
-            let (entries, total, warnings) = parse_csv_import(&bytes)?;
-            (entries, total, warnings, "CSV")
+            (parse_csv_import(&bytes)?, "CSV")
         }
         _ => return Err("仅支持 .json 和 .csv 导入文件".to_string()),
     };
+    let ParsedImport { entries, total, invalid, warnings, issues } = parsed;
     let existing = load_vault(&storage)?;
     let keys = existing
         .items
@@ -943,7 +1382,6 @@ pub(crate) fn preview_password_import(
             duplicates += 1;
         }
     }
-    let invalid = total.saturating_sub(entries.len());
     let items = entries
         .iter()
         .take(100)
@@ -964,6 +1402,7 @@ pub(crate) fn preview_password_import(
         invalid,
         warnings,
         items,
+        issues,
     })
 }
 
@@ -1054,6 +1493,87 @@ pub(crate) fn set_password_settings(
     Ok(settings)
 }
 
+fn is_weak_password(value: &str) -> bool {
+    if value.chars().count() < 12 {
+        return true;
+    }
+    let mut classes = [false; 4];
+    for ch in value.chars() {
+        if ch.is_ascii_lowercase() {
+            classes[0] = true;
+        } else if ch.is_ascii_uppercase() {
+            classes[1] = true;
+        } else if ch.is_ascii_digit() {
+            classes[2] = true;
+        } else {
+            classes[3] = true;
+        }
+    }
+    classes.into_iter().filter(|present| *present).count() < 3
+}
+
+#[tauri::command]
+pub(crate) fn audit_password_security(
+    storage: tauri::State<'_, StorageManager>,
+) -> Result<PasswordSecurityReport, String> {
+    const STALE_AFTER_MILLIS: i64 = 365 * 24 * 60 * 60 * 1000;
+    let vault = load_vault(&storage)?;
+    let active = vault
+        .items
+        .iter()
+        .filter(|entry| entry.deleted_at.is_none())
+        .collect::<Vec<_>>();
+    let mut password_counts = HashMap::<[u8; 32], usize>::new();
+    for entry in &active {
+        let digest: [u8; 32] = Sha256::digest(entry.password.as_bytes()).into();
+        *password_counts.entry(digest).or_default() += 1;
+    }
+    let now = Utc::now().timestamp_millis();
+    let mut weak = 0;
+    let mut reused = 0;
+    let mut stale = 0;
+    let mut incomplete = 0;
+    let mut issues = Vec::new();
+    for entry in &active {
+        let mut kinds = Vec::new();
+        if is_weak_password(&entry.password) {
+            weak += 1;
+            kinds.push("weak".to_string());
+        }
+        let digest: [u8; 32] = Sha256::digest(entry.password.as_bytes()).into();
+        if password_counts.get(&digest).copied().unwrap_or_default() > 1 {
+            reused += 1;
+            kinds.push("reused".to_string());
+        }
+        if now.saturating_sub(entry.updated_at) >= STALE_AFTER_MILLIS {
+            stale += 1;
+            kinds.push("stale".to_string());
+        }
+        if entry.username.trim().is_empty()
+            && entry.email.trim().is_empty()
+            && entry.phone.trim().is_empty()
+        {
+            incomplete += 1;
+            kinds.push("incomplete".to_string());
+        }
+        if !kinds.is_empty() && issues.len() < 200 {
+            issues.push(PasswordSecurityIssue {
+                id: entry.id.clone(),
+                service: entry.service.clone(),
+                kinds,
+            });
+        }
+    }
+    Ok(PasswordSecurityReport {
+        total: active.len(),
+        weak,
+        reused,
+        stale,
+        incomplete,
+        issues,
+    })
+}
+
 fn atomic_write_config(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| "配置路径无效".to_string())?;
     fs::create_dir_all(parent).map_err(|error| format!("创建配置目录失败: {error}"))?;
@@ -1079,16 +1599,31 @@ fn atomic_write_config(path: &Path, bytes: &[u8]) -> Result<(), String> {
 pub(crate) async fn copy_password(
     app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
+    manager: tauri::State<'_, PasswordVaultManager>,
     id: String,
 ) -> Result<(), String> {
-    let vault = load_vault(&storage)?;
+    let _access = manager
+        .index_build
+        .lock()
+        .map_err(|_| "密码库写入状态不可用".to_string())?;
+    let mut vault = load_vault(&storage)?;
     let entry = vault
         .items
-        .iter()
+        .iter_mut()
         .find(|entry| entry.id == id && entry.deleted_at.is_none())
         .ok_or_else(|| "密码条目不存在或已进入回收站".to_string())?;
     let fingerprint = Sha256::digest(entry.password.as_bytes()).to_vec();
     let sequence = write_sensitive_clipboard(&entry.password)?;
+    entry.last_used_at = Some(Utc::now().timestamp_millis());
+    entry.use_count = entry.use_count.saturating_add(1);
+    let save_result = save_vault(&storage, &vault);
+    if save_result.is_ok() {
+        if let Ok(path) = expected_vault_path(&storage) {
+            manager.replace_index(path, &vault);
+        } else {
+            manager.invalidate_index();
+        }
+    }
     let clear_after = load_settings(&storage).clipboard_clear_seconds;
     drop(vault);
     if clear_after > 0 {
@@ -1098,7 +1633,77 @@ pub(crate) async fn copy_password(
             drop(app);
         });
     }
+    save_result
+}
+
+#[tauri::command]
+pub(crate) async fn copy_password_field(
+    app: AppHandle,
+    storage: tauri::State<'_, StorageManager>,
+    id: String,
+    field: String,
+) -> Result<(), String> {
+    let vault = load_vault(&storage)?;
+    let entry = vault
+        .items
+        .iter()
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
+        .ok_or_else(|| "密码条目不存在或已进入回收站".to_string())?;
+    let (value, sensitive) = match field.as_str() {
+        "username" => (entry.username.as_str(), false),
+        "email" => (entry.email.as_str(), false),
+        "phone" => (entry.phone.as_str(), false),
+        "url" => (entry.url.as_str(), false),
+        _ if field.starts_with("custom:") => {
+            let index = field[7..]
+                .parse::<usize>()
+                .map_err(|_| "自定义字段索引无效".to_string())?;
+            let custom = entry
+                .custom_fields
+                .get(index)
+                .ok_or_else(|| "自定义字段不存在".to_string())?;
+            (custom.value.as_str(), custom.sensitive)
+        }
+        _ => return Err("不支持复制该字段".to_string()),
+    };
+    if value.is_empty() {
+        return Err("该字段为空".to_string());
+    }
+    let fingerprint = Sha256::digest(value.as_bytes()).to_vec();
+    let sequence = write_sensitive_clipboard(value)?;
+    let clear_after = load_settings(&storage).clipboard_clear_seconds;
+    drop(vault);
+    if sensitive && clear_after > 0 {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(clear_after)).await;
+            let _ = clear_clipboard_if_unchanged(sequence, &fingerprint);
+            drop(app);
+        });
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn open_password_url(
+    storage: tauri::State<'_, StorageManager>,
+    id: String,
+) -> Result<(), String> {
+    let vault = load_vault(&storage)?;
+    let entry = vault
+        .items
+        .iter()
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
+        .ok_or_else(|| "密码条目不存在或已进入回收站".to_string())?;
+    let value = entry.url.trim();
+    let lower = value.to_ascii_lowercase();
+    if value.len() > 2_000
+        || value.chars().any(char::is_control)
+        || value.chars().any(char::is_whitespace)
+        || !(lower.starts_with("https://") || lower.starts_with("http://"))
+    {
+        return Err("仅允许打开有效的 HTTP 或 HTTPS 网站".to_string());
+    }
+    opener::open(value).map_err(|error| format!("打开网站失败: {error}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -1335,6 +1940,43 @@ mod tests {
     }
 
     #[test]
+    fn legacy_records_receive_safe_defaults_for_new_metadata() {
+        let source = br#"{"version":1,"items":[{"id":"1","service":"GitHub","password":"secret","createdAt":1,"updatedAt":1}]}"#;
+        let mut vault: PasswordVault = serde_json::from_slice(source).unwrap();
+        let entry = &vault.items[0];
+        assert!(entry.url.is_empty());
+        assert!(!entry.favorite);
+        assert!(entry.last_used_at.is_none());
+        assert!(entry.custom_fields.is_empty());
+        vault.items.iter_mut().for_each(PasswordRecord::wipe_secret);
+    }
+
+    #[test]
+    fn metadata_index_searches_urls_but_never_custom_secrets() {
+        let mut entry = imported_record(ImportedPassword {
+            service: "GitHub".into(),
+            username: String::new(),
+            phone: String::new(),
+            email: String::new(),
+            password: "password-secret".into(),
+            note: String::new(),
+            category: "开发".into(),
+        })
+        .unwrap();
+        entry.url = "https://github.com".into();
+        entry.custom_fields.push(PasswordCustomField {
+            label: "恢复代码".into(),
+            value: "custom-secret".into(),
+            sensitive: true,
+        });
+        let indexed = IndexedPassword::from_record(&entry);
+        assert!(indexed.matches(&SearchScope::Url, "github.com"));
+        assert!(!indexed.matches(&SearchScope::Global, "custom-secret"));
+        assert!(!indexed.matches(&SearchScope::Global, "password-secret"));
+        entry.wipe_secret();
+    }
+
+    #[test]
     fn large_index_returns_bounded_results_without_password_data() {
         let mut vault = PasswordVault {
             version: VAULT_VERSION,
@@ -1348,6 +1990,11 @@ mod tests {
                     password: format!("secret-{index}"),
                     note: "metadata".to_string(),
                     category: "test".to_string(),
+                    url: String::new(),
+                    favorite: false,
+                    last_used_at: None,
+                    use_count: 0,
+                    custom_fields: Vec::new(),
                     created_at: 0,
                     updated_at: 0,
                     deleted_at: None,
@@ -1355,12 +2002,12 @@ mod tests {
                 .collect(),
         };
         let cache = PasswordIndexCache::from_vault(PathBuf::from("vault.dpapi"), &vault);
-        let all = cache.search(&SearchScope::Global, "", false, 50);
+        let all = cache.search(&SearchScope::Global, "", false, "all", "", 50);
         assert_eq!(all.total, 10_000);
         assert_eq!(all.items.len(), 50);
         assert!(all.truncated);
 
-        let secret = cache.search(&SearchScope::Global, "secret-9999", false, 50);
+        let secret = cache.search(&SearchScope::Global, "secret-9999", false, "all", "", 50);
         assert_eq!(secret.total, 0);
         vault.items.iter_mut().for_each(PasswordRecord::wipe_secret);
     }
@@ -1374,19 +2021,19 @@ mod tests {
                 {"service":"","password":"invalid"}
             ]
         }"#;
-        let (entries, total, warnings) = parse_json_import(source).unwrap();
-        assert_eq!(total, 2);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(warnings.len(), 1);
+        let parsed = parse_json_import(source).unwrap();
+        assert_eq!(parsed.total, 2);
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.warnings.len(), 1);
     }
 
     #[test]
     fn csv_parser_supports_bom_quotes_commas_and_newlines() {
         let source = "\u{feff}服务,用户名,手机号,邮箱,密码,备注,分类\r\n\
                       GitHub,user,,,secret,\"包含,逗号和\n换行\",开发\r\n";
-        let (entries, total, _) = parse_csv_import(source.as_bytes()).unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(entries[0].note, "包含,逗号和\n换行");
+        let parsed = parse_csv_import(source.as_bytes()).unwrap();
+        assert_eq!(parsed.total, 1);
+        assert_eq!(parsed.entries[0].note, "包含,逗号和\n换行");
     }
 
     #[test]
@@ -1456,6 +2103,36 @@ mod tests {
             "ordinary text",
             &second_hash
         ));
+    }
+
+    #[test]
+    fn json_import_reports_the_exact_invalid_entries_without_exposing_passwords() {
+        let parsed = parse_json_import(
+            br#"{"app":"REPassCard","version":1,"count":3,"passwords":[{"service":"GitHub","username":"octocat","password":"secret"},{"service":"","username":"missing-name","password":"secret-2","note":"work"},{"service":"Mail","email":"me@example.com","password":""}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.total, 3);
+        assert_eq!(parsed.invalid, 2);
+        assert_eq!(parsed.issues[0].source, "第 2 条");
+        assert_eq!(parsed.issues[0].username, "missing-name");
+        assert_eq!(parsed.issues[1].service, "Mail");
+        assert!(parsed.issues[1].errors.iter().any(|error| error == "密码为空"));
+        let serialized = serde_json::to_string(&parsed.issues).unwrap();
+        assert!(!serialized.contains("secret-2"));
+    }
+
+    #[test]
+    fn csv_import_reports_the_source_row_for_invalid_entries() {
+        let parsed = parse_csv_import(
+            "服务,用户名,密码,备注\r\nGitHub,octocat,secret,ok\r\n,missing-name,secret-2,bad\r\nMail,me,,empty password\r\n".as_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(parsed.total, 3);
+        assert_eq!(parsed.invalid, 2);
+        assert_eq!(parsed.issues[0].source, "第 3 行");
+        assert_eq!(parsed.issues[1].source, "第 4 行");
     }
 
     #[cfg(target_os = "windows")]

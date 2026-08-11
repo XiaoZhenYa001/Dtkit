@@ -11,11 +11,16 @@
 .batch-section-heading > div { display: flex; align-items: center; gap: .55rem; }
 .batch-section-heading > div > span { width: 1.65rem; height: 1.65rem; display: grid; place-items: center; border-radius: .5rem; color: var(--color-primary); background: rgba(var(--color-info-rgb), .09); font-size: .63rem; font-weight: 800; }
 .batch-section-heading strong { font-size: .8rem; }
-.batch-button { min-height: 2.15rem; padding: .45rem .75rem; border: 1px solid transparent; border-radius: .55rem; font: 700 .72rem/1 inherit; cursor: pointer; }
+.batch-button { min-height: 2.15rem; padding: .45rem .75rem; border: 1px solid transparent; border-radius: .55rem; font: 700 .72rem/1 inherit; cursor: pointer; transition: transform var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast); }
 .batch-button:disabled { opacity: .45; cursor: not-allowed; }
 .batch-button--secondary { border-color: var(--color-border); color: var(--color-text-primary); background: var(--color-surface); }
 .batch-button--primary { color: #fff; background: var(--color-primary); }
 .batch-button--danger { color: #fff; background: #b74434; }
+.batch-button--secondary:hover:not(:disabled) { border-color: rgba(var(--color-info-rgb), .32); color: var(--color-primary); background: #fff; }
+.batch-button--primary:hover:not(:disabled) { color: #fff; background: var(--color-primary-strong); box-shadow: 0 .45rem 1rem rgba(var(--color-info-rgb), .18); transform: translateY(-1px); }
+.batch-button--danger:hover:not(:disabled) { color: #fff; background: #963629; box-shadow: 0 .45rem 1rem rgba(183, 68, 52, .18); transform: translateY(-1px); }
+.batch-button:active:not(:disabled) { transform: translateY(0); }
+.batch-button:focus-visible { outline: 3px solid rgba(var(--color-info-rgb), .2); outline-offset: 2px; }
 .batch-selection { display: grid; gap: .2rem; margin-top: .7rem; padding: .7rem .8rem; border-radius: .65rem; background: rgba(var(--color-info-rgb), .06); }
 .batch-selection strong { font-size: .75rem; }.batch-selection span { overflow: hidden; color: var(--color-text-secondary); font-size: .67rem; text-overflow: ellipsis; white-space: nowrap; }
 .batch-selection--empty { display: block; color: var(--color-text-secondary); font-size: .72rem; }

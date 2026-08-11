@@ -679,6 +679,9 @@ html.quick-tool--whiteboard .whiteboard-shortcuts {
 .whiteboard-object-dialog__panel footer { justify-content: flex-end; }
 .whiteboard-object-dialog__panel footer button, .whiteboard-formula-symbols button { min-height: 2.1rem; padding: .35rem .65rem; border: 1px solid rgba(118,93,63,.1); border-radius: .55rem; color: var(--color-text-secondary); background: var(--color-bg-secondary); cursor: pointer; font-size: .62rem; }
 .whiteboard-object-dialog__panel footer button:last-child { color: #fff; border-color: transparent; background: var(--color-primary); }
+.whiteboard-object-dialog__panel footer button:hover:not(:disabled), .whiteboard-formula-symbols button:hover:not(:disabled) { border-color: rgba(216,111,61,.24); color: var(--color-primary); background: #fff; }
+.whiteboard-object-dialog__panel footer button:last-child:hover:not(:disabled) { color: #fff; border-color: transparent; background: var(--color-primary-strong); }
+.whiteboard-object-dialog__panel footer button:focus-visible, .whiteboard-formula-symbols button:focus-visible, .whiteboard-object-dialog__panel header button:focus-visible { outline: 3px solid rgba(216,111,61,.17); outline-offset: 2px; }
 .whiteboard-formula-symbols { display: flex; flex-wrap: wrap; gap: .3rem; }
 .whiteboard-formula-symbols[hidden], .whiteboard-formula-preview[hidden] { display: none; }
 .whiteboard-formula-preview { min-height: 4rem; display: grid; place-items: center; padding: .6rem; overflow: auto; border-radius: .65rem; background: var(--color-bg-secondary); }

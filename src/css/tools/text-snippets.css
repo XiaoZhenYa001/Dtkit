@@ -92,7 +92,9 @@
     font-weight:750;
     cursor:pointer;
 }
-.snippet-primary:hover{transform:translateY(-1px);box-shadow:0 12px 25px rgba(226,98,47,.25)}
+.snippet-primary:hover:not(:disabled){color:#fff;background:linear-gradient(135deg,#e96f38,#cf5424);transform:translateY(-1px);box-shadow:0 12px 25px rgba(226,98,47,.25)}
+.snippet-primary:active:not(:disabled){transform:translateY(0)}
+.snippet-primary:focus-visible{outline:3px solid rgba(239,121,64,.18);outline-offset:2px}
 .snippet-commandbar{
     display:grid;
     grid-template-columns:minmax(0,1fr) auto;

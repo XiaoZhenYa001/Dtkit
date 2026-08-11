@@ -43,3 +43,24 @@ test('application modules do not construct runtime style elements', () => {
 
     assert.deepEqual(failures, []);
 });
+
+test('semantic primary and danger buttons keep explicit accessible interaction states', () => {
+    const expectations = [
+        ['src/css/tools/file-batch.css', ['.batch-button--primary:hover:not(:disabled)', '.batch-button--danger:hover:not(:disabled)', '.batch-button:focus-visible']],
+        ['src/css/tools/transfer-station.css', ['.transfer-button--primary:hover:not(:disabled)', '.transfer-button--danger:hover:not(:disabled)', '.transfer-button:focus-visible']],
+        ['src/css/tools/resource-center.css', ['.resource-button--primary:hover:not(:disabled)', '.resource-button:focus-visible']],
+        ['src/css/tools/text-snippets.css', ['.snippet-primary:hover:not(:disabled)', '.snippet-primary:focus-visible']],
+        ['src/css/tools/whiteboard.css', ['.whiteboard-object-dialog__panel footer button:last-child:hover:not(:disabled)', '.whiteboard-object-dialog__panel footer button:focus-visible']],
+        ['src/css/settings.css', ['.modal-btn--primary:hover:not(:disabled)', '.modal-btn--danger:hover:not(:disabled)', '.modal-btn:focus-visible']],
+    ];
+
+    const failures = [];
+    for (const [path, selectors] of expectations) {
+        const source = readFileSync(resolve(path), 'utf8');
+        for (const selector of selectors) {
+            if (!source.includes(selector)) failures.push(`${path}: missing ${selector}`);
+        }
+    }
+
+    assert.deepEqual(failures, []);
+});

@@ -1,134 +1,111 @@
+import os
 from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
 
-MOCK_TAURI = r"""
+BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
+SCREENSHOT = Path(r"C:\tmp\dtkit-password-vault.png")
+IMPORT_SCREENSHOT = Path(r"C:\tmp\dtkit-password-import-review.png")
+
+
+MOCK = r"""
 (() => {
-  const calls = [];
-  const summaries = [
-    { id: 'one', service: 'GitHub', username: 'example', note: '个人账号', category: '开发', deletedAt: null },
-    { id: 'two', service: 'Mail', username: 'me', note: '工作邮箱', category: '工作', deletedAt: null }
+  const items = [
+    {id:'1',service:'GitHub',username:'octocat',note:'个人账号',category:'开发',favorite:true,lastUsedAt:1786000000000,deletedAt:null},
+    {id:'2',service:'校园门户',username:'student',note:'教务系统',category:'学习',favorite:false,lastUsedAt:null,deletedAt:null}
   ];
-  window.__dtkitCalls = calls;
-  window.__TAURI__ = {
-    core: { invoke: async (command, args = {}) => {
-      calls.push({ command, args });
-      if (command === 'get_storage_layout') return {
-        root: 'D:\\DtKit', downloads: 'D:\\DtKit\\Downloads', writable: true, warning: null
-      };
-      if (command === 'list_passwords') return {
-        items: summaries, total: summaries.length, truncated: false
-      };
-      if (command === 'get_password_settings') return { clipboardClearSeconds: 30 };
-      if (command === 'get_shortcut_bindings') return [];
-      if (command === 'replace_shortcut_bindings') return args.bindings || [];
-      if (command === 'preview_password_import') return {
-        token: 'preview-token', format: 'JSON v1', total: 2, ready: 2,
-        duplicates: 1, invalid: 0, warnings: ['count 字段与实际条目不同'],
-        items: summaries
-      };
-      if (command === 'commit_password_import') return { imported: 1, overwritten: 0, skipped: 1 };
-      if (command === 'save_password_entry') return summaries[0];
-      if (command === 'get_resource_policy') return {
-        minimizeMode: 'efficient', maxConcurrentJobs: 2, quickHostRetentionSeconds: 0
-      };
-      if (command === 'get_cleanup_status') return {
-        usage: { cacheBytes: 0, logBytes: 0, recoveryBytes: 0 },
-        policy: { enabled: false, cacheRetentionDays: 7, logRetentionDays: 7 },
-        latestRecoveryBatch: null
-      };
-      if (command === 'get_hotzone_status') return false;
-      return null;
-    }},
-    dialog: { open: async () => 'D:\\Documents\\PassCard\\passwords_export.json' },
-    event: { listen: async () => () => {} },
-    window: { getCurrentWindow: () => ({ toggleMaximize: async () => {} }) }
+  const invoke = async (command, args = {}) => {
+    if (command === 'get_password_settings') return {clipboardClearSeconds:30};
+    if (command === 'get_password_overview') return {total:2,favoriteCount:1,recentCount:1,trashCount:0,categories:[{name:'开发',count:1},{name:'学习',count:1}]};
+    if (command === 'list_passwords') {
+      let result = items;
+      if (args.view === 'favorites') result = result.filter(item => item.favorite);
+      if (args.view === 'recent') result = result.filter(item => item.lastUsedAt);
+      if (args.view === 'category') result = result.filter(item => item.category === args.category);
+      return {items:result,total:result.length,truncated:false};
+    }
+    if (command === 'get_password_detail') return {id:args.id,service:'GitHub',username:'octocat',phone:'',email:'octocat@example.com',note:'个人账号',category:'开发',url:'https://github.com',favorite:true,createdAt:1780000000000,updatedAt:1785000000000,lastUsedAt:1786000000000,useCount:8,customFields:[{index:0,label:'恢复代码',value:'',sensitive:true,hasValue:true}]};
+    if (command === 'get_password_entry_for_edit') return {id:args.id,service:'GitHub',username:'octocat',phone:'',email:'octocat@example.com',password:'secret',note:'个人账号',category:'开发',url:'https://github.com',favorite:true,customFields:[{label:'恢复代码',value:'code',sensitive:true}]};
+    if (command === 'preview_password_import') return {token:'import-1',format:'CSV',total:3,ready:1,duplicates:0,invalid:2,warnings:[],items:[{id:'preview-1',service:'GitHub',username:'octocat',note:'ok',category:'dev'}],issues:[{source:'第 3 行',service:'',username:'missing-name',email:'',note:'work',category:'dev',errors:['名称为空']},{source:'第 4 行',service:'Mail',username:'me',email:'me@example.com',note:'',category:'personal',errors:['密码为空']}]};
+    if (command === 'discard_password_import') return null;
+    if (command === 'get_shortcut_bindings') return [];
+    if (command === 'get_tool_module_settings') return {disabled:[]};
+    if (command === 'take_missed_alarm_triggers') return [];
+    return null;
   };
+  Object.defineProperty(window, '__TAURI__', {value:{core:{invoke},dialog:{open:async()=>'invalid.csv'}}, configurable:true});
 })();
 """
 
 
-def run():
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1280, "height": 820})
-        page.set_default_timeout(10_000)
-        page.add_init_script(MOCK_TAURI)
-        page.goto("http://127.0.0.1:8769", wait_until="domcontentloaded")
-        print("main loaded", flush=True)
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.add_init_script(MOCK)
+    page.goto(BASE_URL)
+    page.wait_for_load_state("networkidle")
+    page.locator('[data-view="passwords"]').click()
+    page.locator('.password-workspace').wait_for(state="visible")
 
-        page.locator('[data-tool="password-vault"]').click()
-        page.locator(".password-shell").wait_for(state="visible")
-        print("password main visible", flush=True)
-        assert not page.locator("#searchContainer").is_visible()
-        page.screenshot(path="C:/tmp/dtkit-password-vault-main.png", full_page=True)
-        assert page.locator(".password-result").count() == 2
-        assert page.locator(".password-result").first.inner_text().startswith("G")
-        assert page.locator("text=个人账号").count() == 1
-        assert page.evaluate("""
-          window.__dtkitCalls.some(call =>
-            call.command === 'list_passwords' && call.args.limit === 200)
-        """)
+    assert page.locator('.password-nav').is_visible()
+    assert page.locator('.password-list-card').is_visible()
+    assert page.locator('.password-detail').is_visible()
+    assert page.locator('.password-result').count() == 2
+    workspace_box = page.locator('.password-workspace').bounding_box()
+    assert workspace_box['y'] + workspace_box['height'] >= 860, 'password workspace should fill the remaining content area'
 
-        first = page.locator(".password-result").first
-        first.click()
-        assert first.get_attribute("aria-selected") == "true"
-        first.click()
-        page.wait_for_function("window.__dtkitCalls.some(call => call.command === 'copy_password')")
-        print("copy path verified", flush=True)
+    add_button = page.locator('#passwordAdd')
+    add_button.hover()
+    add_hover = add_button.evaluate("node => { const style = getComputedStyle(node); return { color: style.color, backgroundImage: style.backgroundImage, backgroundColor: style.backgroundColor }; }")
+    assert add_hover['backgroundImage'] != 'none', f"primary hover lost its accent background: {add_hover}"
+    assert add_hover['color'] == 'rgb(255, 255, 255)'
 
-        page.locator("#passwordAdd").click()
-        page.locator("#passwordEditor").wait_for(state="visible")
-        page.locator("#passwordService").fill("Example")
-        page.locator("#passwordValue").fill("not-rendered-in-list")
-        page.locator("#passwordEditorSave").click()
-        page.wait_for_function("window.__dtkitCalls.some(call => call.command === 'save_password_entry')")
-        print("editor verified", flush=True)
+    page.locator('#passwordImport').click()
+    page.locator('#passwordImportDialog').wait_for(state='visible')
+    assert page.locator('.password-import-issue').count() == 2
+    assert page.locator('.password-import-issue').first.locator('.password-import-issue__source').inner_text() == '第 3 行'
+    assert 'missing-name' in page.locator('.password-import-issue').first.inner_text()
+    assert '名称为空' in page.locator('.password-import-issue').first.inner_text()
+    assert '密码为空' in page.locator('.password-import-issue').nth(1).inner_text()
+    assert 'secret-2' not in page.locator('#passwordImportDialog').inner_text()
+    IMPORT_SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(IMPORT_SCREENSHOT), full_page=True)
+    page.locator('#passwordImportDialog .password-dialog__close').click()
 
-        page.locator("#passwordImport").click()
-        page.locator("#passwordImportDialog").wait_for(state="visible")
-        print("import preview verified", flush=True)
-        assert "2" in page.locator("#passwordImportSummary").inner_text()
-        assert "重复项" in page.locator("#passwordImportSummary").inner_text()
-        page.locator("#passwordImportDialog .password-dialog__close").click()
+    page.locator('#passwordAdd').click()
+    editor = page.locator('#passwordEditor')
+    editor.wait_for(state="visible")
+    before = editor.bounding_box()
+    assert abs((before['x'] + before['width'] / 2) - 700) <= 2
+    assert abs((before['y'] + before['height'] / 2) - 450) <= 2
+    header = editor.locator('.password-dialog__header')
+    handle = header.bounding_box()
+    page.mouse.move(handle['x'] + 80, handle['y'] + 20)
+    page.mouse.down()
+    page.mouse.move(handle['x'] + 150, handle['y'] + 70, steps=5)
+    page.mouse.up()
+    after = editor.bounding_box()
+    assert after['x'] > before['x'] + 30
+    assert after['y'] > before['y'] + 20
+    editor.locator('.password-dialog__close').click()
+    assert not editor.is_visible(), 'empty required fields must not block cancelling the editor'
 
-        page.locator('[data-view="settings"]').click()
-        page.locator("#settingsView.view--active").wait_for(state="visible")
-        print("settings visible", flush=True)
-        nav_targets = page.locator(".settings-side-nav__item").evaluate_all(
-            "nodes => nodes.map(node => node.getAttribute('href'))"
-        )
-        assert nav_targets == [
-            "#storageSection", "#shortcutsSection", "#toolModulesSection", "#configSection",
-            "#desktopSection", "#generalSection"
-        ]
+    page.locator('.password-result').first.click()
+    assert page.locator('.password-detail__header h3').inner_text() == 'GitHub'
+    assert '••••' in page.locator('.password-detail__fields').inner_text()
 
-        quick = browser.new_page(viewport={"width": 760, "height": 580})
-        quick.set_default_timeout(10_000)
-        quick.add_init_script(MOCK_TAURI)
-        quick.goto(
-            "http://127.0.0.1:8769/quick.html?kind=tool&toolId=password-vault",
-            wait_until="domcontentloaded",
-        )
-        quick.locator(".password-quick").wait_for(state="visible")
-        print("quick visible", flush=True)
-        quick.screenshot(path="C:/tmp/dtkit-password-vault-quick.png", full_page=True)
-        assert quick.locator("#passwordAdd").count() == 0
-        assert quick.locator("#passwordImport").count() == 0
-        assert quick.locator(".password-result").count() == 2
-        assert quick.locator(".password-result__category").count() == 0
-        assert quick.evaluate("""
-          window.__dtkitCalls.some(call =>
-            call.command === 'list_passwords' && call.args.limit === 50)
-        """)
-        quick.locator("#passwordSearch").fill("#分类 开发")
+    page.locator('[data-detail-action="edit"]').click()
+    page.locator('#passwordEditor').wait_for(state="visible")
+    assert page.locator('#passwordUrl').input_value() == 'https://github.com'
+    assert page.locator('.password-custom-field').count() == 1
+    page.locator('#passwordEditor .password-dialog__close').click()
 
-        output = Path("C:/tmp/dtkit-password-vault-ui.png")
-        page.screenshot(path=str(output), full_page=True)
-        quick.close()
-        browser.close()
-        print(f"password vault UI smoke passed; screenshot={output}")
+    page.locator('[data-password-view="favorites"]').click()
+    assert page.locator('.password-result').count() == 1
+    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(SCREENSHOT), full_page=True)
+    browser.close()
 
-
-if __name__ == "__main__":
-    run()
+print("Password vault UI smoke test passed")

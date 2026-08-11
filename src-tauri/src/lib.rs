@@ -38,10 +38,11 @@ use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_f
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
 use infrastructure::passwords::{
-    commit_password_import, copy_password, discard_password_import, empty_password_trash,
-    get_password_entry_for_edit, get_password_settings, list_passwords, preview_password_import,
-    remove_password_entry, restore_password_entry, save_password_entry, set_password_settings,
-    PasswordVaultManager,
+    audit_password_security, commit_password_import, copy_password, copy_password_field,
+    discard_password_import, empty_password_trash, get_password_detail,
+    get_password_entry_for_edit, get_password_overview, get_password_settings, list_passwords,
+    open_password_url, preview_password_import, remove_password_entry, restore_password_entry,
+    save_password_entry, set_password_favorite, set_password_settings, PasswordVaultManager,
 };
 use infrastructure::quick_host::{
     dismiss_quick_host, open_quick_host, touch_quick_host_activity, QuickHostManager,
@@ -944,6 +945,8 @@ pub fn run() {
             take_over_whiteboard_edit,
             release_whiteboard_edit,
             list_passwords,
+            get_password_overview,
+            get_password_detail,
             get_password_entry_for_edit,
             save_password_entry,
             remove_password_entry,
@@ -953,6 +956,10 @@ pub fn run() {
             commit_password_import,
             discard_password_import,
             copy_password,
+            copy_password_field,
+            open_password_url,
+            set_password_favorite,
+            audit_password_security,
             get_password_settings,
             set_password_settings,
             search_snippets,

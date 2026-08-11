@@ -4,8 +4,13 @@
 .transfer-kicker { color: var(--color-primary); font-size: .67rem; font-weight: 800; letter-spacing: .13em; }
 .transfer-import-controls { display: flex; align-items: flex-end; gap: .55rem; }.transfer-import-controls label { display: grid; gap: .3rem; }.transfer-import-controls label span { color: var(--color-text-secondary); font-size: .64rem; font-weight: 700; }
 .transfer-import-controls select { min-height: 2.25rem; padding: .4rem 1.8rem .4rem .6rem; border: 1px solid var(--color-border); border-radius: .55rem; color: var(--color-text-primary); background: var(--color-surface); font: .7rem inherit; }
-.transfer-button { min-height: 2.2rem; padding: .45rem .75rem; border: 1px solid transparent; border-radius: .55rem; font: 700 .7rem/1 inherit; cursor: pointer; }.transfer-button:disabled { opacity: .45; cursor: not-allowed; }
+.transfer-button { min-height: 2.2rem; padding: .45rem .75rem; border: 1px solid transparent; border-radius: .55rem; font: 700 .7rem/1 inherit; cursor: pointer; transition: transform var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast); }.transfer-button:disabled { opacity: .45; cursor: not-allowed; }
 .transfer-button--primary { color: #fff; background: var(--color-primary); }.transfer-button--secondary { border-color: var(--color-border); color: var(--color-text-primary); background: var(--color-surface); }.transfer-button--danger { color: #fff; background: #b74434; }
+.transfer-button--secondary:hover:not(:disabled) { border-color: rgba(var(--color-info-rgb), .32); color: var(--color-primary); background: #fff; }
+.transfer-button--primary:hover:not(:disabled) { color: #fff; background: var(--color-primary-strong); box-shadow: 0 .45rem 1rem rgba(var(--color-info-rgb), .18); transform: translateY(-1px); }
+.transfer-button--danger:hover:not(:disabled) { color: #fff; background: #963629; box-shadow: 0 .45rem 1rem rgba(183, 68, 52, .18); transform: translateY(-1px); }
+.transfer-button:active:not(:disabled) { transform: translateY(0); }
+.transfer-button:focus-visible { outline: 3px solid rgba(var(--color-info-rgb), .2); outline-offset: 2px; }
 .transfer-layout { display: grid; grid-template-columns: minmax(25rem, 1.35fr) minmax(19rem, .65fr); gap: 1rem; align-items: start; }
 .transfer-list-card, .transfer-share-card { min-width: 0; padding: 1.15rem; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-sm); }
 .transfer-section-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }.transfer-section-header h3 { margin: .12rem 0 0; font-size: 1rem; }.transfer-section-header > span { color: var(--color-text-secondary); font-size: .65rem; }
