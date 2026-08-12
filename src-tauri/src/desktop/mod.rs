@@ -2,6 +2,7 @@
 // Desktop Organizer Module
 
 pub mod commands;
+pub mod apps;
 pub mod hotzone;
 pub mod scanner;
 

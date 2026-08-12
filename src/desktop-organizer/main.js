@@ -148,19 +148,45 @@ function highlightText(text, query) {
     return escapeHtml(text).replace(regex, '<span class="search-highlight">$1</span>');
 }
 
-const SEARCH_CATEGORY_KEYS = ['documents', 'images', 'videos', 'audios', 'archives', 'programs', 'folders', 'others'];
+const SEARCH_CATEGORY_KEYS = ['documents', 'images', 'videos', 'audios', 'archives', 'programs', 'folders', 'others', 'applications'];
+const appIconCache = new Map();
+
+async function hydrateVisibleAppIcons(root = document) {
+    const targets = [...root.querySelectorAll('.file-item[data-app-id]:not([data-icon-loaded])')].slice(0, 32);
+    await Promise.all(targets.map(async item => {
+        item.dataset.iconLoaded = 'true';
+        const path = item.dataset.path;
+        let icon = appIconCache.get(path);
+        if (icon === undefined) {
+            try { icon = await invoke('desktop_get_app_icon', { path }); } catch { icon = null; }
+            if (appIconCache.size >= 96) appIconCache.clear();
+            appIconCache.set(path, icon);
+        }
+        if (!icon || !item.isConnected) return;
+        const holder = item.querySelector('.file-icon');
+        if (holder) { holder.classList.add('file-icon-real'); holder.innerHTML = `<img src="${icon}" class="file-icon-img" alt="" loading="lazy">`; }
+    }));
+}
 
 function rebuildSearchIndex() {
-    state.searchIndex = SEARCH_CATEGORY_KEYS.flatMap(key => state.files?.[key] || []).map(file => ({
-        file,
-        normalizedName: file.name.toLocaleLowerCase()
-    }));
+    const sourceRank = file => file.app_manual ? 0 : file.app_id ? 2 : 1;
+    const seenNames = new Set();
+    state.searchIndex = SEARCH_CATEGORY_KEYS
+        .flatMap(key => state.files?.[key] || [])
+        .sort((left, right) => sourceRank(left) - sourceRank(right))
+        .filter(file => {
+            const name = file.name.trim().replace(/\.(exe|lnk|url)$/i, '').toLocaleLowerCase();
+            if (!name || seenNames.has(name)) return false;
+            seenNames.add(name);
+            return true;
+        })
+        .map(file => ({ file, normalizedName: file.name.toLocaleLowerCase() }));
 }
 
 function filesForCategory(categoryKey) {
     if (categoryKey.startsWith('custom_')) {
         return state.searchIndex
-            .filter(entry => state.fileCategories[entry.file.path] === categoryKey)
+            .filter(entry => !entry.file.app_id && state.fileCategories[entry.file.path] === categoryKey)
             .map(entry => entry.file);
     }
 
@@ -194,6 +220,13 @@ function renderCategoryList() {
 
     const categoryOrder = ['recent', 'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'];
     let html = '';
+
+    const manualApps = (state.files.applications || []).filter(file => file.app_manual);
+    if (manualApps.length) {
+        const categoryKey = 'managed-apps';
+        const isExpanded = state.expandedCategories.has(categoryKey);
+        html += `<div class="category-item managed-app-category ${isExpanded ? 'expanded' : ''}" data-category="${categoryKey}" data-files-rendered="${isExpanded}"><button class="category-header" type="button" data-category="${categoryKey}" aria-expanded="${isExpanded}"><span class="category-icon"><i class="ri-apps-2-line"></i></span><span class="category-name">我的应用</span><span class="category-count">${manualApps.length}</span><span class="category-arrow">▶</span></button><div class="category-files">${isExpanded ? categoryFilesMarkup(categoryKey, manualApps) : ''}</div></div>`;
+    }
 
     // 先渲染自定义分类（即使是空的也显示）
     for (const cat of state.customCategories) {
@@ -249,6 +282,7 @@ function renderCategoryList() {
 
     elements.categoryList.innerHTML = html;
     elements.statusText.textContent = `共 ${state.files.total_count} 个项目`;
+    queueMicrotask(() => hydrateVisibleAppIcons(elements.categoryList));
 }
 
 function renderFileList(files) {
@@ -259,7 +293,7 @@ function renderFileList(files) {
             ? '<span class="folder-drill">浏览 <i class="ri-arrow-right-s-line"></i></span>'
             : `<span class="file-size">${formatFileSize(file.size)}</span>`;
         return `
-        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}">
+        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
             <span class="file-icon${isImgIcon ? ' file-icon-real' : ''}">${iconContent}</span>
             <span class="file-name">${escapeHtml(file.name)}</span>
             ${trailingContent}
@@ -428,12 +462,13 @@ function renderSearchResults() {
     const query = state.searchQuery.replace(/^\/[a-z]\s*/i, ''); // 移除命令前缀
     
     elements.searchResultsList.innerHTML = state.searchResults.map(file => `
-        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}">
+        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
             <span class="file-icon">${getFileIcon(file)}</span>
             <span class="file-name">${highlightText(file.name, query)}</span>
             <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
         </div>
     `).join('');
+    queueMicrotask(() => hydrateVisibleAppIcons(elements.searchResultsList));
 }
 
 // ============================================
@@ -638,19 +673,21 @@ function searchFiles(query) {
 // ============================================
 // 文件操作
 // ============================================
-async function openFile(path) {
+async function openFile(path, appId = '') {
     try {
-        await invoke('desktop_open_file', { path });
+        await invoke(appId ? 'desktop_open_app' : 'desktop_open_file', { path });
     } catch (error) {
         console.error('打开文件失败:', error);
+        setDesktopStatus(`打开失败 · ${String(error)}`);
     }
 }
 
-async function locateFile(path) {
+async function locateFile(path, appId = '') {
     try {
-        await invoke('desktop_locate_file', { path });
+        await invoke(appId ? 'desktop_locate_app' : 'desktop_locate_file', { path });
     } catch (error) {
         console.error('定位文件失败:', error);
+        setDesktopStatus(`定位失败 · ${String(error)}`);
     }
 }
 
@@ -696,7 +733,7 @@ document.addEventListener('keydown', async (e) => {
     const selectedItem = document.querySelector('.file-item.selected');
     
     if (selectedItem && state.selectedFile) {
-        const { path, name, isFolder } = state.selectedFile;
+        const { path, name, isFolder, appId } = state.selectedFile;
         
         // Enter - 打开文件
         if (e.key === 'Enter') {
@@ -704,13 +741,13 @@ document.addEventListener('keydown', async (e) => {
             if (isFolder) {
                 await enterFolder({ path, name });
             } else {
-                await openFile(path);
+                await openFile(path, appId);
             }
         }
         // F2 - 重命名
         else if (e.key === 'F2') {
             e.preventDefault();
-            showRenameDialog(path, name);
+            if (!appId) showRenameDialog(path, name);
         }
         // Ctrl+C - 复制路径
         else if (e.ctrlKey && e.key === 'c') {
@@ -720,7 +757,7 @@ document.addEventListener('keydown', async (e) => {
         // Ctrl+L - 定位文件
         else if (e.ctrlKey && e.key === 'l') {
             e.preventDefault();
-            await locateFile(path);
+            await locateFile(path, appId);
         }
     }
     
@@ -761,6 +798,7 @@ function selectFileItem(fileItem) {
             path: fileItem.dataset.path,
             name: fileItem.dataset.name,
             isFolder: fileItem.dataset.isFolder === 'true',
+            appId: fileItem.dataset.appId || '',
         };
     } else {
         state.selectedFile = null;
@@ -832,6 +870,7 @@ elements.categoryList.addEventListener('click', (e) => {
             state.expandedCategories.add(category);
             filesContainer.innerHTML = categoryFilesMarkup(category, filesForCategory(category));
             item.dataset.filesRendered = 'true';
+            queueMicrotask(() => hydrateVisibleAppIcons(filesContainer));
         }
         item.classList.toggle('expanded', willExpand);
         header.setAttribute('aria-expanded', String(willExpand));
@@ -851,7 +890,7 @@ elements.categoryList.addEventListener('dblclick', (e) => {
     if (fileItem && fileItem.dataset.isFolder !== 'true') {
         const path = fileItem.dataset.path;
         if (path) {
-            openFile(path);
+            openFile(path, fileItem.dataset.appId || '');
         }
     }
 });
@@ -870,7 +909,7 @@ elements.searchResultsList?.addEventListener('dblclick', async (e) => {
             elements.searchInput.dispatchEvent(new Event('input'));
             await enterFolder({ path, name: fileItem.dataset.name });
         } else if (path) {
-            await openFile(path);
+            await openFile(path, fileItem.dataset.appId || '');
         }
     }
 });
@@ -884,6 +923,7 @@ function showContextMenu(e, fileItem) {
         path: fileItem.dataset.path,
         name: fileItem.dataset.name,
         isFolder: fileItem.dataset.isFolder === 'true',
+        appId: fileItem.dataset.appId || '',
     };
     
     // 更新分类子菜单
@@ -932,6 +972,7 @@ function showContextMenu(e, fileItem) {
 
 function hideContextMenu() {
     if (elements.contextMenu.style.display === 'none') return;
+    elements.contextMenu.querySelector('.has-submenu')?.classList.remove('is-open');
     elements.contextMenu.classList.add('closing');
     setTimeout(() => {
         elements.contextMenu.style.display = 'none';
@@ -1010,23 +1051,26 @@ elements.contextMenu.addEventListener('click', async (e) => {
     if (!menuItem || !state.selectedFile) return;
     
     // 如果点击的是有子菜单的项，不处理
-    if (menuItem.classList.contains('has-submenu')) return;
+    if (menuItem.classList.contains('has-submenu')) {
+        menuItem.classList.toggle('is-open');
+        return;
+    }
     
     const action = menuItem.dataset.action;
-    const { path, name } = state.selectedFile;
+    const { path, name, appId } = state.selectedFile;
     
     switch (action) {
         case 'open':
-            await openFile(path);
+            await openFile(path, appId);
             break;
         case 'locate':
-            await locateFile(path);
+            await locateFile(path, appId);
             break;
         case 'copy':
             await copyToClipboard(path);
             break;
         case 'rename':
-            showRenameDialog(path, name);
+            if (!appId) showRenameDialog(path, name);
             break;
     }
     
@@ -1329,6 +1373,20 @@ document.addEventListener('visibilitychange', async () => {
         }
     }
 });
+
+// 二级菜单使用短暂的关闭宽限期，避免鼠标穿过菜单间隙时意外消失。
+const moveCategoryMenuItem = elements.contextMenu.querySelector('.menu-item.has-submenu');
+let submenuCloseTimer = null;
+function cancelSubmenuClose() { clearTimeout(submenuCloseTimer); submenuCloseTimer = null; }
+function openCategorySubmenu() { cancelSubmenuClose(); moveCategoryMenuItem?.classList.add('is-open'); }
+function scheduleSubmenuClose() {
+    cancelSubmenuClose();
+    submenuCloseTimer = setTimeout(() => moveCategoryMenuItem?.classList.remove('is-open'), 260);
+}
+moveCategoryMenuItem?.addEventListener('pointerenter', openCategorySubmenu);
+moveCategoryMenuItem?.addEventListener('pointerleave', scheduleSubmenuClose);
+elements.categorySubmenu?.addEventListener('pointerenter', openCategorySubmenu);
+elements.categorySubmenu?.addEventListener('pointerleave', scheduleSubmenuClose);
 
 // 窗口失去焦点时关闭右键菜单
 window.addEventListener('blur', () => {

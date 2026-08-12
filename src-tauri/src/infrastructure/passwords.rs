@@ -311,6 +311,8 @@ pub(crate) struct ImportPreview {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportIssue {
+    id: String,
+    editable: bool,
     source: String,
     service: String,
     username: String,
@@ -322,8 +324,9 @@ struct ImportIssue {
 
 struct ParsedImport {
     entries: Vec<PasswordRecord>,
+    candidates: Vec<PendingCandidate>,
     total: usize,
-    invalid: usize,
+    uneditable_invalid: usize,
     warnings: Vec<String>,
     issues: Vec<ImportIssue>,
 }
@@ -338,6 +341,8 @@ pub(crate) struct ImportResult {
 
 struct PendingImport {
     entries: Vec<PasswordRecord>,
+    candidates: Vec<PendingCandidate>,
+    uneditable_invalid: usize,
 }
 
 impl Drop for PendingImport {
@@ -345,7 +350,33 @@ impl Drop for PendingImport {
         for entry in &mut self.entries {
             entry.wipe_secret();
         }
+        for candidate in &mut self.candidates {
+            wipe_string(&mut candidate.entry.password);
+        }
     }
+}
+
+struct PendingCandidate {
+    id: String,
+    source: String,
+    entry: ImportedPassword,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportCorrection {
+    service: Option<String>,
+    password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportCorrectionResult {
+    ready: usize,
+    duplicates: usize,
+    invalid: usize,
+    item: Option<PasswordSummary>,
+    issue: Option<ImportIssue>,
 }
 
 #[derive(Default)]
@@ -845,8 +876,10 @@ fn safe_import_metadata(value: &str) -> String {
     safe
 }
 
-fn import_issue(source: String, entry: &ImportedPassword, errors: Vec<String>) -> ImportIssue {
+fn import_issue(id: String, editable: bool, source: String, entry: &ImportedPassword, errors: Vec<String>) -> ImportIssue {
     ImportIssue {
+        id,
+        editable,
         source,
         service: safe_import_metadata(&entry.service),
         username: safe_import_metadata(&entry.username),
@@ -872,8 +905,9 @@ fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
         ));
     }
     let mut entries = Vec::with_capacity(total);
+    let mut candidates = Vec::new();
     let mut issues = Vec::new();
-    let mut invalid = 0;
+    let mut uneditable_invalid = 0;
     for (index, mut imported) in payload.passwords.drain(..).enumerate() {
         let errors = import_validation_errors(&imported);
         if errors.is_empty() {
@@ -881,17 +915,21 @@ fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
                 entries.push(entry);
             }
         } else {
-            invalid += 1;
-            if issues.len() < 100 {
-                issues.push(import_issue(format!("第 {} 条", index + 1), &imported, errors));
+            if candidates.len() < 100 {
+                let id = Uuid::new_v4().to_string();
+                let source = format!("第 {} 条", index + 1);
+                issues.push(import_issue(id.clone(), true, source.clone(), &imported, errors));
+                candidates.push(PendingCandidate { id, source, entry: imported });
+            } else {
+                uneditable_invalid += 1;
+                wipe_string(&mut imported.password);
             }
-            wipe_string(&mut imported.password);
         }
     }
-    if invalid > issues.len() {
-        warnings.push(format!("另有 {} 条错误条目未展开显示", invalid - issues.len()));
+    if uneditable_invalid > 0 {
+        warnings.push(format!("另有 {uneditable_invalid} 条错误条目未展开显示，请在源文件中修正"));
     }
-    Ok(ParsedImport { entries, total, invalid, warnings, issues })
+    Ok(ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues })
 }
 
 fn csv_column(headers: &csv::StringRecord, aliases: &[&str]) -> Option<usize> {
@@ -918,7 +956,8 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
     let category = csv_column(&headers, &["分类", "category"]);
     let mut total = 0;
     let mut entries = Vec::new();
-    let mut invalid = 0;
+    let mut candidates = Vec::new();
+    let mut uneditable_invalid = 0;
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     for record_result in reader.records() {
@@ -926,10 +965,12 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
             Ok(record) => record,
             Err(error) => {
                 total += 1;
-                invalid += 1;
+                uneditable_invalid += 1;
                 if issues.len() < 100 {
                     let line = error.position().map(|position| position.line()).unwrap_or((total + 1) as u64);
                     issues.push(ImportIssue {
+                        id: String::new(),
+                        editable: false,
                         source: format!("第 {line} 行"),
                         service: String::new(),
                         username: String::new(),
@@ -969,17 +1010,21 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
                 entries.push(entry);
             }
         } else {
-            invalid += 1;
-            if issues.len() < 100 {
-                issues.push(import_issue(format!("第 {source_line} 行"), &imported, errors));
+            if candidates.len() < 100 {
+                let id = Uuid::new_v4().to_string();
+                let source = format!("第 {source_line} 行");
+                issues.push(import_issue(id.clone(), true, source.clone(), &imported, errors));
+                candidates.push(PendingCandidate { id, source, entry: imported });
+            } else {
+                uneditable_invalid += 1;
+                wipe_string(&mut imported.password);
             }
-            wipe_string(&mut imported.password);
         }
     }
-    if invalid > issues.len() {
-        warnings.push(format!("另有 {} 条错误条目未展开显示", invalid - issues.len()));
+    if uneditable_invalid > issues.iter().filter(|issue| !issue.editable).count() {
+        warnings.push(format!("另有 {} 条错误条目未展开显示，请在源文件中修正", uneditable_invalid - issues.iter().filter(|issue| !issue.editable).count()));
     }
-    Ok(ParsedImport { entries, total, invalid, warnings, issues })
+    Ok(ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues })
 }
 
 fn load_settings(storage: &StorageManager) -> PasswordSettings {
@@ -1367,7 +1412,7 @@ pub(crate) fn preview_password_import(
         }
         _ => return Err("仅支持 .json 和 .csv 导入文件".to_string()),
     };
-    let ParsedImport { entries, total, invalid, warnings, issues } = parsed;
+    let ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues } = parsed;
     let existing = load_vault(&storage)?;
     let keys = existing
         .items
@@ -1388,11 +1433,12 @@ pub(crate) fn preview_password_import(
         .map(PasswordRecord::safe_summary)
         .collect();
     let token = Uuid::new_v4().to_string();
+    let invalid = candidates.len() + uneditable_invalid;
     manager
         .pending
         .lock()
         .map_err(|_| "导入预览状态不可用".to_string())?
-        .insert(token.clone(), PendingImport { entries });
+        .insert(token.clone(), PendingImport { entries, candidates, uneditable_invalid });
     Ok(ImportPreview {
         token,
         format: format.to_string(),
@@ -1403,6 +1449,78 @@ pub(crate) fn preview_password_import(
         warnings,
         items,
         issues,
+    })
+}
+
+fn pending_duplicate_count(storage: &StorageManager, pending: &PendingImport) -> Result<usize, String> {
+    let existing = load_vault(storage)?;
+    let mut seen = existing
+        .items
+        .iter()
+        .filter(|entry| entry.deleted_at.is_none())
+        .map(PasswordRecord::duplicate_key)
+        .collect::<HashSet<_>>();
+    Ok(pending.entries.iter().filter(|entry| !seen.insert(entry.duplicate_key())).count())
+}
+
+#[tauri::command]
+pub(crate) fn update_password_import_entry(
+    storage: tauri::State<'_, StorageManager>,
+    manager: tauri::State<'_, PasswordVaultManager>,
+    token: String,
+    issue_id: String,
+    correction: ImportCorrection,
+) -> Result<ImportCorrectionResult, String> {
+    let mut pending_map = manager
+        .pending
+        .lock()
+        .map_err(|_| "导入预览状态不可用".to_string())?;
+    let pending = pending_map
+        .get_mut(&token)
+        .ok_or_else(|| "导入预览已失效，请重新选择文件".to_string())?;
+    let index = pending
+        .candidates
+        .iter()
+        .position(|candidate| candidate.id == issue_id)
+        .ok_or_else(|| "错误条目已修正或不存在".to_string())?;
+
+    if let Some(service) = correction.service {
+        pending.candidates[index].entry.service = service.chars().take(200).collect();
+    }
+    if let Some(password) = correction.password {
+        if password.chars().count() > 10_000 {
+            return Err("密码不能超过 10000 个字符".to_string());
+        }
+        wipe_string(&mut pending.candidates[index].entry.password);
+        pending.candidates[index].entry.password = password;
+    }
+
+    let errors = import_validation_errors(&pending.candidates[index].entry);
+    let mut item = None;
+    let issue = if errors.is_empty() {
+        let candidate = pending.candidates.remove(index);
+        let record = imported_record(candidate.entry)
+            .ok_or_else(|| "条目仍缺少名称或密码".to_string())?;
+        item = Some(record.safe_summary());
+        pending.entries.push(record);
+        None
+    } else {
+        let candidate = &pending.candidates[index];
+        Some(import_issue(
+            candidate.id.clone(),
+            true,
+            candidate.source.clone(),
+            &candidate.entry,
+            errors,
+        ))
+    };
+    let duplicates = pending_duplicate_count(&storage, pending)?;
+    Ok(ImportCorrectionResult {
+        ready: pending.entries.len(),
+        duplicates,
+        invalid: pending.candidates.len() + pending.uneditable_invalid,
+        item,
+        issue,
     })
 }
 
@@ -2024,6 +2142,11 @@ mod tests {
         let parsed = parse_json_import(source).unwrap();
         assert_eq!(parsed.total, 2);
         assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(parsed.candidates[0].entry.service, "");
+        assert_eq!(parsed.candidates[0].entry.password, "invalid");
+        assert!(parsed.issues[0].editable);
+        assert!(!parsed.issues[0].id.is_empty());
         assert_eq!(parsed.warnings.len(), 1);
     }
 
@@ -2113,7 +2236,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(parsed.total, 3);
-        assert_eq!(parsed.invalid, 2);
+        assert_eq!(parsed.candidates.len() + parsed.uneditable_invalid, 2);
         assert_eq!(parsed.issues[0].source, "第 2 条");
         assert_eq!(parsed.issues[0].username, "missing-name");
         assert_eq!(parsed.issues[1].service, "Mail");
@@ -2130,7 +2253,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(parsed.total, 3);
-        assert_eq!(parsed.invalid, 2);
+        assert_eq!(parsed.candidates.len() + parsed.uneditable_invalid, 2);
         assert_eq!(parsed.issues[0].source, "第 3 行");
         assert_eq!(parsed.issues[1].source, "第 4 行");
     }

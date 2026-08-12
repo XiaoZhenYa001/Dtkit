@@ -67,6 +67,9 @@ test('password import preview identifies invalid source rows without exposing se
     assert.doesNotMatch(issue, /password:\s*String/);
     assert.match(tool, /passwordImportIssues/);
     assert.match(tool, /importIssueNode/);
+    assert.match(tool, /invoke\('update_password_import_entry'/);
+    assert.match(tool, /password\.value\s*=\s*''/);
+    assert.match(backend, /struct PendingCandidate/);
 });
 
 test('clipboard cleanup is backend-owned and only clears the unchanged sensitive copy', () => {

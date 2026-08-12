@@ -63,14 +63,11 @@ export async function bootstrapDesktopOrganizer() {
     if (!lifecycleInitialized && typeof globalThis.window?.addEventListener === 'function') {
         lifecycleInitialized = true;
         globalThis.window.addEventListener('dtkit:power-state', event => {
-            const suspended = Boolean(event.detail?.suspended);
-            if (suspended) {
-                stopDesktopOrganizerMonitor().catch(error => {
-                    console.error('[DesktopOrganizer] 暂停热区监听失败', error);
-                });
-            } else if (getDesktopOrganizerSettings().enabled) {
+            // 热区是原生低频监听，不依赖主 WebView。节能/深度休眠期间也应继续可用；
+            // 桌面整理 WebView 仍会在离开面板后按资源策略关闭。
+            if (getDesktopOrganizerSettings().enabled) {
                 startDesktopOrganizerMonitor().catch(error => {
-                    console.error('[DesktopOrganizer] 恢复热区监听失败', error);
+                    console.error('[DesktopOrganizer] 保持热区监听失败', error);
                 });
             }
         });

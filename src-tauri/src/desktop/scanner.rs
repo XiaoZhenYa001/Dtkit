@@ -124,6 +124,12 @@ pub struct DesktopFile {
     pub children: Option<Vec<DesktopFile>>, // 子文件（仅文件夹有，一级）
     pub children_truncated: bool,           // 文件夹预览是否已截断
     pub icon: Option<String>,               // 文件图标（Base64 PNG）
+    #[serde(default)]
+    pub app_id: Option<String>,             // 开始菜单或手动添加的应用 ID
+    #[serde(default)]
+    pub app_category: Option<String>,       // 用户在应用管理页指定的展示分类
+    #[serde(default)]
+    pub app_manual: bool,                   // 用户显式添加的持久应用
 }
 
 /// 分类后的桌面文件
@@ -136,6 +142,8 @@ pub struct CategorizedFiles {
     pub audios: Vec<DesktopFile>,    // 音频
     pub archives: Vec<DesktopFile>,  // 压缩包
     pub programs: Vec<DesktopFile>,  // 程序
+    #[serde(default)]
+    pub applications: Vec<DesktopFile>, // 开始菜单/手动应用，仅供搜索，不计入桌面分类
     pub folders: Vec<DesktopFile>,   // 文件夹
     pub others: Vec<DesktopFile>,    // 其他
     pub total_count: usize,          // 总数
@@ -213,6 +221,9 @@ fn scan_file_info(path: &PathBuf) -> Option<DesktopFile> {
         children: None,
         children_truncated: false,
         icon,
+        app_id: None,
+        app_category: None,
+        app_manual: false,
     })
 }
 
@@ -330,6 +341,7 @@ pub fn scan_desktop() -> Result<CategorizedFiles, String> {
         audios,
         archives,
         programs,
+        applications: Vec::new(),
         folders,
         others,
         total_count,

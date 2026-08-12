@@ -20,6 +20,7 @@ export async function initDesktopOrganizerSettings() {
     const mainToggle = document.getElementById('desktopOrganizerToggle');
     const autoAnalyzeToggle = document.getElementById('desktopAutoAnalyzeToggle');
     const subSettings = document.getElementById('desktopOrganizerSubSettings');
+    const appManagerButton = document.getElementById('openDesktopAppManager');
     if (!mainToggle) return;
     initialized = true;
 
@@ -27,6 +28,10 @@ export async function initDesktopOrganizerSettings() {
     mainToggle.checked = settings.enabled;
     if (autoAnalyzeToggle) autoAnalyzeToggle.checked = settings.autoAnalyze;
     setSubSettingsVisibility(subSettings, settings.enabled);
+
+    appManagerButton?.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('dtkit:open-tool-new-tab', { detail: { toolId: 'desktop-app-manager' } }));
+    });
 
     if (settings.enabled) {
         try {

@@ -12,16 +12,17 @@ import {
 } from '../src/tools/toolRegistry.js';
 
 test('startup registers metadata without loading tool implementations', () => {
-    assert.equal(toolManifests.length, 20);
+    assert.equal(toolManifests.length, 21);
     assert.equal(new Set(toolManifests.map(tool => tool.id)).size, toolManifests.length);
-    assert.equal(getAllTools({ includePrimary: true }).length, toolManifests.length);
+    assert.equal(getAllTools({ includePrimary: true }).length, 20);
+    assert.equal(getAllTools({ includePrimary: true, includeInternal: true }).length, toolManifests.length);
     assert.ok(!getAllTools().some(tool => tool.id === 'password-vault'));
     assert.ok(toolManifests.every(tool => !isToolLoaded(tool.id)));
     assert.deepEqual(
         toolManifests.filter(tool => tool.status === 'planned').map(tool => tool.id),
         ['image-compressor', 'favicon-generator']
     );
-    assert.equal(toolManifests.filter(tool => tool.status === 'ready').length, 18);
+    assert.equal(toolManifests.filter(tool => tool.status === 'ready' && tool.surface !== 'internal').length, 18);
 });
 
 test('planned tools are blocked before their loader runs', async () => {

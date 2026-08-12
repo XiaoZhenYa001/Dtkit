@@ -241,15 +241,17 @@ export function renderToolView(toolId) {
             const html = tool.template();
             container.innerHTML = html;
             container.dataset.toolId = toolId;
-            const shortcutSlot = document.createElement('div');
-            shortcutSlot.className = 'tool-shortcut-slot';
-            container.prepend(shortcutSlot);
-            disposeActiveShortcut = mountShortcutBinding(shortcutSlot, {
-                label: tool.name,
-                icon: tool.icon,
-                compact: true,
-                target: { kind: 'tool', toolId }
-            });
+            if (tool.surface !== 'internal') {
+                const shortcutSlot = document.createElement('div');
+                shortcutSlot.className = 'tool-shortcut-slot';
+                container.prepend(shortcutSlot);
+                disposeActiveShortcut = mountShortcutBinding(shortcutSlot, {
+                    label: tool.name,
+                    icon: tool.icon,
+                    compact: true,
+                    target: { kind: 'tool', toolId }
+                });
+            }
             
             console.log(`[ToolRegistry] 工具视图已渲染: ${toolId}`);
             return container;
@@ -352,7 +354,8 @@ export function destroyTool(toolId) {
 export function getAllTools(options = {}) {
     return Array.from(toolsRegistry.values()).filter(tool =>
         (options.includeDisabled || tool.enabled)
-        && (options.includePrimary || tool.surface !== 'primary'));
+        && (options.includePrimary || tool.surface !== 'primary')
+        && (options.includeInternal || tool.surface !== 'internal'));
 }
 
 export function applyDisabledTools(disabledToolIds = []) {

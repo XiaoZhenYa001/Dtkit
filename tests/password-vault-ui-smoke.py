@@ -27,7 +27,11 @@ MOCK = r"""
     }
     if (command === 'get_password_detail') return {id:args.id,service:'GitHub',username:'octocat',phone:'',email:'octocat@example.com',note:'个人账号',category:'开发',url:'https://github.com',favorite:true,createdAt:1780000000000,updatedAt:1785000000000,lastUsedAt:1786000000000,useCount:8,customFields:[{index:0,label:'恢复代码',value:'',sensitive:true,hasValue:true}]};
     if (command === 'get_password_entry_for_edit') return {id:args.id,service:'GitHub',username:'octocat',phone:'',email:'octocat@example.com',password:'secret',note:'个人账号',category:'开发',url:'https://github.com',favorite:true,customFields:[{label:'恢复代码',value:'code',sensitive:true}]};
-    if (command === 'preview_password_import') return {token:'import-1',format:'CSV',total:3,ready:1,duplicates:0,invalid:2,warnings:[],items:[{id:'preview-1',service:'GitHub',username:'octocat',note:'ok',category:'dev'}],issues:[{source:'第 3 行',service:'',username:'missing-name',email:'',note:'work',category:'dev',errors:['名称为空']},{source:'第 4 行',service:'Mail',username:'me',email:'me@example.com',note:'',category:'personal',errors:['密码为空']}]};
+    if (command === 'preview_password_import') return {token:'import-1',format:'CSV',total:3,ready:1,duplicates:0,invalid:2,warnings:[],items:[{id:'preview-1',service:'GitHub',username:'octocat',note:'ok',category:'dev'}],issues:[{id:'missing-name',editable:true,source:'第 3 行',service:'',username:'missing-name',email:'',note:'work',category:'dev',errors:['名称为空']},{id:'missing-password',editable:true,source:'第 4 行',service:'Mail',username:'me',email:'me@example.com',note:'',category:'personal',errors:['密码为空']}]};
+    if (command === 'update_password_import_entry') {
+      window.__importCorrection = args;
+      return {ready:2,duplicates:0,invalid:1,item:{id:'preview-2',service:'Mail',username:'me',note:'',category:'personal'},issue:null};
+    }
     if (command === 'discard_password_import') return null;
     if (command === 'get_shortcut_bindings') return [];
     if (command === 'get_tool_module_settings') return {disabled:[]};
@@ -69,6 +73,14 @@ with sync_playwright() as playwright:
     assert '名称为空' in page.locator('.password-import-issue').first.inner_text()
     assert '密码为空' in page.locator('.password-import-issue').nth(1).inner_text()
     assert 'secret-2' not in page.locator('#passwordImportDialog').inner_text()
+    page.locator('[data-import-issue-edit="missing-password"]').click()
+    correction = page.locator('[data-import-issue-form="missing-password"]')
+    correction.locator('input[name="password"]').fill('only-in-input-42!')
+    correction.locator('button[type="submit"]').click()
+    page.wait_for_function('window.__importCorrection !== undefined')
+    correction.wait_for(state='detached')
+    assert page.locator('#passwordImportReadyCount').inner_text() == '2 条'
+    assert 'only-in-input-42!' not in page.locator('#passwordImportDialog').inner_text()
     IMPORT_SCREENSHOT.parent.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(IMPORT_SCREENSHOT), full_page=True)
     page.locator('#passwordImportDialog .password-dialog__close').click()

@@ -11,6 +11,17 @@ import { registerToolManifest } from './toolRegistry.js';
 
 export const toolManifests = Object.freeze([
     {
+        id: 'desktop-app-manager',
+        name: '应用与图标管理',
+        surface: 'internal',
+        icon: 'ri-apps-2-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'utility',
+        status: 'ready',
+        description: '管理桌面整理识别到的应用、分类和自定义图标。',
+        loader: () => import('./desktop-app-manager/index.js')
+    },
+    {
         id: 'timestamp-converter',
         name: '时间戳转换',
         icon: 'ri-time-line',
@@ -22,12 +33,12 @@ export const toolManifests = Object.freeze([
     },
     {
         id: 'json-formatter',
-        name: 'JSON 格式化',
-        icon: 'ri-braces-line',
+        name: 'JSON / YAML / XML 转换',
+        icon: 'ri-code-box-line',
         colorClass: 'tool-card__icon--orange',
         category: 'dev',
         status: 'ready',
-        description: '格式化、美化和验证 JSON 数据',
+        description: '在本地完成 JSON、YAML 与 XML 的互转、校验、格式化和压缩。',
         loader: () => import('./json-formatter/index.js')
     },
     {

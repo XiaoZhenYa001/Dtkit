@@ -15,6 +15,7 @@ let activeView = 'all';
 let activeCategory = '';
 let searchTimer;
 let importToken = null;
+let importPreview = null;
 let resultTotal = 0;
 let resultsTruncated = false;
 let refreshGeneration = 0;
@@ -249,7 +250,9 @@ function importIssueNode(issue) {
     const title = document.createElement('strong'); title.textContent = issue.service || '未填写名称';
     const errors = document.createElement('div'); errors.className = 'password-import-issue__errors';
     (issue.errors || []).forEach(message => { const tag = document.createElement('span'); tag.textContent = message; errors.append(tag); });
-    header.append(source, title, errors);
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'password-import-issue__edit'; edit.dataset.importIssueEdit = issue.id || '';
+    edit.textContent = issue.editable ? '修正' : '需修改源文件'; edit.disabled = !issue.editable;
+    header.append(source, title, errors, edit);
     const metadata = document.createElement('dl');
     [['用户名', issue.username], ['邮箱', issue.email], ['分类', issue.category], ['备注', issue.note]].forEach(([label, value]) => {
         if (!value) return;
@@ -258,17 +261,24 @@ function importIssueNode(issue) {
     });
     if (!metadata.children.length) { const empty = document.createElement('p'); empty.textContent = '该条目没有可用于辨认的其他字段。'; metadata.append(empty); }
     card.append(header, metadata);
+    if (issue.editable) {
+        const form = document.createElement('form'); form.className = 'password-import-correction'; form.dataset.importIssueForm = issue.id; form.hidden = true;
+        if ((issue.errors || []).includes('名称为空')) { const label=document.createElement('label'); label.innerHTML='<span>名称</span><input name="service" maxlength="200" autocomplete="off" required>'; form.append(label); }
+        if ((issue.errors || []).includes('密码为空')) { const label=document.createElement('label'); label.innerHTML='<span>密码</span><input name="password" type="password" maxlength="10000" autocomplete="new-password" required>'; form.append(label); }
+        const save=document.createElement('button'); save.type='submit'; save.textContent='保存修正'; form.append(save); card.append(form);
+    }
     return card;
 }
 
 function renderImportPreview(preview) {
+    importPreview = preview;
     byId('passwordImportSummary').innerHTML = `<div><strong>${preview.total}</strong><span>文件条目</span></div><div><strong>${preview.ready}</strong><span>可导入</span></div><div><strong>${preview.duplicates}</strong><span>重复项</span></div><div class="${preview.invalid ? 'is-warning' : ''}"><strong>${preview.invalid}</strong><span>错误条目</span></div>`;
     byId('passwordImportWarnings').replaceChildren(...(preview.warnings || []).map(message => { const p=document.createElement('p'); p.textContent=message; return p; }));
     const issuePanel = byId('passwordImportIssues'); const issues = preview.issues || [];
     issuePanel.hidden = !issues.length;
     if (issues.length) {
         const heading = document.createElement('div'); heading.className = 'password-import-issues__heading';
-        const text = document.createElement('div'); text.innerHTML = '<i class="ri-error-warning-line"></i><span><strong>需要检查的条目</strong><small>以下条目不会被导入，请根据来源位置修正文件。</small></span>';
+        const text = document.createElement('div'); text.innerHTML = '<i class="ri-error-warning-line"></i><span><strong>需要检查的条目</strong><small>可直接补全缺失字段；格式损坏的行需修改源文件。</small></span>';
         const count = document.createElement('em'); count.textContent = `${preview.invalid} 条`;
         heading.append(text, count); issuePanel.replaceChildren(heading, ...issues.map(importIssueNode));
     } else issuePanel.replaceChildren();
@@ -277,18 +287,47 @@ function renderImportPreview(preview) {
     byId('passwordImportCommit').disabled = preview.ready === 0;
 }
 
+async function correctImportIssue(form) {
+    if (!importToken || !importPreview) return;
+    const issueId = form.dataset.importIssueForm;
+    const correction = {};
+    const service = form.elements.namedItem('service');
+    const password = form.elements.namedItem('password');
+    if (service) correction.service = service.value;
+    if (password) correction.password = password.value;
+    const button = form.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+        const result = await invoke('update_password_import_entry', { token: importToken, issueId, correction });
+        if (password) password.value = '';
+        importPreview.ready = result.ready;
+        importPreview.duplicates = result.duplicates;
+        importPreview.invalid = result.invalid;
+        const issueIndex = importPreview.issues.findIndex(issue => issue.id === issueId);
+        if (issueIndex >= 0) {
+            if (result.issue) importPreview.issues.splice(issueIndex, 1, result.issue);
+            else importPreview.issues.splice(issueIndex, 1);
+        }
+        if (result.item) importPreview.items.push(result.item);
+        renderImportPreview(importPreview);
+    } catch (error) {
+        if (password) password.value = '';
+        setStatus(String(error), 'error');
+        button.disabled = false;
+    }
+}
+
 async function beginImport() {
     const path = await globalThis.window?.__TAURI__?.dialog?.open({ multiple:false, directory:false, title:'导入 REPassCard 密码', filters:[{ name:'REPassCard 导出文件', extensions:['json','csv'] }] });
     if (!path || Array.isArray(path)) return;
     const button = byId('passwordImport'); button.disabled = true;
     try {
         const preview = await invoke('preview_password_import',{ path });
-        importToken = preview.token; renderImportPreview(preview);
+        importToken = preview.token; importPreview = preview; renderImportPreview(preview);
         const dialog = byId('passwordImportDialog'); resetDialogPosition(dialog); dialog.showModal();
     } catch (error) { setStatus(String(error),'error'); }
     finally { button.disabled=false; }
 }
-async function commitImport() { if (!importToken) return; const button=byId('passwordImportCommit'); button.disabled=true; try { const result=await invoke('commit_password_import',{ token:importToken, strategy:byId('passwordDuplicateStrategy').value }); importToken=null; byId('passwordImportDialog').close(); await Promise.all([refresh(),loadOverview()]); setStatus(`导入完成：新增 ${result.imported} 条，覆盖 ${result.overwritten} 条，跳过 ${result.skipped} 条。`,'success'); } catch(error){ setStatus(String(error),'error'); } finally { button.disabled=false; } }
+async function commitImport() { if (!importToken) return; const button=byId('passwordImportCommit'); button.disabled=true; try { const result=await invoke('commit_password_import',{ token:importToken, strategy:byId('passwordDuplicateStrategy').value }); importToken=null; importPreview=null; byId('passwordImportDialog').close(); await Promise.all([refresh(),loadOverview()]); setStatus(`导入完成：新增 ${result.imported} 条，覆盖 ${result.overwritten} 条，跳过 ${result.skipped} 条。`,'success'); } catch(error){ setStatus(String(error),'error'); } finally { button.disabled=false; } }
 
 function openDeleteDialog(id) { const item=items.find(entry=>entry.id===id)||detail; if(!item)return; const dialog=byId('passwordDeleteDialog'); dialog.dataset.passwordId=id; const deleted=Boolean(item.deletedAt||activeView==='trash'); byId('passwordPermanentDelete').checked=deleted; byId('passwordPermanentDelete').disabled=deleted; byId('passwordDeleteTitle').textContent=deleted?`彻底删除“${item.service}”？`:`删除“${item.service}”？`; updateDeleteDialog(); dialog.showModal(); }
 function updateDeleteDialog(){ const permanent=byId('passwordPermanentDelete').checked; byId('passwordDeleteDescription').textContent=permanent?'密码将立即从加密库中移除，删除后无法恢复。':'密码会进入回收站，保留 30 天后自动彻底删除。'; byId('passwordDeleteConfirm').textContent=permanent?'仍然彻底删除':'移入回收站'; }
@@ -306,13 +345,13 @@ async function initializePasswordVault(){ controller?.abort(); controller=new Ab
     byId('passwordGenerateToggle')?.addEventListener('click',()=>{ byId('passwordGenerator').hidden=!byId('passwordGenerator').hidden; },{signal}); byId('passwordGenerate')?.addEventListener('click',()=>{ byId('passwordValue').value=generatePassword(); updateStrength(); },{signal}); byId('passwordLength')?.addEventListener('input',event=>{ byId('passwordLengthValue').value=event.target.value; },{signal}); byId('passwordGenerator')?.addEventListener('click',event=>{ const button=event.target.closest('[data-generator-mode]'); if(!button)return; byId('passwordGenerator').dataset.mode=button.dataset.generatorMode; byId('passwordGenerator').querySelectorAll('[data-generator-mode]').forEach(item=>item.classList.toggle('is-active',item===button)); byId('passwordLength').closest('label').hidden=button.dataset.generatorMode==='phrase'; },{signal}); byId('passwordValue')?.addEventListener('input',updateStrength,{signal});
     const reveal=byId('passwordReveal'); const show=()=>{byId('passwordValue').type='text';}; const hide=()=>{byId('passwordValue').type='password';}; reveal?.addEventListener('pointerdown',show,{signal}); ['pointerup','pointerleave','pointercancel'].forEach(name=>reveal?.addEventListener(name,hide,{signal}));
     byId('passwordAddField')?.addEventListener('click',()=>byId('passwordCustomFields').append(customFieldNode()),{signal}); byId('passwordCustomFields')?.addEventListener('click',event=>event.target.closest('[data-remove-field]')?.closest('.password-custom-field')?.remove(),{signal}); byId('passwordCustomFields')?.addEventListener('change',event=>{ if(event.target.matches('[data-field-sensitive]')) event.target.closest('.password-custom-field').querySelector('[data-field-value]').type=event.target.checked?'password':'text'; },{signal});
-    const editor=byId('passwordEditor'); makeDialogDraggable(editor,signal); editor?.querySelectorAll('[data-password-editor-cancel]').forEach(button=>button.addEventListener('click',()=>editor.close('cancel'),{signal})); editor?.addEventListener('close',()=>{ resetDialogPosition(editor); fillEditor(); },{signal}); window.addEventListener('resize',()=>resetDialogPosition(editor),{signal}); byId('passwordImportDialog')?.addEventListener('close',async()=>{ if(!importToken)return; const token=importToken; importToken=null; try{await invoke('discard_password_import',{token});}catch{} },{signal}); byId('passwordImportCommit')?.addEventListener('click',commitImport,{signal}); byId('passwordPermanentDelete')?.addEventListener('change',updateDeleteDialog,{signal}); byId('passwordDeleteConfirm')?.addEventListener('click',confirmDelete,{signal}); byId('passwordEmptyTrash')?.addEventListener('click',emptyTrash,{signal}); byId('passwordAuditContent')?.addEventListener('click',event=>{ const row=event.target.closest('[data-audit-id]'); if(!row)return; byId('passwordAuditDialog').close(); selectedId=row.dataset.auditId; activeView='all'; activeCategory=''; byId('passwordSearch').value=''; renderNav(); refresh().then(()=>loadDetail(selectedId)); },{signal});
+    const editor=byId('passwordEditor'); makeDialogDraggable(editor,signal); editor?.querySelectorAll('[data-password-editor-cancel]').forEach(button=>button.addEventListener('click',()=>editor.close('cancel'),{signal})); editor?.addEventListener('close',()=>{ resetDialogPosition(editor); fillEditor(); },{signal}); window.addEventListener('resize',()=>resetDialogPosition(editor),{signal}); byId('passwordImportDialog')?.addEventListener('close',async()=>{ importPreview=null; if(!importToken)return; const token=importToken; importToken=null; try{await invoke('discard_password_import',{token});}catch{} },{signal}); byId('passwordImportIssues')?.addEventListener('click',event=>{ const button=event.target.closest('[data-import-issue-edit]'); if(!button)return; const form=button.closest('.password-import-issue')?.querySelector('[data-import-issue-form]'); if(!form)return; form.hidden=!form.hidden; if(!form.hidden)form.querySelector('input')?.focus(); },{signal}); byId('passwordImportIssues')?.addEventListener('submit',event=>{ const form=event.target.closest('[data-import-issue-form]'); if(!form)return; event.preventDefault(); correctImportIssue(form); },{signal}); byId('passwordImportCommit')?.addEventListener('click',commitImport,{signal}); byId('passwordPermanentDelete')?.addEventListener('change',updateDeleteDialog,{signal}); byId('passwordDeleteConfirm')?.addEventListener('click',confirmDelete,{signal}); byId('passwordEmptyTrash')?.addEventListener('click',emptyTrash,{signal}); byId('passwordAuditContent')?.addEventListener('click',event=>{ const row=event.target.closest('[data-audit-id]'); if(!row)return; byId('passwordAuditDialog').close(); selectedId=row.dataset.auditId; activeView='all'; activeCategory=''; byId('passwordSearch').value=''; renderNav(); refresh().then(()=>loadDetail(selectedId)); },{signal});
     byId('passwordClipboardTime')?.addEventListener('change',async event=>{ try{await invoke('set_password_settings',{settings:{clipboardClearSeconds:Number(event.target.value)}});setStatus('剪贴板清理时间已更新。','success');}catch(error){setStatus(String(error),'error');} },{signal});
     if(!isQuickHost()){ try{ const [settings]=await Promise.all([invoke('get_password_settings'),loadOverview()]); byId('passwordClipboardTime').value=String(settings.clipboardClearSeconds); }catch(error){setStatus(String(error),'error');} renderDetail(); }
     await refresh(); byId('passwordSearch')?.focus();
 }
 
-function destroyPasswordVault(){ controller?.abort(); controller=null; clearTimeout(searchTimer); searchTimer=null; if(importToken)invoke('discard_password_import',{token:importToken}).catch(()=>{}); importToken=null; items=[]; detail=null; overview=null; refreshGeneration+=1; selectedId=null; document.getElementById('navbar')?.classList.remove('navbar--local-search'); }
+function destroyPasswordVault(){ controller?.abort(); controller=null; clearTimeout(searchTimer); searchTimer=null; if(importToken)invoke('discard_password_import',{token:importToken}).catch(()=>{}); importToken=null; importPreview=null; items=[]; detail=null; overview=null; refreshGeneration+=1; selectedId=null; document.getElementById('navbar')?.classList.remove('navbar--local-search'); }
 
 registerTool({ id:'password-vault', name:'密码', icon:'ri-lock-2-line', colorClass:'tool-card__icon--orange', category:'utility', status:'ready', description:'由当前 Windows 用户保护的本机密码库，支持快捷搜索与安全复制。', template:isQuickHost()?quickTemplate:mainTemplate, init:initializePasswordVault, destroy:destroyPasswordVault });
 export { destroyPasswordVault, initializePasswordVault };

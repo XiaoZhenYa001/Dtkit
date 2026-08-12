@@ -84,6 +84,7 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     const hotzone = read('src-tauri/src/desktop/hotzone.rs');
     const nativeWindow = read('src-tauri/src/lib.rs');
     const organizerUi = read('src/desktop-organizer/main.js');
+    const apps = read('src-tauri/src/desktop/apps.rs');
 
     assert.match(commands, /validated_desktop_entry/);
     assert.match(commands, /validate_leaf_filename/);
@@ -98,6 +99,17 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.match(nativeWindow, /fn fit_window_rect/);
     assert.match(nativeWindow, /clamp_desktop_organizer_window/);
     assert.match(commands, /pub x: i32/);
+    assert.match(apps, /MAX_DISCOVERED_APPS: usize = 1_200/);
+    assert.match(apps, /APP_INDEX_CACHE_TTL/);
+    assert.match(apps, /Start Menu/);
+    assert.doesNotMatch(apps, /Program Files/);
+    assert.match(apps, /allowed_indexed_app_extension/);
+    assert.match(apps, /"exe" \| "lnk"/);
+    assert.match(commands, /files\.applications\.push/);
+    assert.doesNotMatch(commands, /files\.total_count \+= 1/);
+    assert.doesNotMatch(commands, /PathBuf::from\(path\)\.canonicalize/);
+    assert.match(organizerUi, /category-name">我的应用/);
+    assert.match(organizerUi, /file\.app_manual \? 0 : file\.app_id \? 2 : 1/);
     assert.match(commands, /pub y: i32/);
     assert.match(organizerUi, /invoke\('clamp_desktop_organizer_window'\)/);
     assert.match(organizerUi, /screenBounds\.x/);
@@ -121,6 +133,15 @@ test('desktop folders are scanned on demand instead of during the top-level scan
     assert.match(organizerUi, /FOLDER_CACHE_LIMIT = 8/);
     assert.match(organizerUi, /folder-browser/);
     assert.doesNotMatch(organizerUi, /renderFolderChildren/);
+});
+
+test('desktop organizer category submenu has a pointer bridge and delayed close tolerance', () => {
+    const styles = read('src/desktop-organizer/styles.css');
+    const organizerUi = read('src/desktop-organizer/main.js');
+    assert.match(styles, /menu-item\.has-submenu::after/);
+    assert.match(styles, /has-submenu\.is-open \.submenu/);
+    assert.match(organizerUi, /scheduleSubmenuClose/);
+    assert.match(organizerUi, /setTimeout\([^\n]*260/);
 });
 
 test('tool shortcuts are mounted from tool metadata instead of a centralized tool list', () => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 function createLocalStorage(initial = {}) {
@@ -60,4 +61,11 @@ test('desktop organizer bootstrap coalesces concurrent monitor starts', async ()
 
     await module.stopDesktopOrganizerMonitor();
     assert.deepEqual(commands, ['start_hotzone_monitor', 'stop_hotzone']);
+});
+
+test('desktop organizer native hotzone remains available while the main webview is suspended', async () => {
+    const source = await readFile(new URL('../src/core/desktopOrganizer.js', import.meta.url), 'utf8');
+    const lifecycle = source.match(/addEventListener\('dtkit:power-state'[\s\S]*?\n\s*\}\);/)?.[0] || '';
+    assert.doesNotMatch(lifecycle, /stopDesktopOrganizerMonitor/);
+    assert.match(lifecycle, /startDesktopOrganizerMonitor/);
 });

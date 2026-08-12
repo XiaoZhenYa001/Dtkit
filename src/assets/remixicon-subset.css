@@ -31,7 +31,6 @@
 .ri-arrow-right-up-line:before { content: "\ea70"; }
 .ri-attachment-2:before { content: "\ea84"; }
 .ri-battery-charge-line:before { content: "\eaae"; }
-.ri-braces-line:before { content: "\eae9"; }
 .ri-brush-2-line:before { content: "\eafb"; }
 .ri-calculator-line:before { content: "\eb1f"; }
 .ri-calendar-line:before { content: "\eb27"; }
@@ -55,6 +54,7 @@
 .ri-delete-bin-6-line:before { content: "\ec26"; }
 .ri-delete-bin-line:before { content: "\ec2a"; }
 .ri-download-2-line:before { content: "\ec54"; }
+.ri-drag-drop-line:before { content: "\ec5e"; }
 .ri-drag-move-2-line:before { content: "\ec60"; }
 .ri-edit-line:before { content: "\ec86"; }
 .ri-eraser-line:before { content: "\ec9f"; }
@@ -68,6 +68,7 @@
 .ri-file-line:before { content: "\eceb"; }
 .ri-file-list-3-line:before { content: "\ecef"; }
 .ri-file-text-line:before { content: "\ed0f"; }
+.ri-file-upload-line:before { content: "\ed15"; }
 .ri-flashlight-line:before { content: "\ed3d"; }
 .ri-focus-3-line:before { content: "\ed4c"; }
 .ri-folder-2-line:before { content: "\ed52"; }
@@ -145,7 +146,6 @@
 .ri-wifi-line:before { content: "\f2c0"; }
 .ri-window-line:before { content: "\f2c6"; }
 .ri-box-3-line:before { content: "\f2f5"; }
-.ri-contract-left-right-line:before { content: "\f2ff"; }
 .ri-javascript-line:before { content: "\f33b"; }
 .ri-draggable:before { content: "\f38f"; }
 .ri-circle-line:before { content: "\f3c2"; }

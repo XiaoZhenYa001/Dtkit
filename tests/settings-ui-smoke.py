@@ -74,6 +74,11 @@ with sync_playwright() as playwright:
                         window.__cleanupStatus.latestRecoveryBatchId = null;
                         return { permanent: false, filesProcessed: 3, bytesProcessed: 3584, recoveryBatchId: 'cleanup-test' };
                     }
+                    if (command === 'desktop_list_apps') return [
+                        { id: 'app-steam', name: 'Steam', path: 'C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Steam/Steam.lnk', source: 'start-menu', category: '游戏', icon: null, hidden: false, manual: false },
+                        { id: 'app-custom', name: '自定义工具', path: 'D:/Apps/Tool.exe', source: 'manual', category: '开发', icon: null, hidden: false, manual: true }
+                    ];
+                    if (command === 'desktop_get_app_icon') return null;
                     return null;
                 }
             }
@@ -156,6 +161,24 @@ with sync_playwright() as playwright:
     assert page.locator("#desktopOrganizerSubSettings").is_visible()
     organizer_settings = page.evaluate("JSON.parse(localStorage.getItem('dtkit_desktop_organizer'))")
     assert organizer_settings["enabled"] is True
+
+    page.locator('#openDesktopAppManager').click()
+    page.locator('#dynamicToolContainer[data-tool-id="desktop-app-manager"]').wait_for(state='visible')
+    page.locator('#appManagerList .app-manager-row').first.wait_for(state='visible')
+    assert page.locator('#appManagerList .app-manager-row').count() == 2
+    assert page.locator('#appManagerList').filter(has_text='Steam').is_visible()
+    assert page.locator('.tab').filter(has_text='应用与图标管理').count() == 1
+    app_layout = page.evaluate("""() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        workspaceWidth: document.querySelector('.app-manager-workspace').getBoundingClientRect().width
+    })""")
+    assert app_layout['scrollWidth'] <= app_layout['clientWidth']
+    assert app_layout['workspaceWidth'] > 700
+    page.screenshot(path=str(SCREENSHOT_DIR / 'desktop-app-manager.png'), full_page=True)
+
+    page.locator('[data-view="settings"]').click()
+    page.locator('#settingsView.view--active').wait_for(state='visible')
 
     page.locator('.settings-side-nav__item[href="#generalSection"]').click()
     page.locator('input[name="minimizeMode"][value="deep"]').check()

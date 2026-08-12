@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -185,15 +186,13 @@ with sync_playwright() as playwright:
     page.locator("#jsonInput").wait_for(state="visible")
     page.wait_for_timeout(100)
     page.locator("#jsonInput").fill('{"outer":{"inner":1}}')
-    expect(page.locator("#jsonStatus")).to_contain_text("JSON 解析成功")
-    json_output_lines = page.locator("#jsonOutput .json-output-line")
-    json_output_lines.first.wait_for(state="visible", timeout=10000)
-    output_paddings = json_output_lines.evaluate_all(
-        "elements => elements.map(element => "
-        "Number.parseFloat(getComputedStyle(element).paddingLeft))"
-    )
-    if not any(padding > 0 for padding in output_paddings):
-        raise AssertionError("Dynamic JSON indentation was blocked by production CSP")
+    expect(page.locator("#jsonStatus")).to_contain_text("JSON → YAML", timeout=10000)
+    expect(page.locator("#jsonOutput")).to_have_value("outer:\n  inner: 1")
+    page.locator('[data-target-format="xml"]').click()
+    expect(page.locator("#jsonOutput")).to_have_value(re.compile("<root>"), timeout=10000)
+    expect(page.locator("#jsonOutput")).to_have_value(re.compile("<inner>1</inner>"))
+    if page.locator("#jsonErrorPanel").is_visible():
+        raise AssertionError("Valid structured data unexpectedly showed a parse error")
 
     assert_no_runtime_errors(errors)
 
@@ -248,7 +247,7 @@ with sync_playwright() as playwright:
 
     print(
         "UI smoke passed: 19 cards, stable favorites, lazy views/tools, subset icons, "
-        "strict CSP, sandboxed preview JS."
+        "strict CSP, structured data conversion, sandboxed preview JS."
     )
     context.close()
     browser.close()

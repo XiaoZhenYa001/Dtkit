@@ -2,7 +2,7 @@ import { detectCommand, evaluateExpression, formatNumber, transformText } from '
 import '../css/tool-shortcut.css';
 
 const TOOL_LABELS = Object.freeze({
-    'timestamp-converter': '时间戳转换', 'json-formatter': 'JSON 格式化',
+    'timestamp-converter': '时间戳转换', 'json-formatter': 'JSON / YAML / XML 转换',
     'base64-codec': 'Base64 编解码', 'hash-tool': 'MD5 / Hash',
     'qr-generator': '二维码生成', 'color-picker': '颜色提取器',
     'html-preview': 'HTML 预览', 'url-encoder': 'URL 编码',

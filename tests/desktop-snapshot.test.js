@@ -34,6 +34,7 @@ function files(items = [file('notes.txt')]) {
         audios: [],
         archives: [],
         programs: [],
+        applications: [],
         folders: [],
         others: [],
         total_count: items.length
@@ -82,4 +83,23 @@ test('desktop fingerprint ignores scan order but detects metadata changes', () =
 
     assert.equal(desktopSnapshotFingerprint(first), desktopSnapshotFingerprint(reordered));
     assert.notEqual(desktopSnapshotFingerprint(first), desktopSnapshotFingerprint(changed));
+});
+
+test('application search entries survive snapshots without inflating desktop totals', () => {
+    const indexedApp = file('Steam', {
+        path: 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Steam\\Steam.lnk',
+        category: 'program',
+        extension: 'lnk',
+        app_id: 'app-steam',
+        app_manual: true
+    });
+    const source = files();
+    source.applications = [indexedApp];
+    const snapshot = createDesktopSnapshot(source);
+
+    assert.equal(snapshot.files.applications.length, 1);
+    assert.equal(snapshot.files.applications[0].app_id, 'app-steam');
+    assert.equal(snapshot.files.applications[0].app_manual, true);
+    assert.equal(snapshot.files.total_count, 1);
+    assert.equal(snapshot.files.programs.length, 0);
 });

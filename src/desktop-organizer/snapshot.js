@@ -1,6 +1,6 @@
 export const DESKTOP_SNAPSHOT_KEY = 'dtkit_desktop_snapshot_v1';
 
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 3;
 const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SNAPSHOT_MAX_ITEMS = 800;
 const RECENT_LIMIT = 7;
@@ -12,7 +12,8 @@ const CATEGORY_KEYS = Object.freeze([
     'archives',
     'programs',
     'folders',
-    'others'
+    'others',
+    'applications'
 ]);
 const VALID_CATEGORIES = new Set([
     'document',
@@ -59,6 +60,9 @@ function compactFile(file, includeChildren = true) {
         accessed_time: finiteUnsigned(file.accessed_time),
         children,
         children_truncated: file.children_truncated === true,
+        app_id: boundedString(file.app_id, 64) || null,
+        app_category: boundedString(file.app_category, 80) || null,
+        app_manual: file.app_manual === true,
         // Base64 shell icons dominate snapshot size and are cheap to restore after the live scan.
         icon: null
     };
@@ -134,6 +138,9 @@ function fileFingerprint(file) {
         file.size,
         file.modified_time,
         file.accessed_time,
+        file.app_id || '',
+        file.app_category || '',
+        file.app_manual === true ? 1 : 0,
         file.icon ? 1 : 0,
         file.children_truncated === true ? 1 : 0,
         children

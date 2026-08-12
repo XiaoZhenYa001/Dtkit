@@ -434,6 +434,13 @@ async function initializeApp() {
         renderToolLibrary();
         renderFavoritesPage();
     });
+    window.addEventListener('dtkit:open-tool-new-tab', event => {
+        const toolId = event.detail?.toolId;
+        const tool = getTool(toolId);
+        if (!tool) return;
+        addTab();
+        openTool(tool.id, tool.name, tool.icon);
+    });
     
     // 已启用的桌面整理热区需要在设置页面尚未打开时也能工作。
     bootstrapDesktopOrganizer().catch(error => {

@@ -42,7 +42,8 @@ use infrastructure::passwords::{
     discard_password_import, empty_password_trash, get_password_detail,
     get_password_entry_for_edit, get_password_overview, get_password_settings, list_passwords,
     open_password_url, preview_password_import, remove_password_entry, restore_password_entry,
-    save_password_entry, set_password_favorite, set_password_settings, PasswordVaultManager,
+    save_password_entry, set_password_favorite, set_password_settings,
+    update_password_import_entry, PasswordVaultManager,
 };
 use infrastructure::quick_host::{
     dismiss_quick_host, open_quick_host, touch_quick_host_activity, QuickHostManager,
@@ -622,9 +623,6 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     let app_handle = app.clone();
     monitor.start(move |show| {
         if show {
-            if APP_SUSPENDED.load(Ordering::Relaxed) {
-                return;
-            }
             if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
                 if let Ok(monitor) = organizer_monitor(&window) {
                     let monitor_pos = monitor.position();
@@ -810,7 +808,6 @@ pub fn run() {
 
                 if minimized {
                     if mode != MinimizeMode::Standard {
-                        stop_hotzone_monitor();
                         window
                             .state::<QuickHostManager>()
                             .release_now(window.app_handle());
@@ -865,7 +862,6 @@ pub fn run() {
                         let _ = organizer_window.hide();
                     }
                 } else {
-                    stop_hotzone_monitor();
                     window.state::<QuickHostManager>().release_now(app);
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.close();
@@ -953,6 +949,7 @@ pub fn run() {
             restore_password_entry,
             empty_password_trash,
             preview_password_import,
+            update_password_import_entry,
             commit_password_import,
             discard_password_import,
             copy_password,
@@ -984,6 +981,12 @@ pub fn run() {
             desktop_get_file_path,
             desktop_get_path,
             desktop_get_icon,
+            desktop_list_apps,
+            desktop_save_app,
+            desktop_reset_app,
+            desktop_open_app,
+            desktop_locate_app,
+            desktop_get_app_icon,
             start_hotzone_monitor,
             stop_hotzone,
             get_hotzone_status,

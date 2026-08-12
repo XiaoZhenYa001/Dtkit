@@ -5,6 +5,11 @@ use crate::desktop::scanner::{
     scan_desktop, scan_folder_contents, search_desktop_files, CategorizedFiles, DesktopFile,
     FolderContents,
 };
+use crate::desktop::apps::{
+    known_app_path, list_desktop_apps, reset_desktop_app, save_desktop_app, DesktopApp,
+    SaveDesktopAppRequest,
+};
+use crate::infrastructure::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,13 +33,92 @@ fn is_descendant(root: &Path, candidate: &Path) -> bool {
     candidate != root && candidate.starts_with(root)
 }
 
+fn normalized_app_name(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    for suffix in [".exe", ".lnk", ".url"] {
+        if let Some(name) = normalized.strip_suffix(suffix) { return name.trim().to_string(); }
+    }
+    normalized
+}
+
 /// 扫描桌面文件
 #[tauri::command]
-pub async fn desktop_scan() -> Result<CategorizedFiles, String> {
-    tauri::async_runtime::spawn_blocking(scan_desktop)
+pub async fn desktop_scan(storage: tauri::State<'_, StorageManager>) -> Result<CategorizedFiles, String> {
+    let mut files = tauri::async_runtime::spawn_blocking(scan_desktop)
         .await
-        .map_err(|error| format!("桌面扫描任务异常结束: {error}"))?
+        .map_err(|error| format!("桌面扫描任务异常结束: {error}"))??;
+    let existing_names = files.programs.iter()
+        .map(|file| normalized_app_name(&file.name))
+        .collect::<std::collections::HashSet<_>>();
+    for app in list_desktop_apps(&storage, false, false)? {
+        if !app.manual && existing_names.contains(&normalized_app_name(&app.name)) { continue; }
+        let extension = Path::new(&app.path).extension().and_then(|value| value.to_str()).unwrap_or_default().to_lowercase();
+        files.applications.push(DesktopFile {
+            name: app.name,
+            path: app.path,
+            category: "program".to_string(),
+            is_folder: false,
+            size: 0,
+            extension,
+            modified_time: 0,
+            accessed_time: 0,
+            children: None,
+            children_truncated: false,
+            icon: app.icon,
+            app_id: Some(app.id),
+            app_category: Some(app.category),
+            app_manual: app.manual,
+        });
+    }
+    files.applications.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(files)
 }
+
+#[tauri::command]
+pub fn desktop_list_apps(storage: tauri::State<'_, StorageManager>, include_hidden: Option<bool>, refresh: Option<bool>) -> Result<Vec<DesktopApp>, String> {
+    list_desktop_apps(&storage, include_hidden.unwrap_or(true), refresh.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn desktop_save_app(storage: tauri::State<'_, StorageManager>, request: SaveDesktopAppRequest) -> Result<(), String> {
+    save_desktop_app(&storage, request)
+}
+
+#[tauri::command]
+pub fn desktop_reset_app(storage: tauri::State<'_, StorageManager>, path: String) -> Result<(), String> {
+    reset_desktop_app(&storage, &path)
+}
+
+fn validated_known_app(storage: &StorageManager, path: &str) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(path);
+    if !candidate.is_file() { return Err("应用不存在或无法访问".to_string()); }
+    if !known_app_path(storage, &candidate) { return Err("应用不在桌面整理的受管索引中".to_string()); }
+    Ok(candidate)
+}
+
+#[tauri::command]
+pub fn desktop_open_app(storage: tauri::State<'_, StorageManager>, path: String) -> Result<(), String> {
+    let path = validated_known_app(&storage, &path)?;
+    opener::open(path).map_err(|error| format!("打开应用失败: {error}"))
+}
+
+#[tauri::command]
+pub fn desktop_locate_app(storage: tauri::State<'_, StorageManager>, path: String) -> Result<(), String> {
+    let path = validated_known_app(&storage, &path)?;
+    Command::new("explorer").args(["/select,", &path.to_string_lossy()]).spawn().map_err(|error| format!("定位应用失败: {error}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn desktop_get_app_icon(storage: tauri::State<'_, StorageManager>, path: String) -> Result<Option<String>, String> {
+    let path = validated_known_app(&storage, &path)?;
+    Ok(crate::desktop::icon::extract_file_icon(&path.to_string_lossy()))
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn desktop_get_app_icon(_storage: tauri::State<'_, StorageManager>, _path: String) -> Result<Option<String>, String> { Ok(None) }
 
 /// 搜索桌面文件
 /// category_filter: 可选的分类过滤，如 "document", "image" 等
