@@ -1,6 +1,6 @@
 import { showToast } from '../../core/utils.js';
 
-export const CURRENT_VERSION = '0.2.6';
+export const CURRENT_VERSION = '0.2.7';
 export const RELEASES_PAGE = 'https://github.com/XiaoZhenYa001/Dtkit/releases';
 export const LATEST_RELEASE_API = 'https://api.github.com/repos/XiaoZhenYa001/Dtkit/releases/latest';
 

@@ -26,8 +26,8 @@ use alarm_scheduler::{
 };
 use desktop::commands::*;
 use desktop::hotzone::{
-    get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos, HotZoneConfig,
-    HotZoneMonitor,
+    get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos,
+    update_panel_bounds, HotZoneConfig, HotZoneMonitor,
 };
 use file_output::write_qr_code;
 use infrastructure::cleanup::{
@@ -66,6 +66,10 @@ use infrastructure::shortcuts::{
 use infrastructure::snippets::{delete_snippet, save_snippet, search_snippets, SnippetManager};
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
+};
+use infrastructure::system_assistant::{
+    reveal_system_startup_item, scan_system_startup_items, set_system_startup_enabled,
+    SystemAssistantManager,
 };
 use infrastructure::tool_modules::{
     get_tool_module_settings, set_tool_module_enabled, ToolModuleManager,
@@ -635,6 +639,15 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                     }
                 }
                 let _ = fit_desktop_organizer_to_screen(&window);
+                if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
+                    update_hotzone_pos(position.x, size.width as i32);
+                    update_panel_bounds(
+                        position.x,
+                        position.y,
+                        size.width as i32,
+                        size.height as i32,
+                    );
+                }
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -652,8 +665,16 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
 
 // 更新热区位置（从前端调用）
 #[tauri::command]
-fn update_hotzone_position(x: i32, width: i32) -> Result<(), String> {
+fn update_hotzone_position(
+    x: i32,
+    width: i32,
+    y: Option<i32>,
+    height: Option<i32>,
+) -> Result<(), String> {
     update_hotzone_pos(x, width);
+    if let (Some(y), Some(height)) = (y, height) {
+        update_panel_bounds(x, y, width, height);
+    }
     Ok(())
 }
 
@@ -722,6 +743,7 @@ pub fn run() {
         .manage(WhiteboardEditManager::default())
         .manage(PasswordVaultManager::default())
         .manage(SnippetManager::default())
+        .manage(SystemAssistantManager::default())
         .manage(ToolModuleManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -959,6 +981,9 @@ pub fn run() {
             audit_password_security,
             get_password_settings,
             set_password_settings,
+            scan_system_startup_items,
+            set_system_startup_enabled,
+            reveal_system_startup_item,
             search_snippets,
             save_snippet,
             delete_snippet,

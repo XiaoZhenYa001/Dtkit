@@ -1,5 +1,6 @@
 import { registerTool } from '../toolRegistry.js';
 import '../../css/tools/desktop-app-manager.css';
+import '../../css/tools/desktop-app-manager-category.css';
 
 const invoke = (command, args) => globalThis.window?.__TAURI__?.core?.invoke(command, args);
 const byId = id => document.getElementById(id);
@@ -8,6 +9,18 @@ let apps = [];
 let selectedPath = '';
 let activeFilter = 'all';
 let pendingIconPath = '';
+const DESKTOP_SNAPSHOT_KEY = 'dtkit_desktop_snapshot_v1';
+const DESKTOP_CATEGORY_OPTIONS = Object.freeze([
+    ['recent', '最近使用'],
+    ['documents', '文档'],
+    ['images', '图片'],
+    ['videos', '视频'],
+    ['audios', '音频'],
+    ['archives', '压缩包'],
+    ['programs', 'program'],
+    ['folders', '文件夹'],
+    ['others', '其他']
+]);
 
 function template() {
     return `<div class="app-manager-shell">
@@ -56,6 +69,56 @@ function renderList() {
 }
 
 function selectedApp() { return apps.find(app => app.path === selectedPath) || null; }
+function categorySuggestions() {
+    const categories = new Set(['program']);
+    for (const app of apps) {
+        const category = String(app.category || '').trim();
+        if (category) categories.add(category);
+    }
+    try {
+        const snapshot = JSON.parse(localStorage.getItem(DESKTOP_SNAPSHOT_KEY) || 'null');
+        for (const [key, value] of DESKTOP_CATEGORY_OPTIONS) {
+            if (Array.isArray(snapshot?.files?.[key]) && snapshot.files[key].length) categories.add(value);
+        }
+    } catch {}
+    try {
+        const saved = JSON.parse(localStorage.getItem('desktop_organizer_custom_categories') || '[]');
+        if (Array.isArray(saved)) {
+            for (const category of saved) {
+                const name = typeof category?.name === 'string' ? category.name.trim() : '';
+                if (name) categories.add(name);
+            }
+        }
+    } catch {}
+    return [...categories].sort((left, right) => {
+        if (left === 'program') return -1;
+        if (right === 'program') return 1;
+        return left.localeCompare(right, 'zh-CN');
+    });
+}
+function categoryDisplayName(category) { return category === 'program' ? '程序' : category; }
+function setCategoryOptionsOpen(open) {
+    const options = byId('appManagerCategoryOptions');
+    const input = byId('appManagerCategory');
+    if (!options || !input) return;
+    options.hidden = !open;
+    input.setAttribute('aria-expanded', String(open));
+    byId('appManagerCategoryToggle')?.setAttribute('aria-expanded', String(open));
+}
+function renderCategoryOptions() {
+    const options = byId('appManagerCategoryOptions');
+    const currentValue = byId('appManagerCategory')?.value || '';
+    if (!options) return;
+    options.replaceChildren(...categorySuggestions().map(category => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(category === currentValue));
+        option.dataset.categoryValue = category;
+        option.textContent = categoryDisplayName(category);
+        return option;
+    }));
+}
 async function loadSelectedSystemIcon(app, image) {
     if (app.icon || !image) return;
     try { const icon = await invoke('desktop_get_app_icon', { path: app.path }); if (icon && image.isConnected && selectedPath === app.path) image.src = icon; } catch {}
@@ -64,9 +127,10 @@ async function loadSelectedSystemIcon(app, image) {
 function renderDetail() {
     const panel = byId('appManagerDetail'); const app = selectedApp(); pendingIconPath = '';
     if (!app) { panel.innerHTML='<div class="app-manager-detail__empty"><span><i class="ri-layout-grid-line"></i></span><strong>选择一个应用</strong><p>在这里修正名称、分类、图标或隐藏状态。</p></div>'; return; }
-    panel.innerHTML=`<div class="app-manager-detail__head"><span class="app-manager-detail__icon"><img id="appManagerIconPreview" alt=""></span><div><strong></strong><small></small></div></div><div class="app-manager-fields"><label><span>显示名称</span><input id="appManagerName" maxlength="160"></label><label><span>分类</span><input id="appManagerCategory" maxlength="80" list="appManagerCategories"></label><label><span>应用路径</span><input id="appManagerPath" readonly></label><label class="app-manager-hidden"><input id="appManagerHidden" type="checkbox"><span><strong>在桌面整理中隐藏</strong><small>仍保留管理记录，可以随时恢复。</small></span></label></div><datalist id="appManagerCategories"><option value="program"><option value="游戏"><option value="开发"><option value="办公"><option value="影音"><option value="系统"></datalist><div class="app-manager-icon-actions"><button id="appManagerChooseIcon" type="button"><i class="ri-image-line"></i>选择自定义图标</button><small>PNG、JPG或ICO，最大4MB</small></div><div class="app-manager-detail__actions"><button data-app-action="open" type="button"><i class="ri-external-link-line"></i>打开</button><button data-app-action="locate" type="button"><i class="ri-folder-open-line"></i>定位</button><button data-app-action="reset" class="is-danger" type="button">${app.manual ? '移除' : '恢复默认'}</button><button data-app-action="save" class="is-primary" type="button">保存修改</button></div>`;
+    panel.innerHTML=`<div class="app-manager-detail__head"><span class="app-manager-detail__icon"><img id="appManagerIconPreview" alt=""></span><div><strong></strong><small></small></div></div><div class="app-manager-fields"><label><span>显示名称</span><input id="appManagerName" maxlength="160"></label><div class="app-manager-category-field"><label for="appManagerCategory">分类</label><div class="app-manager-category-combobox"><input id="appManagerCategory" maxlength="80" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="appManagerCategoryOptions" autocomplete="off"><button id="appManagerCategoryToggle" type="button" aria-label="选择已有分类" aria-expanded="false"><i class="ri-arrow-down-s-line"></i></button><div id="appManagerCategoryOptions" class="app-manager-category-options" role="listbox" hidden></div></div></div><label><span>应用路径</span><input id="appManagerPath" readonly></label><label class="app-manager-hidden"><input id="appManagerHidden" type="checkbox"><span><strong>在桌面整理中隐藏</strong><small>仍保留管理记录，可以随时恢复。</small></span></label></div><div class="app-manager-icon-actions"><button id="appManagerChooseIcon" type="button"><i class="ri-image-line"></i>选择自定义图标</button><small>PNG、JPG或ICO，最大4MB</small></div><div class="app-manager-detail__actions"><button data-app-action="open" type="button"><i class="ri-external-link-line"></i>打开</button><button data-app-action="locate" type="button"><i class="ri-folder-open-line"></i>定位</button><button data-app-action="reset" class="is-danger" type="button">${app.manual ? '移除' : '恢复默认'}</button><button data-app-action="save" class="is-primary" type="button">保存修改</button></div>`;
     panel.querySelector('.app-manager-detail__head strong').textContent=app.name; panel.querySelector('.app-manager-detail__head small').textContent=app.manual?'手动添加':'开始菜单';
     byId('appManagerName').value=app.name; byId('appManagerCategory').value=app.category || 'program'; byId('appManagerPath').value=app.path; byId('appManagerHidden').checked=app.hidden;
+    renderCategoryOptions();
     const preview=byId('appManagerIconPreview'); if(app.icon) preview.src=app.icon; else loadSelectedSystemIcon(app,preview);
 }
 
@@ -94,8 +158,20 @@ function init() {
     byId('appManagerAdd')?.addEventListener('click',addApp,{signal}); byId('appManagerRefresh')?.addEventListener('click',()=>loadApps(true),{signal}); byId('appManagerSearch')?.addEventListener('input',renderList,{signal});
     document.querySelector('.app-manager-nav')?.addEventListener('click',event=>{const button=event.target.closest('[data-app-filter]');if(!button)return;activeFilter=button.dataset.appFilter;document.querySelectorAll('[data-app-filter]').forEach(item=>item.classList.toggle('is-active',item===button));byId('appManagerListTitle').textContent=button.querySelector('span').textContent;renderList();},{signal});
     byId('appManagerList')?.addEventListener('click',event=>{const row=event.target.closest('[data-app-path]');if(!row)return;selectedPath=row.dataset.appPath;renderList();renderDetail();},{signal});
-    byId('appManagerDetail')?.addEventListener('click',event=>{if(event.target.closest('#appManagerChooseIcon'))chooseIcon();else handleDetailAction(event);},{signal});
-    loadApps(true);
+    byId('appManagerDetail')?.addEventListener('click',event=>{
+        const option=event.target.closest('[data-category-value]');
+        if(option){byId('appManagerCategory').value=option.dataset.categoryValue;setCategoryOptionsOpen(false);byId('appManagerCategory').focus();return;}
+        if(event.target.closest('#appManagerCategoryToggle')){renderCategoryOptions();setCategoryOptionsOpen(byId('appManagerCategoryOptions').hidden);return;}
+        if(event.target.closest('#appManagerCategory')){renderCategoryOptions();setCategoryOptionsOpen(true);return;}
+        if(event.target.closest('#appManagerChooseIcon'))chooseIcon();else handleDetailAction(event);
+    },{signal});
+    byId('appManagerDetail')?.addEventListener('keydown',event=>{
+        if(!event.target.closest('#appManagerCategory'))return;
+        if(event.key==='Escape'){setCategoryOptionsOpen(false);return;}
+        if(event.key==='ArrowDown'){event.preventDefault();renderCategoryOptions();setCategoryOptionsOpen(true);byId('appManagerCategoryOptions')?.querySelector('[role="option"]')?.focus();}
+    },{signal});
+    document.addEventListener('click',event=>{if(!event.target.closest('.app-manager-category-combobox'))setCategoryOptionsOpen(false);},{signal});
+    loadApps();
 }
 function destroy(){controller?.abort();controller=null;apps=[];selectedPath='';pendingIconPath='';}
 

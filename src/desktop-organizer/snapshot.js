@@ -128,20 +128,33 @@ export function readDesktopSnapshot(storage, now = Date.now()) {
     }
 }
 
+function textFingerprint(value) {
+    if (typeof value !== 'string' || !value) return '';
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `${value.length}:${(hash >>> 0).toString(16)}`;
+}
+
 function fileFingerprint(file) {
     const children = Array.isArray(file.children)
         ? file.children.map(fileFingerprint).sort().join(',')
         : '';
     return [
         file.path,
+        file.name,
         file.category,
+        file.extension,
+        file.is_folder === true ? 1 : 0,
         file.size,
         file.modified_time,
         file.accessed_time,
         file.app_id || '',
         file.app_category || '',
         file.app_manual === true ? 1 : 0,
-        file.icon ? 1 : 0,
+        textFingerprint(file.icon),
         file.children_truncated === true ? 1 : 0,
         children
     ].join('\u0000');

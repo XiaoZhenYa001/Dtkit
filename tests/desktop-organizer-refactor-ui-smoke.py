@@ -1,31 +1,58 @@
+import functools
+import http.server
 import os
+import threading
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 
 ORGANIZER_SCREENSHOT = Path(r"C:\tmp\dtkit-desktop-organizer-refactor.png")
 SHORTCUT_SCREENSHOT = Path(r"C:\tmp\dtkit-tool-shortcut.png")
-BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4182")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def local_test_url():
+    configured_url = os.environ.get("DTKIT_TEST_BASE_URL")
+    if configured_url:
+        return configured_url, lambda: None
+    dist = PROJECT_ROOT / "dist"
+    if not dist.is_dir():
+        raise RuntimeError("dist 不存在，请先运行 npm run build")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(dist))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def close_server():
+        server.shutdown()
+        server.server_close()
+
+    return f"http://127.0.0.1:{server.server_port}", close_server
+
+
+BASE_URL, CLOSE_TEST_SERVER = local_test_url()
 
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context()
     context.add_init_script("""
+        const desktopPath = name => ['C:', 'Users', 'demo', 'Desktop', name].join('\\\\');
         const file = (name, category, folder = false, size = 1024) => ({
-            name, path: `C:\\Users\\demo\\Desktop\\${name}`, category, is_folder: folder,
+            name, path: desktopPath(name), category, is_folder: folder,
             size, extension: folder ? '' : name.split('.').pop(), modified_time: 1,
-            accessed_time: 2, children: folder ? [{ name: 'brief.md', path: `C:\\Users\\demo\\Desktop\\${name}\\brief.md`,
+            accessed_time: 2, children: folder ? [{ name: 'brief.md', path: desktopPath(`${name}/brief.md`),
                 category: 'document', is_folder: false, size: 512, extension: 'md', modified_time: 1,
                 accessed_time: 1, children: null, children_truncated: false, icon: null }] : null,
             children_truncated: folder, icon: null
         });
         const cached = file('cached-notes.txt', 'document', false, 2048);
         localStorage.setItem('dtkit_desktop_snapshot_v1', JSON.stringify({
-            version: 1,
+            version: 3,
             capturedAt: Date.now(),
             files: { recent: [cached], documents: [cached], images: [], videos: [], audios: [],
-                archives: [], programs: [], folders: [], others: [], total_count: 1 }
+                archives: [], programs: [], applications: [], folders: [], others: [], total_count: 1 }
         }));
         window.__bindings = [];
         window.__calls = [];
@@ -39,10 +66,15 @@ with sync_playwright() as playwright:
                     const doc = file('roadmap.pdf', 'document', false, 245760);
                     const image = file('design.png', 'image', false, 1048576);
                     const folder = file('Current Project', 'folder', true, 0);
+                    const manualApp = file('Pinned Tool', 'program', false, 0);
+                    manualApp.path = 'C:/Tools/pinned-tool.exe';
+                    manualApp.app_id = 'app-pinned-tool';
+                    manualApp.app_manual = true;
+                    manualApp.app_category = 'program';
                     return new Promise(resolve => {
                         window.__resolveDesktopScan = () => resolve({
                             recent: [doc, image], documents: [doc], images: [image], videos: [], audios: [],
-                            archives: [], programs: [], folders: [folder], others: [], total_count: 3
+                            archives: [], programs: [], applications: [manualApp], folders: [folder], others: [], total_count: 3
                         });
                     });
                 }
@@ -85,6 +117,20 @@ with sync_playwright() as playwright:
     assert organizer.locator('[data-category="document"] .file-item').count() == 0
     assert organizer.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
+    organizer.locator('[data-category="managed-apps"] .category-header').click()
+    assert organizer.locator('[data-category="managed-apps"] [data-name="Pinned Tool"]').count() == 1
+
+    recent_items = organizer.locator('[data-category="recent"] .file-item')
+    assert recent_items.first.evaluate("node => node.tagName") == "BUTTON"
+    recent_items.first.focus()
+    recent_items.first.press("ArrowDown")
+    active_name = organizer.evaluate("document.activeElement?.dataset?.name || document.activeElement?.tagName")
+    assert recent_items.nth(1).evaluate("node => node === document.activeElement"), active_name
+    recent_items.first.focus()
+    recent_items.first.press("Enter")
+    open_calls = organizer.evaluate("window.__calls.filter(call => call.command.includes('open'))")
+    assert organizer.evaluate("window.__calls.some(call => call.command === 'desktop_open_file' && call.args.path.endsWith('roadmap.pdf'))"), open_calls
+
     organizer.locator('[data-category="folder"] .category-header').click()
     organizer.locator('[data-name="Current Project"]').click()
     organizer.locator(".folder-browser").wait_for(state="visible")
@@ -106,7 +152,7 @@ with sync_playwright() as playwright:
     organizer.wait_for_function("document.querySelectorAll('#searchResultsList .file-item').length === 1")
     assert "roadmap.pdf" in organizer.locator("#searchResultsList").inner_text()
     organizer.locator("#searchClear").click()
-    organizer.locator(".file-item").first.click(button="right")
+    organizer.locator('[data-name="roadmap.pdf"]').first.click(button="right")
     assert organizer.locator("#contextMenu").is_visible()
     organizer.locator('#contextMenu [data-action="rename"]').click()
     assert organizer.locator("#renameDialog").is_visible()
@@ -138,4 +184,5 @@ with sync_playwright() as playwright:
     context.close()
     browser.close()
 
+CLOSE_TEST_SERVER()
 print(f"desktop organizer + tool shortcut UI passed; screenshots={ORGANIZER_SCREENSHOT}, {SHORTCUT_SCREENSHOT}")

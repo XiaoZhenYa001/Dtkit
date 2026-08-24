@@ -12,7 +12,7 @@ const EXAMPLES = Object.freeze({
   "project": "DtKit",
   "portable": true,
   "features": ["低能耗", "按需加载"],
-  "release": { "version": "0.2.6", "channel": "stable" }
+  "release": { "version": "0.2.7", "channel": "stable" }
 }`,
     yaml: `project: DtKit
 portable: true
@@ -20,7 +20,7 @@ features:
   - 低能耗
   - 按需加载
 release:
-  version: 0.2.6
+  version: 0.2.7
   channel: stable`,
     xml: `<?xml version="1.0" encoding="UTF-8"?>
 <project name="DtKit">

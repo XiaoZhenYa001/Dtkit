@@ -238,6 +238,7 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
             | "file-batch"
             | "transfer-station"
             | "resource-center"
+            | "system-assistant"
             | "password-vault"
             | "whiteboard"
             | "text-snippets"

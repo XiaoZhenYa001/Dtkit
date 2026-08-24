@@ -13,7 +13,7 @@ use crate::infrastructure::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn validated_desktop_entry(path: &str) -> Result<PathBuf, String> {
     let desktop = crate::desktop::scanner::get_desktop_path()
@@ -80,13 +80,25 @@ pub fn desktop_list_apps(storage: tauri::State<'_, StorageManager>, include_hidd
 }
 
 #[tauri::command]
-pub fn desktop_save_app(storage: tauri::State<'_, StorageManager>, request: SaveDesktopAppRequest) -> Result<(), String> {
-    save_desktop_app(&storage, request)
+pub fn desktop_save_app(
+    app: tauri::AppHandle,
+    storage: tauri::State<'_, StorageManager>,
+    request: SaveDesktopAppRequest,
+) -> Result<(), String> {
+    save_desktop_app(&storage, request)?;
+    let _ = app.emit("desktop-app-index-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub fn desktop_reset_app(storage: tauri::State<'_, StorageManager>, path: String) -> Result<(), String> {
-    reset_desktop_app(&storage, &path)
+pub fn desktop_reset_app(
+    app: tauri::AppHandle,
+    storage: tauri::State<'_, StorageManager>,
+    path: String,
+) -> Result<(), String> {
+    reset_desktop_app(&storage, &path)?;
+    let _ = app.emit("desktop-app-index-changed", ());
+    Ok(())
 }
 
 fn validated_known_app(storage: &StorageManager, path: &str) -> Result<PathBuf, String> {

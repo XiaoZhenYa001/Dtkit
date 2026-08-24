@@ -6,7 +6,7 @@
 // 2. 隐藏时采用 250ms、显示时采用 100ms 的自适应频率，减少常驻 CPU 占用
 // 3. 添加全局停止机制
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,6 +25,12 @@ lazy_static::lazy_static! {
     // 用户交互标志：当用户正在拖动或调整窗口大小时，不应该隐藏窗口
     pub static ref USER_INTERACTING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
+
+static MONITOR_GENERATION: AtomicU64 = AtomicU64::new(0);
+static PANEL_X: AtomicI32 = AtomicI32::new(0);
+static PANEL_Y: AtomicI32 = AtomicI32::new(0);
+static PANEL_WIDTH: AtomicI32 = AtomicI32::new(0);
+static PANEL_HEIGHT: AtomicI32 = AtomicI32::new(0);
 
 // 热区配置
 #[derive(Clone)]
@@ -68,6 +74,34 @@ pub fn get_hotzone_pos() -> (i32, i32) {
     )
 }
 
+pub fn update_panel_bounds(x: i32, y: i32, width: i32, height: i32) {
+    PANEL_X.store(x, Ordering::Release);
+    PANEL_Y.store(y, Ordering::Release);
+    PANEL_WIDTH.store(width.clamp(1, 100_000), Ordering::Release);
+    PANEL_HEIGHT.store(height.clamp(1, 100_000), Ordering::Release);
+}
+
+fn get_panel_bounds() -> Option<(i32, i32, i32, i32)> {
+    let width = PANEL_WIDTH.load(Ordering::Acquire);
+    let height = PANEL_HEIGHT.load(Ordering::Acquire);
+    (width > 0 && height > 0).then(|| {
+        (
+            PANEL_X.load(Ordering::Acquire),
+            PANEL_Y.load(Ordering::Acquire),
+            width,
+            height,
+        )
+    })
+}
+
+fn next_monitor_generation() -> u64 {
+    MONITOR_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+fn is_monitor_generation_current(generation: u64) -> bool {
+    MONITOR_GENERATION.load(Ordering::Acquire) == generation
+}
+
 /// 检查坐标是否在热区内
 pub fn is_in_hotzone(
     mouse_x: i32,
@@ -106,34 +140,61 @@ pub fn is_in_panel_dynamic(
     primary_width: i32,
     primary_height: i32,
 ) -> bool {
-    let (stored_x, stored_width) = get_hotzone_pos();
-
-    // 面板区域参数 - 稍微扩大边界以提供更好的体验
-    let panel_height = 800; // 覆盖面板高度
-    let edge_margin = 30; // 边缘容错边距
-
-    let (panel_left, panel_right) = if stored_x >= 0 {
-        // 使用存储的位置，左右各留容错边距
-        (
-            stored_x - edge_margin,
-            stored_x + stored_width + edge_margin,
-        )
-    } else {
-        // 默认：屏幕右侧
-        let panel_width = 800;
-        (
-            primary_width - panel_width - edge_margin,
-            primary_width + edge_margin,
-        )
-    };
-
-    let panel_top = -10; // 顶部容错
-    let panel_bottom = (panel_top + panel_height).min(primary_height);
+    let edge_margin = 30;
+    let (panel_left, panel_top, panel_right, panel_bottom) =
+        if let Some((x, y, width, height)) = get_panel_bounds() {
+            (
+                x.saturating_sub(edge_margin),
+                y.saturating_sub(edge_margin),
+                x.saturating_add(width).saturating_add(edge_margin),
+                y.saturating_add(height).saturating_add(edge_margin),
+            )
+        } else {
+            let (stored_x, stored_width) = get_hotzone_pos();
+            let panel_width = if stored_x >= 0 { stored_width } else { 800 };
+            let panel_left = if stored_x >= 0 {
+                stored_x.saturating_sub(edge_margin)
+            } else {
+                primary_width
+                    .saturating_sub(panel_width)
+                    .saturating_sub(edge_margin)
+            };
+            (
+                panel_left,
+                -edge_margin,
+                panel_left
+                    .saturating_add(panel_width)
+                    .saturating_add(edge_margin.saturating_mul(2)),
+                primary_height.saturating_add(edge_margin),
+            )
+        };
 
     mouse_x >= panel_left
         && mouse_x <= panel_right
         && mouse_y >= panel_top
         && mouse_y <= panel_bottom
+}
+
+/// Invalidates the active monitor generation before exposing the stopped state.
+/// This prevents a rapid stop/start from reviving the previous sleeping thread.
+pub fn stop_hotzone_monitor() {
+    next_monitor_generation();
+    HOTZONE_RUNNING.store(false, Ordering::Release);
+}
+
+/// 检查热区监听是否运行中
+pub fn is_hotzone_running() -> bool {
+    HOTZONE_RUNNING.load(Ordering::Acquire)
+}
+
+/// 设置用户交互状态
+pub fn set_user_interacting(interacting: bool) {
+    USER_INTERACTING.store(interacting, Ordering::Release);
+}
+
+/// 检查用户是否正在交互
+pub fn is_user_interacting() -> bool {
+    USER_INTERACTING.load(Ordering::Acquire)
 }
 
 /// 获取屏幕尺寸（使用虚拟屏幕尺寸，支持多显示器）
@@ -184,26 +245,6 @@ pub fn get_mouse_position() -> (i32, i32) {
     (0, 0)
 }
 
-/// 停止全局热区监听
-pub fn stop_hotzone_monitor() {
-    HOTZONE_RUNNING.store(false, Ordering::SeqCst);
-}
-
-/// 检查热区监听是否运行中
-pub fn is_hotzone_running() -> bool {
-    HOTZONE_RUNNING.load(Ordering::SeqCst)
-}
-
-/// 设置用户交互状态
-pub fn set_user_interacting(interacting: bool) {
-    USER_INTERACTING.store(interacting, Ordering::SeqCst);
-}
-
-/// 检查用户是否正在交互
-pub fn is_user_interacting() -> bool {
-    USER_INTERACTING.load(Ordering::SeqCst)
-}
-
 /// 热区监听器状态
 pub struct HotZoneMonitor {
     config: HotZoneConfig,
@@ -228,6 +269,7 @@ impl HotZoneMonitor {
         }
 
         let config = self.config.clone();
+        let generation = next_monitor_generation();
 
         thread::spawn(move || {
             let mut in_hotzone_since: Option<Instant> = None;
@@ -238,7 +280,9 @@ impl HotZoneMonitor {
             // 获取主屏幕尺寸
             let (primary_width, primary_height) = get_primary_screen_size();
 
-            while HOTZONE_RUNNING.load(Ordering::SeqCst) {
+            while HOTZONE_RUNNING.load(Ordering::Acquire)
+                && is_monitor_generation_current(generation)
+            {
                 let (mouse_x, mouse_y) = get_mouse_position();
 
                 let in_hotzone = is_in_hotzone(mouse_x, mouse_y, primary_width, &config);
@@ -299,9 +343,29 @@ impl HotZoneMonitor {
             }
 
             // 线程结束时隐藏面板
-            if is_panel_visible {
+            if is_panel_visible && !HOTZONE_RUNNING.load(Ordering::Acquire) {
                 on_trigger(false);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_hit_testing_uses_the_real_window_rectangle_on_secondary_monitors() {
+        update_panel_bounds(-1500, 900, 600, 500);
+        assert!(is_in_panel_dynamic(-1200, 1200, 1920, 1080));
+        assert!(!is_in_panel_dynamic(100, 100, 1920, 1080));
+    }
+
+    #[test]
+    fn a_restarted_monitor_invalidates_the_previous_generation() {
+        let previous = next_monitor_generation();
+        let current = next_monitor_generation();
+        assert!(!is_monitor_generation_current(previous));
+        assert!(is_monitor_generation_current(current));
     }
 }

@@ -8,6 +8,12 @@ import {
     readDesktopSnapshot,
     writeDesktopSnapshot
 } from './snapshot.js';
+import {
+    collectApplicationCategoryGroups,
+    migrateFileCategory,
+    reconcileFileCategories,
+    resolveApplicationCategoryKey
+} from './categories.js';
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -184,17 +190,31 @@ function rebuildSearchIndex() {
 }
 
 function filesForCategory(categoryKey) {
+    const applications = state.files?.applications || [];
+    if (categoryKey === 'managed-apps') {
+        return applications.filter(file => file.app_manual);
+    }
     if (categoryKey.startsWith('custom_')) {
-        return state.searchIndex
+        const files = state.searchIndex
             .filter(entry => !entry.file.app_id && state.fileCategories[entry.file.path] === categoryKey)
             .map(entry => entry.file);
+        const categoryApps = applications.filter(file =>
+            resolveApplicationCategoryKey(file, state.customCategories) === categoryKey);
+        return [...files, ...categoryApps];
+    }
+    if (categoryKey.startsWith('app_category_')) {
+        return applications.filter(file =>
+            resolveApplicationCategoryKey(file, state.customCategories) === categoryKey);
     }
 
     const config = CATEGORIES[categoryKey];
     if (!config) return [];
     const files = state.files?.[config.key] || [];
-    if (categoryKey === 'recent') return files;
-    return files.filter(file => !state.fileCategories[file.path]);
+    const categoryApps = applications.filter(file =>
+        resolveApplicationCategoryKey(file, state.customCategories) === categoryKey);
+    if (categoryKey === 'recent') return [...files, ...categoryApps];
+    const uncategorizedFiles = files.filter(file => !state.fileCategories[file.path]);
+    return [...uncategorizedFiles, ...categoryApps];
 }
 
 function categoryFilesMarkup(categoryKey, files) {
@@ -247,6 +267,22 @@ function renderCategoryList() {
         `;
     }
 
+    for (const category of collectApplicationCategoryGroups(state.files.applications, state.customCategories)) {
+        const files = filesForCategory(category.key);
+        const isExpanded = state.expandedCategories.has(category.key);
+        html += `
+            <div class="category-item app-category ${isExpanded ? 'expanded' : ''}" data-category="${escapeAttribute(category.key)}" data-files-rendered="${isExpanded}">
+                <button class="category-header" type="button" data-category="${escapeAttribute(category.key)}" aria-expanded="${isExpanded}">
+                    <span class="category-icon"><i class="ri-apps-2-line"></i></span>
+                    <span class="category-name">${escapeHtml(category.name)}</span>
+                    <span class="category-count">${files.length}</span>
+                    <span class="category-arrow">▶</span>
+                </button>
+                <div class="category-files">${isExpanded ? categoryFilesMarkup(category.key, files) : ''}</div>
+            </div>
+        `;
+    }
+
     // 渲染默认分类
     for (const catKey of categoryOrder) {
         const catConfig = CATEGORIES[catKey];
@@ -293,11 +329,11 @@ function renderFileList(files) {
             ? '<span class="folder-drill">浏览 <i class="ri-arrow-right-s-line"></i></span>'
             : `<span class="file-size">${formatFileSize(file.size)}</span>`;
         return `
-        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
+        <button type="button" class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
             <span class="file-icon${isImgIcon ? ' file-icon-real' : ''}">${iconContent}</span>
             <span class="file-name">${escapeHtml(file.name)}</span>
             ${trailingContent}
-        </div>
+        </button>
     `}).join('');
 }
 
@@ -462,11 +498,11 @@ function renderSearchResults() {
     const query = state.searchQuery.replace(/^\/[a-z]\s*/i, ''); // 移除命令前缀
     
     elements.searchResultsList.innerHTML = state.searchResults.map(file => `
-        <div class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
+        <button type="button" class="file-item${file.is_folder ? ' file-item--folder' : ''}" data-path="${escapeAttribute(file.path)}" data-name="${escapeAttribute(file.name)}" data-is-folder="${file.is_folder ? 'true' : 'false'}"${file.app_id ? ` data-app-id="${escapeAttribute(file.app_id)}"` : ''}>
             <span class="file-icon">${getFileIcon(file)}</span>
             <span class="file-name">${highlightText(file.name, query)}</span>
             <span class="file-size">${file.is_folder ? '→' : formatFileSize(file.size)}</span>
-        </div>
+        </button>
     `).join('');
     queueMicrotask(() => hydrateVisibleAppIcons(elements.searchResultsList));
 }
@@ -613,6 +649,15 @@ async function loadDesktopFiles() {
         const scannedFiles = await scanPromise;
         const nextFingerprint = desktopSnapshotFingerprint(scannedFiles);
         state.files = scannedFiles;
+        const reconciledCategories = reconcileFileCategories(
+            state.fileCategories,
+            scannedFiles,
+            new Set(state.customCategories.map(category => category.key))
+        );
+        if (reconciledCategories !== state.fileCategories) {
+            state.fileCategories = reconciledCategories;
+            saveCustomCategories();
+        }
         rebuildSearchIndex();
         if (nextFingerprint !== previousFingerprint && !state.folderView.active) renderCategoryList();
         if (state.isSearching && state.searchQuery) searchFiles(state.searchQuery);
@@ -693,7 +738,12 @@ async function locateFile(path, appId = '') {
 
 async function renameFile(oldPath, newName) {
     try {
-        await invoke('desktop_rename_file', { oldPath, newName });
+        const newPath = await invoke('desktop_rename_file', { oldPath, newName });
+        const migratedCategories = migrateFileCategory(state.fileCategories, oldPath, newPath);
+        if (migratedCategories !== state.fileCategories) {
+            state.fileCategories = migratedCategories;
+            saveCustomCategories();
+        }
         await loadDesktopFiles();
         if (state.folderView.active) await refreshCurrentView();
     } catch (error) {
@@ -713,9 +763,34 @@ async function copyToClipboard(text) {
 // ============================================
 // 键盘快捷键
 // ============================================
+function visibleFileItems(currentItem) {
+    const root = currentItem.closest('#searchResultsList, .folder-browser__list, .category-files')
+        || (state.isSearching ? elements.searchResultsList : elements.categoryList);
+    return [...root.querySelectorAll('.file-item')]
+        .filter(item => item.getClientRects().length > 0);
+}
+
+function moveFileFocus(currentItem, key) {
+    const items = visibleFileItems(currentItem);
+    const currentIndex = items.indexOf(currentItem);
+    if (currentIndex < 0 || items.length === 0) return false;
+    const targetIndex = key === 'Home'
+        ? 0
+        : key === 'End'
+            ? items.length - 1
+            : Math.max(
+                0,
+                Math.min(items.length - 1, currentIndex + (key === 'ArrowDown' ? 1 : -1))
+            );
+    const target = items[targetIndex];
+    target.focus();
+    selectFileItem(target);
+    return true;
+}
+
 document.addEventListener('keydown', async (e) => {
     // 如果重命名对话框打开，不处理快捷键（除了在输入框内的处理）
-    if (elements.renameDialog.style.display !== 'none') {
+    if (getComputedStyle(elements.renameDialog).display !== 'none') {
         return;
     }
     
@@ -726,6 +801,12 @@ document.addEventListener('keydown', async (e) => {
             elements.searchInput.value = '';
             elements.searchInput.dispatchEvent(new Event('input'));
         }
+        return;
+    }
+
+    const focusedFile = e.target.closest?.('.file-item');
+    if (focusedFile && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        if (moveFileFocus(focusedFile, e.key)) e.preventDefault();
         return;
     }
     
@@ -831,6 +912,11 @@ elements.categoryList.addEventListener('click', (e) => {
     }
 });
 
+elements.categoryList.addEventListener('focusin', e => {
+    const fileItem = e.target.closest('.file-item');
+    if (fileItem) selectFileItem(fileItem);
+});
+
 // 分类展开/折叠
 elements.categoryList.addEventListener('click', (e) => {
     if (e.target.closest('[data-folder-back]')) {
@@ -896,6 +982,11 @@ elements.categoryList.addEventListener('dblclick', (e) => {
 });
 
 elements.searchResultsList?.addEventListener('click', (e) => {
+    const fileItem = e.target.closest('.file-item');
+    if (fileItem) selectFileItem(fileItem);
+});
+
+elements.searchResultsList?.addEventListener('focusin', e => {
     const fileItem = e.target.closest('.file-item');
     if (fileItem) selectFileItem(fileItem);
 });
@@ -1654,7 +1745,9 @@ async function saveUserPreferences() {
         try {
             await invoke('update_hotzone_position', { 
                 x: position.x, 
-                width: size.width 
+                y: position.y,
+                width: size.width,
+                height: size.height
             });
         } catch (e) {
             // 忽略，可能命令未注册
@@ -1795,6 +1888,12 @@ document.addEventListener('mouseup', async () => {
 async function init() {
     await loadUserPreferences();
     loadCustomCategories();
+    await window.__TAURI__.event?.listen('desktop-app-index-changed', async () => {
+        appIconCache.clear();
+        const pendingScan = scanPromise;
+        if (pendingScan) await pendingScan;
+        await loadDesktopFiles();
+    });
     hydrateCachedDesktopSnapshot();
     await loadDesktopFiles();
     
@@ -1804,7 +1903,9 @@ async function init() {
         const position = await appWindow.innerPosition();
         await invoke('update_hotzone_position', { 
             x: position.x, 
-            width: size.width 
+            y: position.y,
+            width: size.width,
+            height: size.height
         });
     } catch (e) {
         // 忽略错误

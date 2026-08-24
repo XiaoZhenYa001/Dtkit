@@ -154,6 +154,19 @@ test('tool shortcuts are mounted from tool metadata instead of a centralized too
     assert.match(settings, /target: \{ kind: 'palette' \}/);
 });
 
+test('system assistant scans on demand and keeps startup changes reversible', () => {
+    const frontend = read('src/tools/system-assistant/index.js');
+    const backend = read('src-tauri/src/infrastructure/system_assistant.rs');
+
+    assert.doesNotMatch(frontend, /setInterval\s*\(/);
+    assert.match(frontend, /scan_system_startup_items/);
+    assert.match(backend, /spawn_blocking/);
+    assert.match(backend, /startup-disabled\.json/);
+    assert.match(backend, /raw_bytes: Vec<u8>/);
+    assert.match(backend, /DISABLED_SUFFIX: &str = "\.dtkit-disabled"/);
+    assert.doesNotMatch(backend, /delete_subkey|Remove-Service|schtasks/);
+});
+
 test('whiteboard shortcut opens as an immersive quick canvas', () => {
     const quickHost = read('src-tauri/src/infrastructure/quick_host.rs');
     const quickScript = read('src/quick/main.js');

@@ -1,6 +1,6 @@
 [package]
 name = "DtKit"
-version = "0.2.6"
+version = "0.2.7"
 description = "A Tauri App"
 authors = ["XiaoZhen"]
 edition = "2021"
@@ -58,3 +58,4 @@ windows = { version = "0.58", features = [
 ] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+winreg = "0.55"

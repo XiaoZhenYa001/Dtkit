@@ -85,6 +85,17 @@ test('desktop fingerprint ignores scan order but detects metadata changes', () =
     assert.notEqual(desktopSnapshotFingerprint(first), desktopSnapshotFingerprint(changed));
 });
 
+test('desktop fingerprint detects visible name, extension and icon changes', () => {
+    const original = files([file('Tool.lnk', { icon: 'data:image/png;base64,first' })]);
+    const renamed = files([file('Tool.lnk', { name: 'Renamed Tool', icon: 'data:image/png;base64,first' })]);
+    const retyped = files([file('Tool.lnk', { extension: 'url', icon: 'data:image/png;base64,first' })]);
+    const reiconed = files([file('Tool.lnk', { icon: 'data:image/png;base64,second' })]);
+
+    assert.notEqual(desktopSnapshotFingerprint(original), desktopSnapshotFingerprint(renamed));
+    assert.notEqual(desktopSnapshotFingerprint(original), desktopSnapshotFingerprint(retyped));
+    assert.notEqual(desktopSnapshotFingerprint(original), desktopSnapshotFingerprint(reiconed));
+});
+
 test('application search entries survive snapshots without inflating desktop totals', () => {
     const indexedApp = file('Steam', {
         path: 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Steam\\Steam.lnk',

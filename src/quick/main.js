@@ -9,6 +9,7 @@ const TOOL_LABELS = Object.freeze({
     'crontab-explainer': 'Crontab 解释', 'unit-converter': '单位换算',
     'alarm-clock': '定时闹钟', 'file-batch': '文件批处理',
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
+    'system-assistant': '系统助手',
     'whiteboard': '白板', 'password-vault': '密码',
     'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注'
 });

@@ -13,7 +13,12 @@ export function getDesktopOrganizerSettings() {
     if (!savedSettings) return { ...DEFAULT_SETTINGS };
 
     try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) };
+        return {
+            ...DEFAULT_SETTINGS,
+            ...JSON.parse(savedSettings),
+            // Keep the dormant feature off until an analyzer and confirmation flow exist.
+            autoAnalyze: false
+        };
     } catch (error) {
         console.error('加载桌面整理设置失败:', error);
         return { ...DEFAULT_SETTINGS };
@@ -48,6 +53,13 @@ export async function startDesktopOrganizerMonitor() {
 }
 
 export async function stopDesktopOrganizerMonitor() {
+    if (monitorStartPromise) {
+        try {
+            await monitorStartPromise;
+        } catch {
+            // A failed start leaves nothing to stop.
+        }
+    }
     const invoke = getTauriInvoke();
     if (!invoke) {
         monitorStarted = false;
@@ -57,6 +69,23 @@ export async function stopDesktopOrganizerMonitor() {
     await invoke('stop_hotzone');
     monitorStarted = false;
     return true;
+}
+
+export async function setDesktopOrganizerEnabled(enabled) {
+    const nextEnabled = enabled === true;
+    const succeeded = nextEnabled
+        ? await startDesktopOrganizerMonitor()
+        : await stopDesktopOrganizerMonitor();
+    if (!succeeded) {
+        throw new Error('当前环境无法控制桌面整理热区');
+    }
+
+    const nextSettings = {
+        ...getDesktopOrganizerSettings(),
+        enabled: nextEnabled
+    };
+    saveDesktopOrganizerSettings(nextSettings);
+    return nextSettings;
 }
 
 export async function bootstrapDesktopOrganizer() {

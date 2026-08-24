@@ -2,7 +2,7 @@
 
 > 🔧 高效、易于扩展的桌面工具箱应用 | Tauri 2.0 + Vite | 模块化架构
 
-[![Version](https://img.shields.io/badge/version-0.2.6-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.2.7-blue.svg)]()
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -210,6 +210,6 @@ npm run csp:hash
 
 
 
-**最后更新**: 2026 年 7 月 13 日
+**最后更新**: 2026 年 8 月 24 日
 
-**当前版本**: 0.2.6
+**当前版本**: 0.2.7

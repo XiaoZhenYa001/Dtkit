@@ -10,6 +10,7 @@ pub(crate) mod screenshot;
 pub(crate) mod shortcuts;
 pub(crate) mod snippets;
 pub(crate) mod storage;
+pub(crate) mod system_assistant;
 pub(crate) mod tool_modules;
 pub(crate) mod transfer_station;
 pub(crate) mod whiteboard;

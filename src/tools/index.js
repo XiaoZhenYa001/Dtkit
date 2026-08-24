@@ -201,6 +201,16 @@ export const toolManifests = Object.freeze([
         loader: () => import('./resource-center/index.js')
     },
     {
+        id: 'system-assistant',
+        name: '系统助手',
+        icon: 'ri-windows-line',
+        colorClass: 'tool-card__icon--purple',
+        category: 'utility',
+        status: 'ready',
+        description: '按需检测并安全管理开机启动项，后续系统小功能统一在这里扩展。',
+        loader: () => import('./system-assistant/index.js')
+    },
+    {
         id: 'text-snippets',
         name: '文本片段库',
         icon: 'ri-file-copy-2-line',

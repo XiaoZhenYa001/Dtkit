@@ -1,8 +1,7 @@
 import {
     getDesktopOrganizerSettings,
-    saveDesktopOrganizerSettings,
-    startDesktopOrganizerMonitor,
-    stopDesktopOrganizerMonitor
+    setDesktopOrganizerEnabled,
+    startDesktopOrganizerMonitor
 } from '../../core/desktopOrganizer.js';
 import { showToast } from '../../core/utils.js';
 import { showConfirmDialog } from './modal.js';
@@ -26,7 +25,10 @@ export async function initDesktopOrganizerSettings() {
 
     const settings = getDesktopOrganizerSettings();
     mainToggle.checked = settings.enabled;
-    if (autoAnalyzeToggle) autoAnalyzeToggle.checked = settings.autoAnalyze;
+    if (autoAnalyzeToggle) {
+        autoAnalyzeToggle.checked = false;
+        autoAnalyzeToggle.disabled = true;
+    }
     setSubSettingsVisibility(subSettings, settings.enabled);
 
     appManagerButton?.addEventListener('click', () => {
@@ -54,15 +56,14 @@ export async function initDesktopOrganizerSettings() {
             return;
         }
 
-        settings.enabled = willEnable;
-        saveDesktopOrganizerSettings(settings);
-        setSubSettingsVisibility(subSettings, willEnable);
         mainToggle.disabled = true;
         try {
-            if (willEnable) await startDesktopOrganizerMonitor();
-            else await stopDesktopOrganizerMonitor();
+            await setDesktopOrganizerEnabled(willEnable);
+            setSubSettingsVisibility(subSettings, willEnable);
             showToast(willEnable ? '桌面整理已开启' : '桌面整理已关闭');
         } catch (error) {
+            mainToggle.checked = !willEnable;
+            setSubSettingsVisibility(subSettings, !willEnable);
             console.error('热区监听操作失败:', error);
             showToast(`操作失败：${error}`, 'error');
         } finally {
@@ -70,21 +71,4 @@ export async function initDesktopOrganizerSettings() {
         }
     });
 
-    autoAnalyzeToggle?.addEventListener('change', async () => {
-        const willEnable = autoAnalyzeToggle.checked;
-        const confirmed = await showConfirmDialog(
-            willEnable ? '开启自动分析' : '关闭自动分析',
-            willEnable
-                ? '开启后，应用将自动扫描桌面文件并提供整理建议。确定要开启吗？'
-                : '确定要关闭自动分析吗？'
-        );
-        if (!confirmed) {
-            autoAnalyzeToggle.checked = !willEnable;
-            return;
-        }
-
-        settings.autoAnalyze = willEnable;
-        saveDesktopOrganizerSettings(settings);
-        showToast(willEnable ? '自动分析已开启' : '自动分析已关闭');
-    });
 }

@@ -35,6 +35,9 @@ with sync_playwright() as playwright:
             cacheRetentionDays: 7,
             logRetentionDays: 7
         };
+        localStorage.setItem('desktop_organizer_custom_categories', JSON.stringify([
+            { key: 'custom_1', name: '工作', icon: '💼' }
+        ]));
         window.__TAURI__ = {
             core: {
                 invoke: async (command, args = {}) => {
@@ -168,6 +171,15 @@ with sync_playwright() as playwright:
     assert page.locator('#appManagerList .app-manager-row').count() == 2
     assert page.locator('#appManagerList').filter(has_text='Steam').is_visible()
     assert page.locator('.tab').filter(has_text='应用与图标管理').count() == 1
+    page.locator('#appManagerList .app-manager-row').first.click()
+    page.locator('#appManagerCategoryToggle').click()
+    category_options = page.locator('#appManagerCategoryOptions [role="option"]').evaluate_all(
+        "options => options.map(option => option.dataset.categoryValue)"
+    )
+    assert '工作' in category_options
+    assert '游戏' in category_options
+    page.locator('#appManagerCategory').fill('媒体')
+    assert page.locator('#appManagerCategory').input_value() == '媒体'
     app_layout = page.evaluate("""() => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,

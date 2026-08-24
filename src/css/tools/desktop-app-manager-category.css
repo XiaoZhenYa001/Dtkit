@@ -1,0 +1,90 @@
+.app-manager-category-field {
+    display: grid;
+    gap: 5px;
+}
+
+.app-manager-category-field > label {
+    color: #6d7787;
+    font-size: 9px;
+    font-weight: 750;
+}
+
+.app-manager-category-combobox {
+    position: relative;
+}
+
+.app-manager-category-combobox > input {
+    padding-right: 34px !important;
+}
+
+.app-manager-category-combobox > button {
+    position: absolute;
+    z-index: 2;
+    top: 1px;
+    right: 1px;
+    width: 32px;
+    height: calc(100% - 2px);
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 0 9px 9px 0;
+    background: transparent;
+    color: #778292;
+    cursor: pointer;
+}
+
+.app-manager-category-combobox > button:hover,
+.app-manager-category-combobox > button[aria-expanded="true"] {
+    color: #d96331;
+    background: #fff4ed;
+}
+
+.app-manager-category-options {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 5px);
+    right: 0;
+    left: 0;
+    max-height: 190px;
+    overflow: auto;
+    padding: 5px;
+    border: 1px solid rgba(112, 91, 74, 0.15);
+    border-radius: 11px;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(67, 49, 36, 0.16);
+}
+
+.app-manager-category-options[hidden] {
+    display: none;
+}
+
+.app-manager-category-options button {
+    width: 100%;
+    min-height: 32px;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #3e4858;
+    text-align: left;
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.app-manager-category-options button:hover,
+.app-manager-category-options button:focus-visible {
+    outline: 0;
+    color: #d45f2d;
+    background: #fff1e8;
+}
+
+.app-manager-category-options button[aria-selected="true"] {
+    color: #d45f2d;
+    font-weight: 800;
+}
+
+.app-manager-category-options button[aria-selected="true"]::after {
+    content: '✓';
+    float: right;
+}
