@@ -221,6 +221,26 @@ export const toolManifests = Object.freeze([
         loader: () => import('./text-snippets/index.js')
     },
     {
+        id: 'region-mirror',
+        name: '区域悬浮',
+        icon: 'ri-picture-in-picture-line',
+        colorClass: 'tool-card__icon--green',
+        category: 'utility',
+        status: 'ready',
+        description: '框选窗口中的视频或任意区域，实时置顶显示，支持拖动和等比缩放。',
+        loader: () => import('./region-mirror/index.js')
+    },
+    {
+        id: 'sticky-notes',
+        name: '便签',
+        icon: 'ri-sticky-note-line',
+        colorClass: 'tool-card__icon--yellow',
+        category: 'utility',
+        status: 'ready',
+        description: '随手记录灵感与待办，自动保存为可置顶的桌面便签。',
+        loader: () => import('./sticky-notes/index.js')
+    },
+    {
         id: 'screenshot-annotator',
         name: '截图与标注',
         icon: 'ri-screenshot-2-line',

@@ -52,6 +52,9 @@ use infrastructure::resources::{
     get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
     set_resource_policy, MinimizeMode, ResourceGovernor,
 };
+use infrastructure::region_mirror::{
+    control_region_mirror, list_region_mirrors, start_region_mirror, RegionMirrorManager,
+};
 use infrastructure::screen_color_picker::{
     finish_screen_color_pick, get_screen_color_pick_capture, start_screen_color_pick,
     ScreenColorPickerManager,
@@ -64,6 +67,10 @@ use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
 use infrastructure::snippets::{delete_snippet, save_snippet, search_snippets, SnippetManager};
+use infrastructure::sticky_notes::{
+    close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note, list_sticky_notes,
+    open_sticky_note, restore_sticky_note, save_sticky_note, trash_sticky_note, StickyNoteManager,
+};
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
 };
@@ -740,9 +747,11 @@ pub fn run() {
         .manage(QuickHostManager::default())
         .manage(ScreenColorPickerManager::default())
         .manage(ScreenRegionCaptureManager::default())
+        .manage(RegionMirrorManager::default())
         .manage(WhiteboardEditManager::default())
         .manage(PasswordVaultManager::default())
         .manage(SnippetManager::default())
+        .manage(StickyNoteManager::default())
         .manage(SystemAssistantManager::default())
         .manage(ToolModuleManager::default())
         .plugin(tauri_plugin_dialog::init())
@@ -905,6 +914,18 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            list_sticky_notes,
+            create_sticky_note,
+            get_sticky_note,
+            save_sticky_note,
+            open_sticky_note,
+            close_sticky_note,
+            trash_sticky_note,
+            restore_sticky_note,
+            delete_sticky_note,
+            start_region_mirror,
+            list_region_mirrors,
+            control_region_mirror,
             greet,
             write_qr_code,
             run_program,

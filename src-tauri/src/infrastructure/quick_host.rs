@@ -243,6 +243,8 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
             | "whiteboard"
             | "text-snippets"
             | "screenshot-annotator"
+            | "region-mirror"
+            | "sticky-notes"
     )
 }
 

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>便签 · DtKit</title>
+    <link rel="stylesheet" href="./sticky-note/style.css">
+</head>
+<body data-note-theme="yellow">
+    <main class="note-shell" aria-label="桌面便签">
+        <header class="note-header" id="noteDragHandle">
+            <span class="note-brand" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="M4 3.5h12v9l-4 4H4zM12 16.5v-4h4M7 7h6M7 10h4"/></svg>便签</span>
+            <span class="note-drag-hint" aria-hidden="true">拖动移动</span>
+            <div class="note-window-actions">
+                <button id="notePin" class="note-icon-button" type="button" aria-label="置顶便签" aria-pressed="false" title="置顶便签" disabled><svg viewBox="0 0 20 20" fill="none"><path d="m7 3 6 0-1 5 3 3v1H5v-1l3-3-1-5ZM10 12v5"/></svg></button>
+                <button id="noteClose" class="note-icon-button note-close" type="button" aria-label="收起便签" title="保存并收起便签"><svg viewBox="0 0 20 20" fill="none"><path d="m6 6 8 8M14 6l-8 8"/></svg></button>
+            </div>
+        </header>
+
+        <section id="noteLoadError" class="note-message note-load-error" role="alert" hidden>
+            <strong>暂时无法打开便签</strong>
+            <p id="noteLoadMessage"></p>
+            <button id="noteLoadRetry" type="button">重新加载</button>
+        </section>
+
+        <section id="noteRecovery" class="note-message note-recovery" aria-label="恢复未保存草稿" hidden>
+            <strong>发现未保存的草稿</strong>
+            <p id="recoveryMessage">先查看草稿，再决定是否恢复。</p>
+            <textarea id="recoveryPreview" readonly aria-label="未保存草稿预览" spellcheck="false"></textarea>
+            <div class="note-message-actions">
+                <button id="recoveryRestore" type="button">恢复草稿</button>
+                <button id="recoveryDiscard" type="button" class="note-subtle-button">保留已保存版本</button>
+            </div>
+        </section>
+
+        <section class="note-writing-area" aria-label="便签内容">
+            <input id="noteTitle" class="note-title" type="text" maxlength="80" placeholder="无标题便签" aria-label="便签标题" autocomplete="off" spellcheck="false" disabled>
+            <textarea id="noteContent" class="note-content" maxlength="20000" placeholder="记下此刻的想法…" aria-label="便签正文" spellcheck="false" disabled></textarea>
+        </section>
+
+        <section id="noteSaveError" class="note-message note-save-error" role="alert" hidden>
+            <p id="noteSaveMessage"></p>
+            <div class="note-message-actions">
+                <button id="noteRetry" type="button">重试保存</button>
+                <button id="noteReload" type="button" class="note-subtle-button">查看已保存版本</button>
+            </div>
+        </section>
+
+        <footer class="note-footer">
+            <div class="note-colors" role="group" aria-label="便签颜色">
+                <button type="button" data-note-color="yellow" aria-label="暖黄" aria-pressed="true" title="暖黄" disabled></button>
+                <button type="button" data-note-color="green" aria-label="浅绿" aria-pressed="false" title="浅绿" disabled></button>
+                <button type="button" data-note-color="blue" aria-label="雾蓝" aria-pressed="false" title="雾蓝" disabled></button>
+                <button type="button" data-note-color="pink" aria-label="樱粉" aria-pressed="false" title="樱粉" disabled></button>
+                <button type="button" data-note-color="purple" aria-label="浅紫" aria-pressed="false" title="浅紫" disabled></button>
+                <button type="button" data-note-color="gray" aria-label="暖灰" aria-pressed="false" title="暖灰" disabled></button>
+            </div>
+            <div class="note-status-row">
+                <span id="noteSaveStatus" class="note-save-status" data-state="loading" role="status" aria-live="polite">正在打开…</span>
+                <span id="noteCharCount" class="note-char-count" title="正文字符数 / 20000">0 字</span>
+            </div>
+        </footer>
+    </main>
+    <script type="module" src="./sticky-note/main.js"></script>
+</body>
+</html>

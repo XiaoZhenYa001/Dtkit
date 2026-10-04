@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sticky-note",
+  "description": "Only note lifecycle events and dragging; note data is scoped by the Rust commands to the current note.",
+  "windows": ["sticky-note-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging"
+  ]
+}

@@ -595,6 +595,9 @@ pub(crate) async fn migrate_storage_root(
     {
         return Err("请先关闭快捷工具窗口，再迁移文件目录".to_string());
     }
+    if app.state::<super::sticky_notes::StickyNoteManager>().has_open_notes() {
+        return Err("请先关闭便签小窗，确保内容保存后再迁移文件目录".to_string());
+    }
     let manager = app.state::<StorageManager>();
     let current = manager.layout()?;
     let bootstrap_file = manager.bootstrap_file()?;
@@ -613,6 +616,7 @@ pub(crate) async fn migrate_storage_root(
     app.state::<super::passwords::PasswordVaultManager>()
         .reset_for_storage_change();
     app.state::<super::snippets::SnippetManager>().invalidate();
+    app.state::<super::sticky_notes::StickyNoteManager>().invalidate();
     Ok(result)
 }
 

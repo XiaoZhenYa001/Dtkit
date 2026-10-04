@@ -1,0 +1,79 @@
+:root {
+    font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    color-scheme: light;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    --note-paper: #fff8d9;
+    --note-header: #f9edba;
+    --note-ink: #453f2e;
+    --note-muted: #807656;
+    --note-line: #dfd2a280;
+}
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: var(--note-paper); color: var(--note-ink); }
+body[data-note-theme="green"] { --note-paper: #eef7e9; --note-header: #dcebd3; --note-ink: #354631; --note-muted: #6a7d64; --note-line: #b5cba480; }
+body[data-note-theme="blue"] { --note-paper: #edf5fc; --note-header: #dbe9f6; --note-ink: #33475a; --note-muted: #657e96; --note-line: #b0c8dd80; }
+body[data-note-theme="pink"] { --note-paper: #fff0f0; --note-header: #f8dddd; --note-ink: #594044; --note-muted: #976e75; --note-line: #d8aeb580; }
+body[data-note-theme="purple"] { --note-paper: #f4effb; --note-header: #e7ddf4; --note-ink: #493c5b; --note-muted: #817096; --note-line: #c6b3dc80; }
+body[data-note-theme="gray"] { --note-paper: #f6f5f1; --note-header: #e8e7e1; --note-ink: #41413e; --note-muted: #77776f; --note-line: #c6c5bc80; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--note-muted); outline-offset: -2px; }
+button svg { width: 19px; height: 19px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+[hidden] { display: none !important; }
+.note-shell { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--note-line); }
+.note-header { flex: 0 0 40px; display: flex; align-items: center; gap: 12px; padding: 0 5px 0 14px; background: var(--note-header); user-select: none; cursor: grab; }
+.note-header:active { cursor: grabbing; }
+.note-brand { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 1px; opacity: .8; pointer-events: none; }
+.note-brand svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.note-drag-hint { font-size: 10px; color: var(--note-muted); opacity: 0; transition: opacity 120ms; pointer-events: none; }
+.note-header:hover .note-drag-hint { opacity: .7; }
+.note-window-actions { display: flex; gap: 2px; margin-left: auto; }
+.note-icon-button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--note-muted); }
+.note-icon-button:hover { background: #00000009; color: var(--note-ink); }
+.note-icon-button[aria-pressed="true"] { background: #0000000c; color: var(--note-ink); }
+.note-icon-button[aria-pressed="true"] svg { fill: var(--note-muted); }
+.note-close:hover { color: #ab4439; background: #b9443312; }
+.note-writing-area { display: flex; flex-direction: column; flex: 1; min-height: 72px; padding: 16px 18px 8px; gap: 10px; }
+.note-title { flex: 0 0 29px; padding: 0; border: 0; background: transparent; font-size: 19px; line-height: 1.5; font-weight: 650; min-width: 0; width: 100%; }
+.note-content { flex: 1; min-height: 40px; border: 0; padding: 0 4px 0 0; background: transparent; font-size: 14px; line-height: 1.85; resize: none; scrollbar-width: thin; scrollbar-color: var(--note-line) transparent; tab-size: 4; }
+.note-title::placeholder, .note-content::placeholder { color: var(--note-muted); opacity: .65; }
+.note-title:focus-visible, .note-content:focus-visible { outline: 0; }
+.note-title:disabled, .note-content:disabled { opacity: .6; }
+.note-footer { flex: 0 0 auto; padding: 10px 17px 11px; border-top: 1px solid var(--note-line); }
+.note-colors { display: flex; align-items: center; gap: 8px; margin: 0 0 9px; }
+.note-colors button { width: 18px; height: 18px; border: 1px solid #00000013; border-radius: 50%; padding: 0; position: relative; }
+.note-colors button[aria-pressed="true"]::after { content: ""; position: absolute; inset: -4px; border: 1px solid var(--note-muted); border-radius: 50%; }
+.note-colors button:hover { border-color: var(--note-muted); }
+[data-note-color="yellow"] { background: #f4d976; }
+[data-note-color="green"] { background: #b8d6a8; }
+[data-note-color="blue"] { background: #a9cceb; }
+[data-note-color="pink"] { background: #edb2bc; }
+[data-note-color="purple"] { background: #cab3e4; }
+[data-note-color="gray"] { background: #c6c7c0; }
+.note-status-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--note-muted); font-size: 10px; line-height: 1.4; }
+.note-save-status { display: inline-flex; align-items: center; gap: 5px; }
+.note-save-status::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .6; }
+.note-save-status[data-state="error"] { color: #a23d34; }
+.note-char-count { white-space: nowrap; opacity: .8; }
+.note-message { flex: 0 0 auto; padding: 10px 14px; font-size: 11px; line-height: 1.55; border-bottom: 1px solid var(--note-line); background: #ffffff60; }
+.note-message strong { font-size: 12px; }
+.note-message p { margin: 3px 0 7px; overflow-wrap: anywhere; }
+.note-message button { border: 1px solid var(--note-line); border-radius: 5px; padding: 4px 9px; font-size: 11px; background: #ffffff80; }
+.note-message button:hover { background: #ffffffd0; }
+.note-message-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.note-message button.note-subtle-button { background: transparent; }
+.note-recovery { max-height: 49%; overflow: auto; }
+.note-recovery textarea { display: block; resize: vertical; width: 100%; height: 72px; min-height: 36px; max-height: 120px; padding: 5px 7px; margin: 0 0 8px; background: #ffffff60; border: 1px solid var(--note-line); border-radius: 4px; font-size: 12px; line-height: 1.5; }
+.note-save-error { border-top: 1px solid #bb544733; border-bottom: 0; background: #fff4ee; color: #8f4137; max-height: 38%; overflow: auto; }
+.note-load-error { color: #8f4137; }
+@media (max-width: 300px) {
+    .note-drag-hint { display: none; }
+    .note-writing-area { padding-left: 13px; padding-right: 13px; }
+    .note-footer { padding-left: 13px; padding-right: 13px; }
+    .note-title { font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

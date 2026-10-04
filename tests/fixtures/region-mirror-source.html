@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>DtKit 悬浮画面测试源</title>
+<style>
+body { margin: 0; background: #e9edf2; font: 18px system-ui; color: #16283e; padding: 36px; }
+h1 { font-size: 24px; } p { font-size: 16px; }
+#source { position: relative; width: 640px; height: 360px; background: #17243b; overflow: hidden; color: white; }
+.quadrant { position: absolute; width: 50%; height: 50%; display: grid; place-items: center; font-size: 26px; }
+.one { left: 0; top: 0; background: #245a73; }.two { right: 0; top: 0; background: #9b6040; }
+.three { left: 0; bottom: 0; background: #587b49; }.four { right: 0; bottom: 0; background: #69527c; }
+#clock { position: absolute; left: 220px; top: 145px; background: #152139; border: 2px solid white; padding: 12px; font: 24px monospace; }
+#ball { position: absolute; top: 70px; left: 10px; width: 35px; height: 35px; background: white; border-radius: 50%; animation: move 2s linear infinite alternate; }
+@keyframes move { to { transform: translateX(580px); } }
+</style></head><body><h1>区域悬浮 · 实时画面测试</h1><p>框选下方彩色区域。小窗内应保持四角完整，时钟持续变化，白球往返移动。</p>
+<div id="source"><div class="quadrant one">左上 TL</div><div class="quadrant two">右上 TR</div><div class="quadrant three">左下 BL</div><div class="quadrant four">右下 BR</div><div id="ball"></div><div id="clock"></div></div>
+<script>setInterval(() => document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB'), 100);</script>
+</body></html>

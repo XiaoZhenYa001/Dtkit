@@ -83,7 +83,12 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     const scanner = read('src-tauri/src/desktop/scanner.rs');
     const hotzone = read('src-tauri/src/desktop/hotzone.rs');
     const nativeWindow = read('src-tauri/src/lib.rs');
-    const organizerUi = read('src/desktop-organizer/main.js');
+    const organizerUi = [
+        read('src/desktop-organizer/main.js'),
+        read('src/desktop-organizer/search.js'),
+        read('src/desktop-organizer/views/category-view.js'),
+        read('src/desktop-organizer/window-controller.js')
+    ].join('\n');
     const apps = read('src-tauri/src/desktop/apps.rs');
 
     assert.match(commands, /validated_desktop_entry/);
@@ -123,14 +128,18 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
 test('desktop folders are scanned on demand instead of during the top-level scan', () => {
     const commands = read('src-tauri/src/desktop/commands.rs');
     const scanner = read('src-tauri/src/desktop/scanner.rs');
-    const organizerUi = read('src/desktop-organizer/main.js');
+    const organizerUi = [
+        read('src/desktop-organizer/main.js'),
+        read('src/desktop-organizer/folder-controller.js'),
+        read('src/desktop-organizer/views/folder-view.js')
+    ].join('\n');
 
     assert.match(scanner, /FOLDER_BROWSE_LIMIT: usize = 200/);
     assert.doesNotMatch(scanner, /scan_file_info\(&path, true\)/);
     assert.doesNotMatch(scanner, /scan_folder_children/);
     assert.match(commands, /desktop_list_folder/);
     assert.match(organizerUi, /invoke\('desktop_list_folder'/);
-    assert.match(organizerUi, /FOLDER_CACHE_LIMIT = 8/);
+    assert.match(organizerUi, /DEFAULT_CACHE_LIMIT = 8/);
     assert.match(organizerUi, /folder-browser/);
     assert.doesNotMatch(organizerUi, /renderFolderChildren/);
 });

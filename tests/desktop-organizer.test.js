@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { buildSearchIndex, querySearchIndex } from '../src/desktop-organizer/search.js';
+import { createDesktopOrganizerState } from '../src/desktop-organizer/store.js';
+import { filesForCategory, renderCategoryListMarkup } from '../src/desktop-organizer/views/category-view.js';
 
 function createLocalStorage(initial = {}) {
     const values = new Map(Object.entries(initial));
@@ -126,4 +129,36 @@ test('desktop organizer UI smoke is part of the standard npm test command', asyn
 
     assert.match(manifest.scripts['test:ui'] || '', /desktop-organizer-refactor-ui-smoke\.py/);
     assert.match(manifest.scripts.test, /test:ui/);
+});
+
+test('desktop organizer state instances do not share mutable collections', () => {
+    const first = createDesktopOrganizerState();
+    const second = createDesktopOrganizerState();
+
+    first.expandedCategories.add('program');
+    first.folderView.stack.push({ path: 'C:\\One', name: 'One' });
+
+    assert.deepEqual([...second.expandedCategories], ['recent']);
+    assert.deepEqual(second.folderView.stack, []);
+});
+
+test('desktop search keeps the preferred app entry and supports command filters', () => {
+    const manualSteam = { name: 'Steam', path: 'C:\\Steam.lnk', category: 'program', app_id: 'steam', app_manual: true };
+    const duplicateSteam = { name: 'Steam.exe', path: 'C:\\Steam.exe', category: 'program' };
+    const image = { name: 'Steam Logo.png', path: 'C:\\Steam Logo.png', category: 'image' };
+    const index = buildSearchIndex({ applications: [manualSteam], programs: [duplicateSteam], images: [image] });
+
+    assert.deepEqual(querySearchIndex(index, 'steam').map(file => file.path), [manualSteam.path, image.path]);
+    assert.deepEqual(querySearchIndex(index, '/a steam').map(file => file.path), [manualSteam.path]);
+});
+
+test('category view routes applications into every visible custom category', () => {
+    const state = createDesktopOrganizerState();
+    const steam = { name: 'Steam', path: 'C:\\Steam.lnk', category: 'program', app_id: 'steam', app_category: '游戏' };
+    state.files = { applications: [steam], recent: [], documents: [], images: [], videos: [], audios: [], archives: [], programs: [], folders: [], others: [], total_count: 1 };
+    state.customCategories = [{ key: 'custom_1', name: '游戏', icon: '🎮' }];
+    state.searchIndex = buildSearchIndex(state.files);
+
+    assert.deepEqual(filesForCategory(state, 'custom_1'), [steam]);
+    assert.match(renderCategoryListMarkup(state), /<span class="category-name">游戏<\/span><span class="category-count">1<\/span>/);
 });

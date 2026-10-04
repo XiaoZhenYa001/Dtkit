@@ -11,7 +11,7 @@ const TOOL_LABELS = Object.freeze({
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
     'system-assistant': '系统助手',
     'whiteboard': '白板', 'password-vault': '密码',
-    'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注'
+    'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注', 'region-mirror': '区域悬浮', 'sticky-notes': '便签'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
 const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
