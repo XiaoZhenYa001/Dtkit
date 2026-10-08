@@ -46,7 +46,26 @@ def active_frame(page):
     return frame
 
 def click(frame, action):
-    frame.locator(f'[data-tt-action="{action}"]').first.click()
+    button = frame.locator(f'[data-tt-action="{action}"]').first
+    if button.is_visible():
+        button.click()
+    elif frame.locator('.tt-shell').get_attribute('data-embedded') == 'true':
+        page = frame.page
+        page.locator('[data-tool-page-toggle]').click()
+        page.locator(f'[data-tool-action="{action}"]').click()
+    else:
+        frame.locator('#ttToolsToggle').click()
+        button.click()
+
+def expect_empty(frame, empty):
+    page = frame.page
+    page.locator('[data-tool-page-toggle]').click()
+    hint = page.locator('.tool-page-section__hint')
+    if empty:
+        expect(hint).to_contain_text('第一门课')
+    else:
+        expect(hint).to_have_count(0)
+    page.locator('[data-tool-page-toggle]').click()
 
 def settings_tab(frame, tab):
     click(frame, 'settings')
@@ -79,7 +98,7 @@ def run(browser, base):
     frame = active_frame(page)
     expect(frame.locator('.tt-day-head')).to_have_count(7)
     expect(frame.locator('.tt-period')).to_have_count(12)
-    expect(frame.locator('#ttEmpty')).to_be_visible()
+    expect_empty(frame, True)
     click(frame, 'add')
     frame.locator('#ttCourseName').fill('高等数学')
     frame.locator('#ttCourseRoom').fill('A-302')
@@ -89,7 +108,7 @@ def run(browser, base):
     save(frame, '保存课程')
     expect(frame.locator('#ttDialog')).not_to_be_visible()
     expect(frame.locator('.tt-course')).to_have_count(1)
-    expect(frame.locator('#ttEmpty')).not_to_be_visible()
+    expect_empty(frame, False)
     click(frame, 'add')
     frame.locator('#ttCourseName').fill('大学英语')
     frame.locator('#ttCourseParity').select_option('even')
@@ -220,7 +239,7 @@ def run(browser, base):
     click(frame, 'new-semester')
     frame.locator('#ttNewSemesterName').fill('春季学期')
     save(frame, '归档并开始新学期')
-    expect(frame.locator('#ttEmpty')).to_be_visible()
+    expect_empty(frame, True)
     assert len(stored(page)['archives']) == 1
     assert len(stored(page)['archives'][0]['courses']) == 7
     settings_tab(frame, 'other')
@@ -254,7 +273,7 @@ def run(browser, base):
     expect(quick.locator('.tt-shell')).to_be_visible()
     expect(quick.locator('#quickTitle')).to_contain_text('课表')
     quick.set_viewport_size({'width': 560, 'height': 700})
-    quick.locator('[data-tt-action="settings"]').click()
+    click(quick, 'settings')
     expect(quick.locator('#ttDialog')).to_be_visible()
     quick.set_viewport_size({'width': 420, 'height': 760})
     expect(quick.get_by_role('button', name='保存设置', exact=True)).to_be_visible()

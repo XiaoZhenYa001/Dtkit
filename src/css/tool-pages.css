@@ -1,14 +1,34 @@
-.content-area--tool-page { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.content-area--tool-page > .navbar { flex-shrink: 0; }
-#dynamicToolContainer.tool-page-host { flex: 1; min-height: 0; padding: 0; }
-#dynamicToolContainer.tool-page-host.view--active { display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.tool-page-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: .5rem 1rem; }
-.tool-page-shortcut { min-width: 0; }
-.tool-page-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
-.tool-page-actions button { display: inline-flex; align-items: center; gap: .3rem; min-height: 2rem; padding: .35rem .55rem; border: 1px solid var(--color-border); border-radius: .5rem; color: var(--color-text-secondary); background: var(--color-surface); font-family: inherit; font-size: .72rem; font-weight: 600; line-height: 1.3; cursor: pointer; }
-.tool-page-actions button:hover:not(:disabled) { color: var(--color-primary); background: var(--color-bg-secondary); }
+.content-area--tool-page { display: flex; flex-direction: column; overflow: hidden; }
+#dynamicToolContainer.tool-page-host { position: relative; flex: 1; min-height: 0; padding: 0; }
+#dynamicToolContainer.tool-page-host.view--active { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.tool-page-frame { grid-area: 1 / 1; width: 100%; height: 100%; min-width: 0; min-height: 0; border: 0; background: transparent; }
+.tool-page-frame[hidden], .tool-page-toolbar[hidden], .tool-page-toolbar__toggle[hidden], .tool-page-section[hidden], .tool-page-shortcut[hidden] { display: none !important; }
+
+.tool-page-toolbar__toggle { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; flex: 0 0 auto; height: 2.2rem; margin-left: auto; padding: 0 .7rem; border: 1px solid var(--color-border); border-radius: .7rem; color: var(--color-text-secondary); background: rgba(255, 255, 255, .6); font: 600 .75rem var(--font-family); cursor: pointer; }
+.tool-page-toolbar__toggle > i { font-size: 1.05rem; }
+.tool-page-toolbar__toggle[aria-expanded="true"] { border-color: var(--color-primary-soft); color: var(--color-primary); background: var(--color-primary-soft); }
+
+.tool-page-toolbar { position: absolute; top: .65rem; right: .65rem; z-index: 10; display: flex; flex-direction: column; width: min(18rem, calc(100% - 1.3rem)); max-height: calc(100% - 1.3rem); padding: .9rem; border: 1px solid var(--color-border); border-radius: 1rem; background: #fffcf8; box-shadow: 0 12px 40px rgba(62, 44, 25, .16); }
+.tool-page-toolbar__header { display: flex; align-items: center; justify-content: space-between; gap: .65rem; flex: 0 0 auto; margin-bottom: .7rem; }
+.tool-page-toolbar__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); font-size: .85rem; font-weight: 650; }
+.tool-page-toolbar__close { display: grid; place-items: center; flex: 0 0 auto; width: 1.85rem; height: 1.85rem; border: 0; border-radius: .5rem; color: var(--color-text-secondary); background: transparent; font-size: 1rem; cursor: pointer; }
+.tool-page-controls { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .8rem; padding: .15rem; }
+.tool-page-section + .tool-page-section, .tool-page-shortcut + .tool-page-section { padding-top: .75rem; border-top: 1px solid var(--color-border); }
+.tool-page-section h3 { margin: 0 0 .4rem .55rem; color: var(--color-text-tertiary); font-size: .67rem; font-weight: 600; }
+.tool-page-section__summary { font-size: .7rem; color: var(--color-text-secondary); margin-bottom: .4rem; }
+.tool-page-section__status { padding: .6rem .7rem; border-radius: .6rem; font-size: .72rem; color: var(--color-accent); background: var(--color-accent-soft); line-height: 1.6; }
+.tool-page-section__hint { margin: .55rem 0; font-size: .7rem; color: var(--color-text-tertiary); line-height: 1.6; }
+.tool-page-actions { display: grid; gap: .15rem; }
+.tool-page-actions button { display: flex; align-items: center; gap: .65rem; min-height: 2.25rem; padding: .5rem .6rem; border: 1px solid transparent; border-radius: .6rem; color: var(--color-text-secondary); background: transparent; font: 600 .75rem/1.4 var(--font-family); text-align: left; cursor: pointer; }
+.tool-page-actions button > i { flex-shrink: 0; font-size: 1rem; color: var(--color-text-tertiary); }
+.tool-page-actions button:hover:not(:disabled), .tool-page-toolbar__close:hover, .tool-page-toolbar__toggle:hover { color: var(--color-primary); background: var(--color-primary-soft); }
 .tool-page-actions button:disabled { opacity: .45; cursor: not-allowed; }
-.tool-page-actions button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-.tool-page-frame { width: 100%; height: 100%; min-height: 0; border: 0; background: transparent; }
-.tool-page-frame[hidden] { display: none !important; }
-@media (max-width: 760px) { .tool-page-toolbar { margin-inline: .5rem; } .tool-page-actions button { font-size: .65rem; } }
+.tool-page-actions button:focus-visible, .tool-page-toolbar__close:focus-visible, .tool-page-toolbar__toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.tool-page-shortcut { min-width: 0; }
+.tool-page-shortcut .shortcut-binding { width: 100%; flex-direction: column; align-items: stretch; gap: .65rem; padding: .7rem; box-shadow: none; }
+.tool-page-shortcut .shortcut-binding__identity span { white-space: normal; overflow-wrap: anywhere; font-size: .65rem; }
+.tool-page-shortcut .shortcut-binding__identity strong { font-size: .75rem; }
+.tool-page-shortcut .shortcut-binding__controls { flex-wrap: wrap; gap: .35rem; }
+.tool-page-shortcut .shortcut-binding__record { min-width: 0; flex: 1; flex-wrap: wrap; min-height: 2rem; font-size: .7rem; }
+.tool-page-shortcut .shortcut-binding__record kbd { min-width: 0; padding-inline: .2rem; }
+@media (max-width: 560px) { .tool-page-toolbar__toggle { width: 2.2rem; padding: 0; }.tool-page-toolbar__toggle > span { display: none; }.tool-page-toolbar { top: .4rem; right: .4rem; width: min(18rem, calc(100% - .8rem)); max-height: calc(100% - .8rem); padding: .75rem; } }

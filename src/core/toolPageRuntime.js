@@ -144,6 +144,12 @@ export function installToolPageRuntime({ instanceId, toolId = null, embedded = f
             await Promise.allSettled([...invocations]);
         },
         setSuspended,
+        getPagePanel() {
+            return disposed ? null : activeTool?.getPagePanel?.() ?? null;
+        },
+        runPageAction(actionId) {
+            if (!disposed && !suspended) return activeTool?.runPageAction?.(actionId);
+        },
         snapshot() {
             return { schema: 1, toolId: activeTool?.id || toolId, instanceId,
                 state: activeTool?.serialize?.() ?? null,
@@ -186,7 +192,8 @@ export function installToolPageRuntime({ instanceId, toolId = null, embedded = f
         },
         get suspended() { return suspended; },
         get disposed() { return disposed; },
-        get ready() { return Boolean(activeTool); }
+        get ready() { return Boolean(activeTool); },
+        get embedded() { return embedded; }
     };
     window.__DTKIT_TOOL_PAGE__ = runtime;
     scheduler.setSuspended(suspended);

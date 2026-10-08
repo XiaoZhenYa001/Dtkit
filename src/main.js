@@ -124,8 +124,8 @@ function updateContentView() {
     DOM.favoritesView?.classList.remove('view--active');
     DOM.settingsView?.classList.remove('view--active');
     
-    // 默认隐藏导航栏
-    if (DOM.navbar) DOM.navbar.style.display = 'none';
+    // 历史导航始终位于顶部，工具筛选仅在工具库中显示。
+    if (DOM.searchContainer) DOM.searchContainer.hidden = true;
     
     // 判断显示哪个视图
     if (activeTab.toolId === 'settings') {
@@ -136,14 +136,11 @@ function updateContentView() {
     else if (activeTab.toolId) {
         const tool = getTool(activeTab.toolId);
         if (tool && tool.enabled !== false && tool.status !== 'planned') {
-            // 工具页面也显示导航栏（后退/前进按钮）
-            if (DOM.navbar) DOM.navbar.style.display = 'flex';
-            
             toolPageHost?.show(activeTab);
             appState.currentToolId = activeTab.toolId;
         } else {
             DOM.toolLibraryView?.classList.add('view--active');
-            if (DOM.navbar) DOM.navbar.style.display = 'flex';
+            if (DOM.searchContainer) DOM.searchContainer.hidden = false;
             appState.currentToolId = null;
         }
     }
@@ -153,13 +150,12 @@ function updateContentView() {
     }
     else if (appState.currentView === 'favorites') {
         DOM.favoritesView?.classList.add('view--active');
-        if (DOM.navbar) DOM.navbar.style.display = 'flex';
         renderFavoritesPage();
         appState.currentToolId = null;
         updateClearFavoritesButton();
     } else {
         DOM.toolLibraryView?.classList.add('view--active');
-        if (DOM.navbar) DOM.navbar.style.display = 'flex';
+        if (DOM.searchContainer) DOM.searchContainer.hidden = false;
         appState.currentToolId = null;
     }
 

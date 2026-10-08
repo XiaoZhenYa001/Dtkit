@@ -116,6 +116,13 @@ def active_instance_id(page):
     return page.locator("iframe.tool-page-frame:not([hidden])").get_attribute("data-instance-id")
 
 
+def click_page_action(page, action):
+    toggle = page.locator('[data-tool-page-toggle]')
+    if toggle.get_attribute('aria-expanded') == 'false':
+        toggle.click()
+    page.locator(f'[data-tool-page-{action}]').click()
+
+
 def switch_tab(page, tab_id):
     page.locator(f'.tab[data-tab-id="{tab_id}"] .tab__label').click()
     expect(page.locator(f'.tab[data-tab-id="{tab_id}"]')).to_have_attribute("aria-selected", "true")
@@ -170,10 +177,10 @@ def test_multi_page(context, base_url, errors, console_messages):
     instance_a = active_instance_id(page)
     assert instance_a, "Each tool page needs an instance identity"
     script_a = write_code(first, "A", "rgb(12, 34, 56)", timer=True)
-    page.locator("[data-tool-page-window]").click()
+    click_page_action(page, 'window')
     page.wait_for_function("() => window.__multiCalls.some(call => call.command === 'open_quick_host')")
     assert page.evaluate("window.__multiCalls.find(call => call.command === 'open_quick_host').args.target") == {'kind':'tool','toolId':'html-preview'}
-    page.locator("[data-tool-page-launcher]").click()
+    click_page_action(page, 'launcher')
     page.wait_for_function("() => window.__multiCalls.some(call => call.command === 'create_tool_launcher')")
     assert page.evaluate("window.__multiCalls.find(call => call.command === 'create_tool_launcher').args.toolId") == 'html-preview'
     assert active_instance_id(page) == instance_a
@@ -182,7 +189,7 @@ def test_multi_page(context, base_url, errors, console_messages):
     wait_for_ticks(page, "A", 2)
 
     # A toolbar action must create another instance of the same tool directly.
-    page.locator("[data-tool-page-new]").click()
+    click_page_action(page, 'new')
     second = active_tool_frame(page)
     tab_b = active_tab_id(page)
     instance_b = active_instance_id(page)
@@ -362,7 +369,7 @@ def test_sleep_reload_restore(context, base_url, errors):
     # Auto refresh is off, so the saved preview must differ from its editor draft.
     expect(first.frame_locator("#previewFrame").locator("#result")).to_have_text("rendered saved A")
 
-    page.locator("[data-tool-page-new]").click()
+    click_page_action(page, 'new')
     second = active_tool_frame(page)
     tab_b = active_tab_id(page)
     instance_b = active_instance_id(page)
@@ -411,7 +418,7 @@ def test_alarm_shared_data_with_independent_drafts(context, base_url, errors):
     first.locator("#countdownMinutes").fill("2")
     first.locator("#countdownSeconds").fill("0")
 
-    page.locator("[data-tool-page-new]").click()
+    click_page_action(page, 'new')
     second = active_tool_frame(page, "#alarmTaskName")
     tab_b = active_tab_id(page)
     expect(second.locator("#alarmTaskName")).to_have_value("")

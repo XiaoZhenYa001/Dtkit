@@ -1,6 +1,7 @@
 import '../../css/tools/timetable.css';
 import { registerTool } from '../toolRegistry.js';
 import { escapeHtml as e } from '../../core/html.js';
+import { showToast } from '../../core/utils.js';
 import { dateKey, newId, currentWeek, weekStart, addDays, weekDays, generatePeriods, parseWeeks, validateCourse, validateState, startSemester, nextBoundary } from './model.js';
 import { STORAGE_KEY, CHANGED_EVENT, readState, updateState } from './store.js';
 import { summary, renderGrid, applyBackground } from './view.js';
@@ -12,14 +13,15 @@ const invoke = (command, args = {}) => window.__TAURI__.core.invoke(command, arg
 let state, controller, timer, suspended = false, selectedWeek = 1, followCurrent = true, panelRevision, editId, draftImage = '', imported, busy = false, generation = 0, importRequest = 0, imageRequest = 0;
 
 function template() {
-    return `<div class="tt-shell"><header class="tt-header"><div class="tt-heading"><span class="tt-emblem"><i class="ri-calendar-line"></i></span><div><h2>我的课表</h2><p id="ttSemesterLabel">这一周，从容安排。</p></div></div><div class="tt-actions"><button class="tt-button" type="button" data-tt-action="manage">管理课程</button><button class="tt-button" type="button" data-tt-action="settings"><i class="ri-settings-3-line"></i> 设置</button><button class="tt-button tt-button--primary" type="button" data-tt-action="add"><i class="ri-add-line"></i> 添加课程</button></div></header>
-        <p id="ttNotice" class="tt-notice" role="status" aria-live="polite"></p><div class="tt-toolbar"><div class="tt-week-control"><button id="ttPrevious" class="tt-button" type="button" data-tt-action="previous" aria-label="上一周"><i class="ri-arrow-left-s-line"></i></button><select id="ttWeek" aria-label="查看周次"></select><button id="ttNext" class="tt-button" type="button" data-tt-action="next" aria-label="下一周"><i class="ri-arrow-right-s-line"></i></button><button class="tt-button" type="button" data-tt-action="today">回到本周</button></div><span id="ttDateRange" class="tt-range"></span></div>
-        <div class="tt-today"><span>今天</span><p id="ttTodaySummary"></p></div><div id="ttEmpty" class="tt-empty" hidden></div><section id="ttBoard" class="tt-board" aria-label="每周课表"><div class="tt-board-scroll"><div id="ttGrid" class="tt-grid"></div></div></section><footer class="tt-footer"><span>点击课程查看与编辑 · 点击空白格添加</span><span id="ttWeekCount"></span><span>保存在本机</span></footer>
+    return `<div class="tt-shell"><header class="tt-header tt-header--compact"><div class="tt-week-control"><button id="ttPrevious" class="tt-button" type="button" data-tt-action="previous" aria-label="上一周"><i class="ri-arrow-left-s-line"></i></button><select id="ttWeek" aria-label="查看周次"></select><button id="ttNext" class="tt-button" type="button" data-tt-action="next" aria-label="下一周"><i class="ri-arrow-right-s-line"></i></button><button class="tt-button tt-current-week" type="button" data-tt-action="today">本周</button></div><span id="ttDateRange" class="tt-range"></span><div class="tt-actions"><button class="tt-button tt-button--primary" type="button" data-tt-action="add"><i class="ri-add-line"></i> 添加课程</button><button id="ttToolsToggle" class="tt-button tt-local-panel-toggle" type="button" data-tt-action="toggle-tools" aria-label="打开课表工具" aria-expanded="false" aria-controls="ttLocalPanel"><i class="ri-more-line"></i></button></div></header>
+        <p id="ttNotice" class="tt-notice" role="status" aria-live="polite"></p><section id="ttBoard" class="tt-board" aria-label="每周课表"><div class="tt-board-scroll"><div id="ttGrid" class="tt-grid"></div></div></section><footer class="tt-footer"><span>点击课程编辑 · 点击空白格添加</span><span id="ttWeekCount"></span><span>保存在本机</span></footer>
+        <aside id="ttLocalPanel" class="tt-local-panel" aria-label="课表工具" hidden><header class="tt-local-panel-header"><strong>课表工具</strong><button class="tt-button" type="button" data-tt-action="toggle-tools" aria-label="关闭课表工具"><i class="ri-close-line"></i></button></header><p id="ttSemesterLabel" class="tt-panel-summary"></p><div class="tt-today"><span>今天</span><p id="ttTodaySummary"></p></div><div id="ttEmpty" class="tt-empty" hidden></div><div class="tt-panel-actions"><button class="tt-button" type="button" data-tt-action="import"><i class="ri-upload-2-line"></i> 导入课表</button><button class="tt-button" type="button" data-tt-action="manage"><i class="ri-calendar-line"></i> 管理课程</button><button class="tt-button" type="button" data-tt-action="settings"><i class="ri-settings-3-line"></i> 课表设置</button><button class="tt-button" type="button" data-tt-action="transfer"><i class="ri-download-2-line"></i> 导入与导出</button></div></aside>
         <input id="ttImportFile" type="file" accept=".json,.csv,application/json,text/csv" hidden><dialog id="ttDialog" class="tt-dialog" aria-labelledby="ttDialogTitle"><header class="tt-dialog-header"><h3 id="ttDialogTitle"></h3><button class="tt-button" type="button" data-tt-action="close" aria-label="关闭面板">✕</button></header><div id="ttDialogContent"></div></dialog></div>`;
 }
 function notice(message = '', error = false, panel = false) {
     const node = byId(panel ? 'ttPanelNotice' : 'ttNotice');
     if (node) { node.textContent = message; node.classList.toggle('is-error', error); }
+    if (!panel && message) (window.showToast || showToast)(message, error ? 'error' : 'success');
 }
 function clampWeek(week) { return Math.max(1, Math.min(state.semester.totalWeeks, week)); }
 function render() {
@@ -36,7 +38,7 @@ function render() {
     const hidden = state.semester.courses.filter(course => course.weeks.includes(selectedWeek) && !visibleDays.has(course.day)).length;
     byId('ttWeekCount').textContent = `${count} 条课程安排${hidden ? ` · ${hidden} 条周末课程已隐藏` : ''}${state.settings.showOtherWeeks ? ' · 虚线表示非本周课程' : ''}`;
     const empty = byId('ttEmpty'); empty.hidden = state.semester.courses.length > 0;
-    if (!empty.hidden) empty.innerHTML = '<div><strong>给这一周添上第一门课</strong><p>手动添加，也可以从 JSON 备份或 CSV 导入。</p></div><button class="tt-button" type="button" data-tt-action="import">导入课表</button>';
+    if (!empty.hidden) empty.innerHTML = '<p>点击空白格添加第一门课，也可以导入 JSON 备份或 CSV 课表。</p>';
     applyBackground(byId('ttBoard'), state.settings.background);
     renderGrid(byId('ttGrid'), state, selectedWeek);
     schedule();
@@ -171,15 +173,29 @@ function syncDate(event) {
         byId('ttCurrentWeek').value = Math.max(1, Math.min(Number(byId('ttTotalWeeks').value) || 60, currentWeek(draft)));
     } else if (event.target.matches('[data-period-start]') && event.target.closest('.tt-period-edit') === byId('ttPeriodRows')?.firstElementChild) byId('ttFirstTime').value = event.target.value;
 }
-async function perform(event) {
+function setLocalPanelOpen(open, restoreFocus = true) {
+    byId('ttLocalPanel').hidden = !open;
+    byId('ttToolsToggle').setAttribute('aria-expanded', String(open));
+    if (open) byId('ttLocalPanel').querySelector('[data-tt-action="import"]')?.focus();
+    else if (restoreFocus) byId('ttToolsToggle').focus();
+}
+function perform(event) {
     const button = event.target.closest('[data-tt-action]'); if (!button || button.disabled || busy) return;
-    const action = button.dataset.ttAction, id = button.dataset.id;
+    const action = button.dataset.ttAction;
+    if (action === 'toggle-tools') { setLocalPanelOpen(byId('ttLocalPanel').hidden); return; }
+    if (button.closest('.tt-local-panel')) setLocalPanelOpen(false);
+    return performAction(action, button);
+}
+async function performAction(action, button = { dataset: {} }) {
+    if (busy) return;
+    const id = button.dataset.id;
     try {
         if (action === 'export-raw') { download(localStorage.getItem(STORAGE_KEY) || '', '课表-原始数据.json', 'application/json'); return; }
         if (!state) return;
         notice();
         if (action === 'close') closePanel();
         else if (action === 'settings') settings();
+        else if (action === 'transfer') { settings(); showTab('transfer'); }
         else if (action === 'settings-tab') showTab(button.dataset.tab);
         else if (action === 'add') editCourse();
         else if (action === 'add-cell') editCourse({ day: Number(button.dataset.day), start: Number(button.dataset.period), end: Number(button.dataset.period), weeks: Array.from({ length: state.semester.totalWeeks }, (_, index) => index + 1) });
@@ -214,6 +230,13 @@ async function perform(event) {
 function init() {
     destroy(); controller = new AbortController(); const { signal } = controller;
     const root = document.querySelector('.tt-shell');
+    root.dataset.embedded = String(Boolean(window.__DTKIT_TOOL_PAGE__?.embedded));
+    document.addEventListener('pointerdown', event => {
+        if (!byId('ttLocalPanel').hidden && !event.target.closest('.tt-local-panel, .tt-local-panel-toggle')) setLocalPanelOpen(false, false);
+    }, { signal });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !byId('ttLocalPanel').hidden) { event.preventDefault(); setLocalPanelOpen(false); }
+    }, { signal });
     root.addEventListener('click', perform, { signal }); root.addEventListener('submit', submit, { signal });
     root.addEventListener('input', event => { if (event.target.id === 'ttCourseSearch') byId('ttCourseList').innerHTML = courseList(state, event.target.value); }, { signal });
     root.addEventListener('change', event => {
@@ -244,6 +267,15 @@ function init() {
 }
 function destroy() { generation++; controller?.abort(); controller = null; clearTimeout(timer); state = null; busy = false; suspended = false; imported = null; }
 registerTool({ id: 'timetable', name: '课表', icon: 'ri-calendar-line', colorClass: 'tool-card__icon--green', category: 'utility', status: 'ready', description: '一目了然的每周课表，支持单双周、学期归档、导入导出与轻量桌面小部件。', template, init, destroy,
+    getPagePanel: () => ({ summary: byId('ttSemesterLabel')?.textContent, status: state ? byId('ttTodaySummary')?.textContent : byId('ttNotice')?.textContent,
+        hint: state?.semester.courses.length === 0 ? '点击空白格添加第一门课，也可以导入 JSON 备份或 CSV 课表。' : '',
+        actions: state ? [
+            { id: 'import', label: '导入课表', icon: 'ri-upload-2-line' },
+            { id: 'manage', label: '管理课程', icon: 'ri-calendar-line' },
+            { id: 'settings', label: '课表设置', icon: 'ri-settings-3-line' },
+            { id: 'transfer', label: '导入与导出', icon: 'ri-download-2-line' }
+        ] : [{ id: 'export-raw', label: '导出原始数据', icon: 'ri-download-2-line' }] }),
+    runPageAction: action => { if (['import', 'manage', 'settings', 'transfer', 'export-raw'].includes(action)) return performAction(action); },
     serialize: () => ({ selectedWeek, followCurrent }),
     restore: snapshot => { if (state && snapshot && Number.isInteger(snapshot.selectedWeek)) { selectedWeek = clampWeek(snapshot.selectedWeek); followCurrent = Boolean(snapshot.followCurrent); render(); } }
 });

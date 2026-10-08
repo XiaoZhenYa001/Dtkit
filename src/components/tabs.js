@@ -11,6 +11,11 @@ let onUpdateBackForwardButtons = null;
 let onCloseTab = null;
 let onBeforeCloseTab = null;
 const closingTabs = new Set();
+let tabBarObserver = null;
+
+function revealActiveTab() {
+    DOM.tabBar?.querySelector('.tab--active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 
 /**
  * 注入回调函数
@@ -21,6 +26,10 @@ export function setTabCallbacks(callbacks) {
     onUpdateBackForwardButtons = callbacks.onUpdateBackForwardButtons;
     onCloseTab = callbacks.onCloseTab;
     onBeforeCloseTab = callbacks.onBeforeCloseTab;
+    if (DOM.tabBar && !tabBarObserver) {
+        tabBarObserver = new ResizeObserver(revealActiveTab);
+        tabBarObserver.observe(DOM.tabBar);
+    }
 }
 
 /**
@@ -134,4 +143,5 @@ export function renderTabs() {
         
         DOM.tabBar.appendChild(tabEl);
     });
+    revealActiveTab();
 }

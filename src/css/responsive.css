@@ -46,14 +46,12 @@
     }
 
     .navbar {
-        height: auto;
-        flex-wrap: wrap;
-        padding: 0.9rem 1rem;
+        padding-right: 0.25rem;
     }
 
     .search-container {
-        max-width: 100%;
-        width: 100%;
+        flex-basis: 10rem;
+        min-width: 7rem;
     }
 
     .view-container,
@@ -126,10 +124,25 @@
         padding-inline: 0.8rem;
     }
 
+    .tab-container {
+        gap: 0.2rem;
+        padding-inline: 0.4rem;
+    }
+
     .nav-btn-icon,
     .tab-add-btn {
-        width: 2.4rem;
-        height: 2.4rem;
+        width: 1.8rem;
+        height: 2rem;
+    }
+
+    .search-container {
+        flex-basis: 7rem;
+        min-width: 5.5rem;
+        margin-left: auto;
+    }
+
+    .search-input {
+        font-size: 0.7rem;
     }
 
     .page-hero,

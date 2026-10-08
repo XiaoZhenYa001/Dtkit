@@ -58,39 +58,28 @@
     <div class="main-container">
         <!-- 标签栏 -->
         <div class="tab-container">
+            <div id="navbar" class="navbar" aria-label="历史导航">
+                <button id="backBtn" class="nav-btn-icon" title="返回上一步" aria-label="返回上一步">
+                    <i class="ri-arrow-left-s-line" aria-hidden="true"></i>
+                </button>
+                <button id="forwardBtn" class="nav-btn-icon" title="前进到下一步" aria-label="前进到下一步">
+                    <i class="ri-arrow-right-s-line" aria-hidden="true"></i>
+                </button>
+            </div>
             <div id="tabBar" class="tab-bar" role="tablist" aria-label="已打开的页面">
                 <!-- 标签页动态生成 -->
             </div>
             <button id="addTabBtn" class="tab-add-btn" title="新增标签页" aria-label="新增标签页">
                 <i class="ri-add-line"></i>
             </button>
+            <div id="searchContainer" class="search-container">
+                <i class="ri-search-2-line" aria-hidden="true"></i>
+                <input type="search" id="searchInput" class="search-input" placeholder="筛选工具..." aria-label="筛选工具">
+            </div>
         </div>
 
         <!-- 主内容区域 -->
         <main id="contentArea" class="content-area">
-            
-            <!-- 导航栏（搜索 + 后退前进） -->
-            <div id="navbar" class="navbar">
-                <div class="navbar__nav-buttons">
-                    <button id="backBtn" class="nav-btn-icon" title="返回上一步">
-                        <i class="ri-arrow-left-s-line"></i>
-                    </button>
-                    <button id="forwardBtn" class="nav-btn-icon" title="前进到下一步">
-                        <i class="ri-arrow-right-s-line"></i>
-                    </button>
-                </div>
-                
-                <div id="searchContainer" class="search-container">
-                    <i class="ri-search-2-line"></i>
-                    <input 
-                        type="text" 
-                        id="searchInput" 
-                        class="search-input" 
-                        placeholder="筛选工具..."
-                    >
-                </div>
-            </div>
-
             <!-- 工具库视图（Apple-Style Redesign） -->
             <div id="toolLibraryView" class="view view--active">
                 <div class="view-container">
@@ -395,7 +384,7 @@
                                 <h2 class="settings-section-title">命令面板快捷键</h2>
                                 <span class="settings-section-hint">工具快捷键改在各工具内部设置</span>
                             </div>
-                            <p class="settings-shortcut-note">此处仅保留万能命令面板入口。打开任意工具后，可在内容区左上角设置该工具的专属快捷键。</p>
+                            <p class="settings-shortcut-note">此处仅保留万能命令面板入口。打开任意工具后，可在内容区右侧的页面工具面板设置该工具的专属快捷键。</p>
                             <div class="settings-section-content" id="shortcutBindings" aria-label="命令面板快捷键"></div>
                             <div class="settings-shortcut-status" id="shortcutStatus" role="status">正在读取快捷键…</div>
                         </section>

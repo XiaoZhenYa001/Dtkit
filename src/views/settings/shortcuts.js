@@ -13,7 +13,7 @@ class ShortcutManager {
             target: { kind: 'palette' }
         });
         const status = document.getElementById('shortcutStatus');
-        if (status) status.textContent = '各工具的专属快捷键已移动到工具内容区左上角。';
+        if (status) status.textContent = '各工具的专属快捷键位于工具内容区右侧的页面工具面板。';
     }
 
     destroy() {

@@ -152,6 +152,24 @@ test('standalone page snapshots restore the visible quick content scroller', asy
     await runtime.dispose();
 });
 
+test('floating panel actions belong to the active tool and stop when its page is suspended or disposed', async () => {
+    environment();
+    const called = [];
+    const runtime = installToolPageRuntime({ instanceId:'panel-A',toolId:'timetable',embedded:true });
+    runtime.attachTool({ id:'timetable', getPagePanel:() => ({ actions:[{id:'import'}] }), runPageAction:id => called.push(id) });
+    assert.equal(runtime.embedded, true);
+    assert.deepEqual(runtime.getPagePanel().actions, [{id:'import'}]);
+    runtime.setSuspended(false);
+    runtime.runPageAction('import');
+    runtime.setSuspended(true);
+    runtime.runPageAction('settings');
+    assert.deepEqual(called, ['import']);
+    await runtime.dispose();
+    runtime.runPageAction('import');
+    assert.equal(runtime.getPagePanel(), null);
+    assert.deepEqual(called, ['import']);
+});
+
 test('a standalone tool boots with the non-writable Tauri internals used in native windows', async () => {
     const requests = [];
     const api = { core: Object.freeze({ invoke: async (command,args) => {

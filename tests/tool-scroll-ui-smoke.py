@@ -73,7 +73,7 @@ def test_main_scrolling(page, base_url):
     wait_until(page, lambda: frame_a.evaluate('document.scrollingElement.scrollTop') > 20)
     page.wait_for_timeout(350)  # Wait until Chromium finishes wheel scrolling.
     scroll_a = frame_a.evaluate('document.scrollingElement.scrollTop')
-    page.locator('[data-tool-page-new]').click()
+    multi.click_page_action(page, 'new')
     frame_b = multi.active_tool_frame(page, '.unit-tool')
     expect(frame_b.locator('#toolPageStatus')).to_be_hidden()
     tab_b = multi.active_tab_id(page)

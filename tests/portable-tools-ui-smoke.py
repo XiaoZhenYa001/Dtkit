@@ -251,6 +251,7 @@ def run():
         color_a_frame.locator('#screenColorPicker').click()
         page.wait_for_function("() => window.__dtkitCalls.filter(call => call.command === 'start_screen_color_pick').length === 2")
         pick_a = page.evaluate("window.__dtkitCalls.findLast(call => call.command === 'start_screen_color_pick').args")
+        page.locator('[data-tool-page-toggle]').click()
         page.locator('[data-tool-page-new]').click()
         color_b_frame = page.locator('iframe.tool-page-frame:not([hidden])').element_handle().content_frame()
         color_b_frame.locator('#screenColorPicker').wait_for(state='visible')

@@ -43,21 +43,90 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
     let container = document.getElementById('dynamicToolContainer');
     if (!container) { container = document.createElement('section'); container.id = 'dynamicToolContainer'; contentArea.append(container); }
     container.className = 'view tool-page-host';
-    const toolbar = document.createElement('div'); toolbar.className = 'tool-page-toolbar';
+    const toolbar = document.createElement('aside'); toolbar.className = 'tool-page-toolbar';
+    toolbar.id = 'toolPageControls'; toolbar.hidden = true;
+    toolbar.setAttribute('aria-label', '页面工具');
+    const toolbarHeader = document.createElement('div'); toolbarHeader.className = 'tool-page-toolbar__header';
+    const toolbarTitle = document.createElement('strong'); toolbarTitle.className = 'tool-page-toolbar__title'; toolbarTitle.textContent = '页面工具';
+    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'tool-page-toolbar__toggle';
+    toggle.hidden = true;
+    toggle.setAttribute('data-tool-page-toggle', ''); toggle.setAttribute('aria-controls', 'toolPageControls');
+    toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-label', '打开页面工具'); toggle.title = '页面工具';
+    const toggleIcon = document.createElement('i'); toggleIcon.className = 'ri-more-line'; toggleIcon.setAttribute('aria-hidden', 'true');
+    const toggleLabel = document.createElement('span'); toggleLabel.textContent = '页面工具';
+    toggle.append(toggleIcon, toggleLabel);
+    document.querySelector('.tab-container').append(toggle);
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'tool-page-toolbar__close';
+    close.setAttribute('aria-label', '关闭页面工具'); close.title = '关闭页面工具'; close.innerHTML = '<i class="ri-close-line" aria-hidden="true"></i>';
+    toolbarHeader.append(toolbarTitle, close);
+    const controls = document.createElement('div'); controls.className = 'tool-page-controls';
+    const toolSection = document.createElement('section'); toolSection.className = 'tool-page-section'; toolSection.hidden = true;
+    const pageSection = document.createElement('section'); pageSection.className = 'tool-page-section';
+    const pageTitle = document.createElement('h3'); pageTitle.textContent = '页面与窗口';
     const shortcut = document.createElement('div'); shortcut.className = 'tool-page-shortcut';
     const actions = document.createElement('div'); actions.className = 'tool-page-actions';
     const createButton = (label, attribute, icon) => {
         const button = document.createElement('button'); button.type = 'button'; button.setAttribute(attribute, '');
+        button.title = label; button.setAttribute('aria-label', label);
         const glyph = document.createElement('i'); glyph.className = icon;
+        glyph.setAttribute('aria-hidden', 'true');
         const text = document.createElement('span'); text.textContent = label;
-        button.append(glyph, text); actions.append(button); return button;
+        button.append(glyph, text); actions.append(button);
+        button.addEventListener('click', () => setPanelOpen(false));
+        return button;
     };
     const newPage = createButton('新建同类页面', 'data-tool-page-new', 'ri-add-line');
     const rename = createButton('重命名', 'data-tool-page-rename', 'ri-edit-line');
     const windowButton = createButton('独立窗口', 'data-tool-page-window', 'ri-arrow-right-up-line');
     const launcherButton = createButton('创建启动入口', 'data-tool-page-launcher', 'ri-link');
     const sleepButton = createButton('主界面休眠', 'data-tool-page-sleep', 'ri-moon-line');
-    toolbar.append(shortcut, actions); container.append(toolbar);
+    pageSection.append(pageTitle, actions);
+    controls.append(toolSection, shortcut, pageSection); toolbar.append(toolbarHeader, controls); container.append(toolbar);
+    function renderToolSection() {
+        const runtime = frames.get(currentId)?.frame.contentWindow?.__DTKIT_TOOL_PAGE__;
+        const panel = runtime?.getPagePanel?.();
+        toolSection.replaceChildren(); toolSection.hidden = !panel;
+        if (!panel) return;
+        for (const [className, value] of [['tool-page-section__summary', panel.summary], ['tool-page-section__status', panel.status], ['tool-page-section__hint', panel.hint]]) {
+            if (!value) continue;
+            const text = document.createElement('p'); text.className = className; text.textContent = value; toolSection.append(text);
+        }
+        const toolActions = document.createElement('div'); toolActions.className = 'tool-page-actions';
+        for (const action of panel.actions || []) {
+            const button = document.createElement('button'); button.type = 'button'; button.dataset.toolAction = action.id;
+            const glyph = document.createElement('i'); glyph.className = action.icon; glyph.setAttribute('aria-hidden', 'true');
+            const label = document.createElement('span'); label.textContent = action.label;
+            button.append(glyph, label); toolActions.append(button);
+            button.addEventListener('click', () => {
+                setPanelOpen(false);
+                Promise.resolve(runtime.runPageAction(action.id)).catch(error => showToast(`操作失败：${error}`, 'error'));
+            });
+        }
+        toolSection.append(toolActions);
+    }
+    function setPanelOpen(open, restoreFocus = true) {
+        if (open && !currentId) return;
+        if (!open) shortcut.querySelector('.is-recording')?.click();
+        toolbar.hidden = !open;
+        toggle.setAttribute('aria-expanded', String(open));
+        if (open) {
+            renderToolSection();
+            toolbar.querySelector('.tool-page-actions button:not(:disabled), .shortcut-binding__record:not(:disabled), button')?.focus();
+        } else if (restoreFocus && !toggle.hidden) toggle.focus();
+    }
+    toggle.addEventListener('click', () => setPanelOpen(toolbar.hidden));
+    close.addEventListener('click', () => setPanelOpen(false));
+    const dismissOnEscape = event => {
+        if (event.key !== 'Escape' || toolbar.hidden) return;
+        event.preventDefault(); setPanelOpen(false);
+    };
+    document.addEventListener('keydown', dismissOnEscape);
+    document.addEventListener('pointerdown', event => {
+        if (!toolbar.hidden && !toolbar.contains(event.target) && !toggle.contains(event.target)) setPanelOpen(false, false);
+    });
+    document.addEventListener('focusin', event => {
+        if (!toolbar.hidden && !toolbar.contains(event.target) && !toggle.contains(event.target)) setPanelOpen(false, false);
+    });
     const native = Boolean(window.__TAURI__?.core?.invoke);
     [windowButton, launcherButton, sleepButton].forEach(button => { button.disabled = !native; });
     newPage.addEventListener('click', () => { const entry = frames.get(currentId); if (entry) onNewPage(entry.toolId); });
@@ -86,6 +155,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
         else entry.frame.contentWindow?.postMessage({ type: 'dtkit-tool-page-lifecycle', instanceId: entry.instanceId, suspended }, location.origin);
     }
     function hide() {
+        setPanelOpen(false, false); toggle.hidden = true;
         for (const entry of frames.values()) { lifecycle(entry, true); entry.frame.hidden = true; }
         container.classList.remove('view--active');
         contentArea.classList.remove('content-area--tool-page');
@@ -107,15 +177,22 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
             const url = new URL('tool-page.html', location.href);
             url.searchParams.set('toolId', tab.toolId); url.searchParams.set('instanceId', tab.instanceId);
             frame.src = url.href;
+            frame.addEventListener('load', () => {
+                frame.contentDocument?.addEventListener('pointerdown', () => setPanelOpen(false, false));
+                frame.contentDocument?.addEventListener('keydown', dismissOnEscape);
+            });
             entry = { frame, toolId: tab.toolId, instanceId: tab.instanceId, suspended: true };
             frames.set(tab.instanceId, entry); container.append(frame);
         }
         currentId = tab.instanceId;
+        toolbarTitle.textContent = `${tool.name} · 页面工具`;
+        toggle.hidden = false;
         shortcutDisposer?.(); shortcutDisposer = null;
         shortcut.replaceChildren();
         if (tool.surface !== 'internal') shortcutDisposer = mountShortcutBinding(shortcut, {
             label: tool.name, icon: tool.icon, compact: true, target: { kind: 'tool', toolId: tool.id }
         });
+        shortcut.hidden = tool.surface === 'internal';
         container.classList.add('view--active'); contentArea.classList.add('content-area--tool-page');
         for (const other of frames.values()) {
             if (other === entry) continue;
@@ -174,6 +251,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
         const entry = frames.get(event.data.instanceId);
         if (!entry || event.source !== entry.frame.contentWindow) return;
         lifecycle(entry, entry.suspended);
+        if (entry.instanceId === currentId) renderToolSection();
     };
     window.addEventListener('message', receive);
     window.addEventListener('dtkit:power-state', event => {

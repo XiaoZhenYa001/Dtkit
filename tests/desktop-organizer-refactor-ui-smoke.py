@@ -167,6 +167,7 @@ with sync_playwright() as playwright:
     app.on("pageerror", lambda error: app_errors.append(str(error)))
     app.goto(BASE_URL, wait_until="networkidle")
     app.locator('[data-tool-id="timestamp-converter"]').click()
+    app.locator('[data-tool-page-toggle]').click()
     shortcut = app.locator(".tool-page-shortcut .shortcut-binding__record")
     shortcut.wait_for(state="visible")
     assert "专属快捷键" in app.locator(".tool-page-shortcut").inner_text()
