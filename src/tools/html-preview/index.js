@@ -14,6 +14,10 @@ const previewState = {
     refreshTimer: null,
     refreshDelay: 500,
     isFullscreen: false,
+    suspended: false,
+    disposed: false,
+    runnerReady: false,
+    lastRendered: null,
     abortController: null  // 用于清理事件监听器
 };
 
@@ -408,6 +412,11 @@ async function init() {
         previewState.abortController.abort();
     }
     previewState.abortController = new AbortController();
+    previewState.disposed = false;
+    previewState.suspended = document.documentElement.classList.contains('app-is-suspended');
+    previewState.autoRefresh = document.getElementById('autoRefreshToggle')?.checked !== false;
+    previewState.isFullscreen = false;
+    previewState.lastRendered = null;
 
     bindEvents();
     initializePreviewRunner();
@@ -415,7 +424,8 @@ async function init() {
 
 function initializePreviewRunner() {
     const previewFrame = document.getElementById('previewFrame');
-    if (!previewFrame) return;
+    if (!previewFrame || previewState.suspended || previewState.disposed) return;
+    previewState.runnerReady = false;
 
     const nonce = crypto.randomUUID().replaceAll('-', '');
     const runnerDocument = `<!DOCTYPE html>
@@ -464,6 +474,7 @@ function bindEvents() {
                     const end = editor.selectionEnd;
                     editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
                     editor.selectionStart = editor.selectionEnd = start + 4;
+                    if (previewState.autoRefresh) debounceRefresh();
                 }
             }, { signal });
         }
@@ -486,6 +497,8 @@ function bindEvents() {
     if (autoRefreshToggle) {
         autoRefreshToggle.addEventListener('change', (e) => {
             previewState.autoRefresh = e.target.checked;
+            if (previewState.autoRefresh) debounceRefresh();
+            else cancelRefresh();
         }, { signal });
     }
 
@@ -501,7 +514,11 @@ function bindEvents() {
 
     // runner 加载完成后补发当前内容，避免首次消息早于 iframe 初始化。
     const previewFrame = document.getElementById('previewFrame');
-    previewFrame?.addEventListener('load', refreshPreview, { signal });
+    previewFrame?.addEventListener('load', () => {
+        if (previewState.suspended || previewState.disposed || !previewFrame.src.startsWith('data:text/html')) return;
+        previewState.runnerReady = true;
+        renderPayload(previewState.autoRefresh ? editorPayload() : previewState.lastRendered || editorPayload());
+    }, { signal });
 
     // 示例按钮
     document.querySelectorAll('.html-preview-example-btn').forEach(btn => {
@@ -511,9 +528,13 @@ function bindEvents() {
 
 function handlePowerState(event) {
     const previewFrame = document.getElementById('previewFrame');
-    if (!previewFrame) return;
-
-    if (event.detail?.suspended) {
+    if (!previewFrame || previewState.disposed) return;
+    const suspended = Boolean(event.detail?.suspended);
+    if (suspended === previewState.suspended) return;
+    previewState.suspended = suspended;
+    if (suspended) {
+        cancelRefresh();
+        previewState.runnerReady = false;
         previewFrame.src = 'about:blank';
     } else {
         initializePreviewRunner();
@@ -524,11 +545,15 @@ function handlePowerState(event) {
 // 全屏切换
 // ============================================
 function toggleFullscreen() {
+    setFullscreen(!previewState.isFullscreen);
+}
+
+function setFullscreen(fullscreen) {
     const panel = document.getElementById('previewResultPanel');
     const btn = document.getElementById('fullscreenBtn');
     if (!panel || !btn) return;
 
-    previewState.isFullscreen = !previewState.isFullscreen;
+    previewState.isFullscreen = Boolean(fullscreen);
     panel.classList.toggle('fullscreen', previewState.isFullscreen);
 
     // 更新按钮图标
@@ -545,6 +570,7 @@ function toggleFullscreen() {
 function handleKeydown(e) {
     // ESC 退出全屏
     if (e.key === 'Escape' && previewState.isFullscreen) {
+        e.preventDefault();
         toggleFullscreen();
     }
 }
@@ -552,7 +578,8 @@ function handleKeydown(e) {
 // ============================================
 // 切换标签页
 // ============================================
-function switchTab(tab) {
+function switchTab(tab, focus = true) {
+    if (!['html', 'css', 'js'].includes(tab)) return;
     // 更新标签高亮
     document.querySelectorAll('.panel-tab').forEach(t => {
         t.classList.toggle('active', t.dataset.tab === tab);
@@ -572,7 +599,7 @@ function switchTab(tab) {
     const targetEditor = document.getElementById(editorMap[tab]);
     if (targetEditor) {
         targetEditor.classList.add('active');
-        targetEditor.focus();
+        if (focus) targetEditor.focus();
     }
 }
 
@@ -580,34 +607,54 @@ function switchTab(tab) {
 // 防抖刷新
 // ============================================
 function debounceRefresh() {
-    if (previewState.refreshTimer) {
-        clearTimeout(previewState.refreshTimer);
-    }
-    previewState.refreshTimer = setTimeout(refreshPreview, previewState.refreshDelay);
+    cancelRefresh();
+    if (previewState.suspended || previewState.disposed) return;
+    previewState.refreshTimer = setTimeout(() => {
+        previewState.refreshTimer = null;
+        refreshPreview();
+    }, previewState.refreshDelay);
+}
+
+function cancelRefresh() {
+    if (previewState.refreshTimer !== null) clearTimeout(previewState.refreshTimer);
+    previewState.refreshTimer = null;
 }
 
 // ============================================
 // 刷新预览
 // ============================================
 function refreshPreview() {
+    if (previewState.suspended || previewState.disposed) return;
+    const payload = editorPayload();
+    previewState.lastRendered = payload;
+    updateSizeInfo(payload.html, payload.css, payload.js);
+    // A refresh is a new user-code context. This also stops timers/workers created
+    // by a previous render instead of accumulating them in the runner document.
+    initializePreviewRunner();
+}
+
+function editorPayload() {
     const htmlEditor = document.getElementById('htmlEditor');
     const cssEditor = document.getElementById('cssEditor');
     const jsEditor = document.getElementById('jsEditor');
-    const previewFrame = document.getElementById('previewFrame');
-
-    if (!previewFrame) return;
-
     const html = htmlEditor?.value || '';
     const css = cssEditor?.value || '';
     const js = jsEditor?.value || '';
+    return { html, css, js };
+}
+
+function renderPayload(payload) {
+    if (previewState.suspended || previewState.disposed) return;
+    const previewFrame = document.getElementById('previewFrame');
+    if (!previewFrame) return;
+    previewState.lastRendered = { ...payload };
+    updateSizeInfo(payload.html, payload.css, payload.js);
+    if (!previewState.runnerReady) return;
 
     previewFrame.contentWindow?.postMessage({
         type: 'dtkit-preview-render',
-        payload: { html, css, js }
+        payload
     }, '*');
-
-    // 更新代码大小显示
-    updateSizeInfo(html, css, js);
 }
 
 // ============================================
@@ -666,10 +713,12 @@ function loadExample(name) {
 // 销毁函数
 // ============================================
 function destroy() {
-    if (previewState.refreshTimer) {
-        clearTimeout(previewState.refreshTimer);
-        previewState.refreshTimer = null;
-    }
+    cancelRefresh();
+    previewState.disposed = true;
+    previewState.suspended = true;
+    previewState.runnerReady = false;
+    const previewFrame = document.getElementById('previewFrame');
+    if (previewFrame) previewFrame.src = 'about:blank';
 
     // 取消所有事件监听器（包括键盘事件）
     if (previewState.abortController) {
@@ -685,6 +734,53 @@ function destroy() {
     console.log('[HTMLPreview] 工具已销毁');
 }
 
+function serialize() {
+    const editors = {};
+    for (const type of ['html', 'css', 'js']) {
+        const editor = document.getElementById(`${type}Editor`);
+        if (!editor) continue;
+        editors[type] = { value: editor.value, selectionStart: editor.selectionStart,
+            selectionEnd: editor.selectionEnd, selectionDirection: editor.selectionDirection,
+            scrollTop: editor.scrollTop, scrollLeft: editor.scrollLeft };
+    }
+    return { version: 1, editors, activeTab: document.querySelector('.panel-tab.active')?.dataset.tab || 'html',
+        autoRefresh: previewState.autoRefresh, fullscreen: previewState.isFullscreen,
+        rendered: previewState.lastRendered,
+        focusedEditor: document.hasFocus() ? document.activeElement?.id : null };
+}
+
+function restore(snapshot) {
+    if (snapshot?.version !== 1 || !snapshot.editors || previewState.disposed) return;
+    cancelRefresh();
+    previewState.autoRefresh = snapshot.autoRefresh !== false;
+    const toggle = document.getElementById('autoRefreshToggle');
+    if (toggle) toggle.checked = previewState.autoRefresh;
+    switchTab(snapshot.activeTab || 'html', false);
+    for (const type of ['html', 'css', 'js']) {
+        const editor = document.getElementById(`${type}Editor`);
+        const saved = snapshot.editors[type];
+        if (!editor || typeof saved?.value !== 'string') continue;
+        editor.value = saved.value;
+        if (Number.isInteger(saved.selectionStart) && Number.isInteger(saved.selectionEnd)) {
+            editor.setSelectionRange(saved.selectionStart, saved.selectionEnd,
+                ['forward', 'backward', 'none'].includes(saved.selectionDirection) ? saved.selectionDirection : 'none');
+        }
+        editor.scrollTop = Math.max(0, Number(saved.scrollTop) || 0);
+        editor.scrollLeft = Math.max(0, Number(saved.scrollLeft) || 0);
+    }
+    setFullscreen(snapshot.fullscreen);
+    const rendered = snapshot.rendered;
+    previewState.lastRendered = rendered && ['html', 'css', 'js'].every(type => typeof rendered[type] === 'string')
+        ? { html: rendered.html, css: rendered.css, js: rendered.js } : editorPayload();
+    if (!previewState.suspended) {
+        const payload = previewState.autoRefresh ? editorPayload() : previewState.lastRendered;
+        previewState.lastRendered = payload;
+        updateSizeInfo(payload.html, payload.css, payload.js);
+        initializePreviewRunner();
+        if (['htmlEditor', 'cssEditor', 'jsEditor'].includes(snapshot.focusedEditor)) document.getElementById(snapshot.focusedEditor)?.focus({ preventScroll: true });
+    }
+}
+
 // ============================================
 // 注册工具
 // ============================================
@@ -697,7 +793,9 @@ registerTool({
     description: '实时预览 HTML/CSS/JS 代码效果',
     template: getTemplate,
     init,
-    destroy
+    destroy,
+    serialize,
+    restore
 });
 
 console.log('[HTMLPreview] 模块已加载');

@@ -8,6 +8,9 @@ import DOM from '../core/dom.js';
 let onSwitchTab = null;
 let onUpdateContentView = null;
 let onUpdateBackForwardButtons = null;
+let onCloseTab = null;
+let onBeforeCloseTab = null;
+const closingTabs = new Set();
 
 /**
  * 注入回调函数
@@ -16,6 +19,8 @@ export function setTabCallbacks(callbacks) {
     onSwitchTab = callbacks.onSwitchTab;
     onUpdateContentView = callbacks.onUpdateContentView;
     onUpdateBackForwardButtons = callbacks.onUpdateBackForwardButtons;
+    onCloseTab = callbacks.onCloseTab;
+    onBeforeCloseTab = callbacks.onBeforeCloseTab;
 }
 
 /**
@@ -30,18 +35,24 @@ export function addTab() {
 /**
  * 关闭标签页
  */
-export function closeTab(tabId) {
-    const index = appState.tabs.findIndex(t => t.id === tabId);
-    if (index < 0 || appState.tabs.length === 1) return;
+export async function closeTab(tabId) {
+    if (closingTabs.has(tabId) || !appState.tabs.some(t => t.id === tabId) || appState.tabs.length === 1) return;
+    closingTabs.add(tabId);
+    try {
+        if (onBeforeCloseTab && await onBeforeCloseTab(tabId) === false) return;
+        const index = appState.tabs.findIndex(t => t.id === tabId);
+        if (index < 0 || appState.tabs.length === 1) return;
     
-    appState.tabs.splice(index, 1);
-    
-    if (appState.activeTabId === tabId && appState.tabs.length > 0) {
-        const newIndex = Math.max(0, index - 1);
-        switchTab(appState.tabs[newIndex].id);
-    } else {
-        renderTabs();
-    }
+        appState.tabs.splice(index, 1);
+        onCloseTab?.(tabId);
+
+        if (appState.activeTabId === tabId && appState.tabs.length > 0) {
+            const newIndex = Math.max(0, index - 1);
+            switchTab(appState.tabs[newIndex].id);
+        } else {
+            renderTabs();
+        }
+    } finally { closingTabs.delete(tabId); }
 }
 
 /**
@@ -81,10 +92,10 @@ export function renderTabs() {
         
         const label = document.createElement('div');
         label.className = 'tab__label';
-        label.innerHTML = `
-            <span class="tab__icon"><i class="${tab.icon}"></i></span>
-            <span class="tab__title">${tab.title}</span>
-        `;
+        const icon = document.createElement('span'); icon.className = 'tab__icon';
+        const glyph = document.createElement('i'); glyph.className = tab.icon; icon.append(glyph);
+        const text = document.createElement('span'); text.className = 'tab__title'; text.textContent = tab.title;
+        label.append(icon, text);
         tabEl.appendChild(label);
         
         // 关闭按钮

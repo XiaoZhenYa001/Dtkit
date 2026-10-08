@@ -32,9 +32,10 @@ test('password search uses a native metadata-only cache and bounded responses', 
     assert.match(tool, /isQuickHost\(\)\s*\?\s*50\s*:\s*200/);
 });
 
-test('deep sleep and manual resource release drop password transient memory', () => {
-    assert.match(resources, /state::<PasswordVaultManager>\(\)\.release_idle_state\(\)/);
-    assert.match(lifecycle, /MinimizeMode::Deep[\s\S]{0,300}release_idle_state\(\)/);
+test('sleep and manual resource release drop password caches without discarding active imports', () => {
+    assert.match(resources, /state::<PasswordVaultManager>\(\)\.release_cached_index\(\)/);
+    assert.match(lifecycle, /if ready \{[\s\S]{0,160}release_cached_index\(\)/);
+    assert.doesNotMatch(lifecycle, /release_idle_state\(\)/);
 });
 
 test('password detail remains metadata-only until an explicit copy or edit', () => {

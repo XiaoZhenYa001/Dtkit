@@ -1,0 +1,6 @@
+{
+  "identifier": "com.administrator.dtkit.native-smoke",
+  "productName": "DtKit Native Smoke",
+  "build": { "beforeBuildCommand": "" },
+  "bundle": { "active": false }
+}

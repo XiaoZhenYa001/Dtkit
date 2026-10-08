@@ -340,8 +340,9 @@ async function capture(options = {}) {
     updateControls();
     try {
         let result = await new Promise((resolve, reject) => {
-            pendingRegionCapture = { current, resolve };
-            invoke('start_screen_region_capture', options).catch(error => {
+            const requestId = crypto.randomUUID();
+            pendingRegionCapture = { current, resolve, requestId };
+            invoke('start_screen_region_capture', { ...options, requestId }).catch(error => {
                 if (pendingRegionCapture?.current === current) pendingRegionCapture = null;
                 reject(error);
             });
@@ -653,7 +654,7 @@ async function init() {
     unlistenRegionCapture?.();
     unlistenRegionCapture = await listen('screen-region-captured', event => {
         const pending = pendingRegionCapture;
-        if (!pending) return;
+        if (!pending || event.payload?.requestId !== pending.requestId) return;
         pendingRegionCapture = null;
         pending.resolve(event.payload?.cancelled ? null : event.payload?.capture || null);
     });

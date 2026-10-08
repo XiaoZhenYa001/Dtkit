@@ -15,6 +15,7 @@ function template() {
                 <div><span class="resource-kicker">RESOURCE CONTROL</span><h2>资源控制中心</h2>
                     <p>按需查看当前资源状态，调整低能耗策略。此页面不进行后台轮询。</p></div>
                 <div class="resource-actions">
+                    <button id="resourceSleep" class="resource-button resource-button--secondary" type="button"><i class="ri-moon-line"></i> 主界面休眠</button>
                     <button id="resourceRelease" class="resource-button resource-button--secondary" type="button"><i class="ri-leaf-line"></i> 释放空闲资源</button>
                     <button id="resourceRefresh" class="resource-button resource-button--primary" type="button"><i class="ri-refresh-line"></i> 刷新快照</button>
                 </div>
@@ -44,13 +45,11 @@ function template() {
                         <div class="resource-policy-grid">
                             <label><span>电池并发任务</span><input id="resourceBatteryWorkers" type="number" min="1" max="16" required><small>1–16，未知电源时也采用此值</small></label>
                             <label><span>接通电源并发任务</span><input id="resourceAcWorkers" type="number" min="1" max="32" required><small>不得低于电池并发数</small></label>
-                            <label><span>标准模式快捷窗保留</span><div class="resource-input-unit"><input id="resourceStandardRetention" type="number" min="0" max="600" required><span>秒</span></div></label>
-                            <label><span>节能模式快捷窗保留</span><div class="resource-input-unit"><input id="resourceEfficientRetention" type="number" min="0" max="120" required><span>秒</span></div></label>
                             <label><span>缓存上限</span><div class="resource-input-unit"><input id="resourceCacheLimit" type="number" min="10" max="10240" required><span>MB</span></div></label>
                             <label><span>缓存保留</span><div class="resource-input-unit"><input id="resourceCacheDays" type="number" min="0" max="365" required><span>天</span></div></label>
                             <label><span>日志保留</span><div class="resource-input-unit"><input id="resourceLogDays" type="number" min="0" max="365" required><span>天</span></div></label>
                         </div>
-                        <div class="resource-form-footer"><p><i class="ri-shield-check-line"></i> 释放操作不会中断正在执行的任务、提醒或局域网分享。</p><button class="resource-button resource-button--primary" type="submit">保存策略</button></div>
+                        <div class="resource-form-footer"><p><i class="ri-shield-check-line"></i> 独立工具关闭后立即释放；主界面休眠前保存草稿，继续保留提醒与运行中的任务。</p><button class="resource-button resource-button--primary" type="submit">保存策略</button></div>
                     </form>
                 </section>
             </div>
@@ -94,7 +93,7 @@ function renderSnapshot(snapshot) {
         metric('ri-battery-charge-line', '电源与并发', power[0], `${power[1]} · 上限 ${snapshot.effectiveWorkerLimit}`),
         metric('ri-loader-4-line', '后台任务', String(snapshot.activeJobs), `保留 ${snapshot.recordedJobs} 条任务记录`),
         metric('ri-command-line', '全局快捷键', String(snapshot.registeredShortcuts), '仅注册用户主动绑定的项目'),
-        metric('ri-leaf-line', '当前模式', mode, snapshot.lanShareActive ? '局域网分享正在运行' : '无局域网分享')
+        metric('ri-leaf-line', '当前模式', mode, snapshot.toolOnly ? '仅启动工具，主界面未加载' : snapshot.lanShareActive ? '局域网分享正在运行' : '无局域网分享')
     );
     byId('resourceCapturedAt').textContent = `采集于 ${new Date(snapshot.capturedAt).toLocaleTimeString()}`;
     renderStorage(snapshot.storage);
@@ -127,8 +126,6 @@ function fillPolicy(nextPolicy) {
     if (radio) radio.checked = true;
     byId('resourceBatteryWorkers').value = policy.maxWorkersOnBattery;
     byId('resourceAcWorkers').value = policy.maxWorkersOnAc;
-    byId('resourceStandardRetention').value = policy.quickHostStandardRetentionSeconds;
-    byId('resourceEfficientRetention').value = policy.quickHostEfficientRetentionSeconds;
     byId('resourceCacheLimit').value = Math.round(policy.cacheLimitBytes / 1024 / 1024);
     byId('resourceCacheDays').value = policy.cacheRetentionDays;
     byId('resourceLogDays').value = policy.logRetentionDays;
@@ -148,8 +145,7 @@ async function savePolicy(event) {
     event.preventDefault();
     if (!event.currentTarget.reportValidity()) return;
     const nextPolicy = {
-        quickHostStandardRetentionSeconds: Number(byId('resourceStandardRetention').value),
-        quickHostEfficientRetentionSeconds: Number(byId('resourceEfficientRetention').value),
+        ...policy,
         maxWorkersOnBattery: Number(byId('resourceBatteryWorkers').value),
         maxWorkersOnAc: Number(byId('resourceAcWorkers').value),
         cacheLimitBytes: Number(byId('resourceCacheLimit').value) * 1024 * 1024,
@@ -186,6 +182,12 @@ async function initResourceCenter() {
     const { signal } = controller;
     byId('resourceRefresh')?.addEventListener('click', refreshSnapshot, { signal });
     byId('resourceRelease')?.addEventListener('click', releaseIdle, { signal });
+    byId('resourceSleep')?.addEventListener('click', async () => {
+        try {
+            const requested = await invoke('sleep_main_window');
+            if (!requested) setStatus('主界面已经释放，当前只保留独立工具。', 'success');
+        } catch (error) { setStatus(`休眠失败：${error}`, 'error'); }
+    }, { signal });
     byId('resourcePolicyForm')?.addEventListener('submit', savePolicy, { signal });
     try {
         const [nextPolicy, snapshot] = await Promise.all([invoke('get_resource_policy'), invoke('get_resource_snapshot')]);

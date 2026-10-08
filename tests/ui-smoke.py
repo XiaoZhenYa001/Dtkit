@@ -29,6 +29,18 @@ def assert_no_runtime_errors(errors):
         raise AssertionError("Browser runtime errors:\n" + "\n".join(errors))
 
 
+def tool_view(page):
+    return page.frame_locator("iframe.tool-page-frame:not([hidden])")
+
+
+def all_resources(page):
+    resources = []
+    for frame in page.frames:
+        if frame.url.startswith(BASE_URL):
+            resources.extend(frame.evaluate("performance.getEntriesByType('resource').map(entry => entry.name)"))
+    return resources
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -47,8 +59,8 @@ with sync_playwright() as playwright:
     page.locator(".tool-card").first.wait_for(state="visible")
 
     cards = page.locator(".tool-card")
-    if cards.count() != 19:
-        raise AssertionError(f"Expected 19 tool cards, found {cards.count()}")
+    if cards.count() != 25:
+        raise AssertionError(f"Expected 25 tool cards, found {cards.count()}")
 
     icon_style = page.locator('[data-view="toolLibrary"] i').first.evaluate(
         "element => ({"
@@ -61,9 +73,7 @@ with sync_playwright() as playwright:
     if icon_style["content"] in {"none", "normal", '""'}:
         raise AssertionError(f"Subset icon glyph is missing: {icon_style!r}")
 
-    initial_resources = page.evaluate(
-        "performance.getEntriesByType('resource').map(entry => entry.name)"
-    )
+    initial_resources = all_resources(page)
     if not any("remixicon-subset" in resource for resource in initial_resources):
         raise AssertionError("Subset icon font was not loaded")
     if any("alarm-clock" in resource for resource in initial_resources):
@@ -96,9 +106,7 @@ with sync_playwright() as playwright:
     if page.locator("#shortcutBindings .shortcut-binding__record").count() != 1:
         raise AssertionError("Settings should retain only the command-palette shortcut")
 
-    settings_resources = page.evaluate(
-        "performance.getEntriesByType('resource').map(entry => entry.name)"
-    )
+    settings_resources = all_resources(page)
     if not any("settings-" in resource for resource in settings_resources):
         raise AssertionError("Settings assets were not loaded on demand")
     for extension in (".css", ".js"):
@@ -112,15 +120,13 @@ with sync_playwright() as playwright:
     page.locator(".tool-card").first.wait_for(state="visible")
 
     page.locator('#toolLibraryView [data-tool-id="html-preview"]').click()
-    page.locator("#htmlEditor").wait_for(state="visible")
-    if page.locator(".html-preview-container").evaluate(
+    tool_view(page).locator("#htmlEditor").wait_for(state="visible")
+    if tool_view(page).locator(".html-preview-container").evaluate(
         "element => getComputedStyle(element).display"
     ) != "flex":
         raise AssertionError("HTML preview external styles were not applied")
 
-    loaded_resources = page.evaluate(
-        "performance.getEntriesByType('resource').map(entry => entry.name)"
-    )
+    loaded_resources = all_resources(page)
     if not any("html-preview" in resource for resource in loaded_resources):
         raise AssertionError("HTML preview chunk was not loaded on demand")
     if not any(
@@ -129,19 +135,21 @@ with sync_playwright() as playwright:
     ):
         raise AssertionError("HTML preview CSS was not loaded as an external chunk")
 
-    page.locator("#htmlEditor").fill(
+    tool_view(page).locator("#htmlEditor").fill(
         '<style>#preview-message { color: rgb(12, 34, 56); }</style>'
         '<div id="preview-message" style="font-weight: 700;">等待 JS</div>'
     )
-    page.locator("#cssEditor").fill(
+    tool_view(page).locator('[data-tab="css"]').click()
+    tool_view(page).locator("#cssEditor").fill(
         "#preview-message { background-color: rgb(240, 241, 242); }"
     )
-    page.locator("#jsEditor").fill(
+    tool_view(page).locator('[data-tab="js"]').click()
+    tool_view(page).locator("#jsEditor").fill(
         "document.getElementById('preview-message').textContent = 'JS 已执行';"
     )
-    page.locator("#refreshPreviewBtn").click()
+    tool_view(page).locator("#refreshPreviewBtn").click()
 
-    preview = page.frame_locator("#previewFrame")
+    preview = tool_view(page).frame_locator("#previewFrame")
     message = preview.locator("#preview-message")
     try:
         expect(message).to_have_text("JS 已执行", timeout=10000)
@@ -164,15 +172,13 @@ with sync_playwright() as playwright:
 
     page.locator('[data-view="toolLibrary"]').click()
     page.locator('#toolLibraryView [data-tool-id="alarm-clock"]').click()
-    page.locator(".alarm-clock-view").wait_for(state="visible")
-    if page.locator(".alarm-clock-view").evaluate(
+    tool_view(page).locator(".alarm-clock-view").wait_for(state="visible")
+    if tool_view(page).locator(".alarm-clock-view").evaluate(
         "element => getComputedStyle(element).display"
     ) != "flex":
         raise AssertionError("Alarm clock external styles were not applied")
 
-    final_resources = page.evaluate(
-        "performance.getEntriesByType('resource').map(entry => entry.name)"
-    )
+    final_resources = all_resources(page)
     if not any("alarm-clock" in resource for resource in final_resources):
         raise AssertionError("Alarm clock chunk was not loaded on demand")
     if not any(
@@ -183,15 +189,15 @@ with sync_playwright() as playwright:
 
     page.locator('[data-view="toolLibrary"]').click()
     page.locator('#toolLibraryView [data-tool-id="json-formatter"]').click()
-    page.locator("#jsonInput").wait_for(state="visible")
+    tool_view(page).locator("#jsonInput").wait_for(state="visible")
     page.wait_for_timeout(100)
-    page.locator("#jsonInput").fill('{"outer":{"inner":1}}')
-    expect(page.locator("#jsonStatus")).to_contain_text("JSON → YAML", timeout=10000)
-    expect(page.locator("#jsonOutput")).to_have_value("outer:\n  inner: 1")
-    page.locator('[data-target-format="xml"]').click()
-    expect(page.locator("#jsonOutput")).to_have_value(re.compile("<root>"), timeout=10000)
-    expect(page.locator("#jsonOutput")).to_have_value(re.compile("<inner>1</inner>"))
-    if page.locator("#jsonErrorPanel").is_visible():
+    tool_view(page).locator("#jsonInput").fill('{"outer":{"inner":1}}')
+    expect(tool_view(page).locator("#jsonStatus")).to_contain_text("JSON → YAML", timeout=10000)
+    expect(tool_view(page).locator("#jsonOutput")).to_have_value("outer:\n  inner: 1")
+    tool_view(page).locator('[data-target-format="xml"]').click()
+    expect(tool_view(page).locator("#jsonOutput")).to_have_value(re.compile("<root>"), timeout=10000)
+    expect(tool_view(page).locator("#jsonOutput")).to_have_value(re.compile("<inner>1</inner>"))
+    if tool_view(page).locator("#jsonErrorPanel").is_visible():
         raise AssertionError("Valid structured data unexpectedly showed a parse error")
 
     assert_no_runtime_errors(errors)
@@ -246,7 +252,7 @@ with sync_playwright() as playwright:
     organizer_page.close()
 
     print(
-        "UI smoke passed: 19 cards, stable favorites, lazy views/tools, subset icons, "
+        "UI smoke passed: 24 cards, stable favorites, lazy views/tools, subset icons, "
         "strict CSP, structured data conversion, sandboxed preview JS."
     )
     context.close()

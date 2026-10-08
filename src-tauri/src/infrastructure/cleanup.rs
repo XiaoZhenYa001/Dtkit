@@ -105,6 +105,10 @@ impl Drop for RunningGuard<'_> {
 }
 
 impl CleanupManager {
+    pub(crate) fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
+    }
+
     pub(crate) fn restore(&self, app: &AppHandle) -> Result<(), String> {
         let path = app
             .state::<StorageManager>()
@@ -647,6 +651,7 @@ pub(crate) async fn run_storage_cleanup(
     app: AppHandle,
     request: CleanupRequest,
 ) -> Result<CleanupResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<CleanupManager>().run_manual(&app, request)
     })
@@ -656,6 +661,7 @@ pub(crate) async fn run_storage_cleanup(
 
 #[tauri::command]
 pub(crate) async fn restore_latest_cleanup(app: AppHandle) -> Result<CleanupResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     tauri::async_runtime::spawn_blocking(move || app.state::<CleanupManager>().restore_latest(&app))
         .await
         .map_err(|error| format!("恢复任务异常结束: {error}"))?

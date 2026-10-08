@@ -92,10 +92,11 @@ with sync_playwright() as playwright:
     manager.locator('[data-view="settings"]').click()
     manager.locator('.settings-side-nav__item[href="#configSection"]').click()
     manager.locator('#openDesktopAppManager').click()
-    manager.locator('#appManagerList .app-manager-row').first.click()
-    assert manager.locator('#appManagerCategory').input_value() == '游戏'
-    manager.locator('#appManagerCategoryToggle').click()
-    category_menu = manager.locator('#appManagerCategoryOptions')
+    tool = manager.frame_locator('iframe.tool-page-frame:not([hidden])')
+    tool.locator('#appManagerList .app-manager-row').first.click()
+    assert tool.locator('#appManagerCategory').input_value() == '游戏'
+    tool.locator('#appManagerCategoryToggle').click()
+    category_menu = tool.locator('#appManagerCategoryOptions')
     assert category_menu.is_visible()
     options = category_menu.locator('[role="option"]').evaluate_all(
         "nodes => nodes.map(node => node.dataset.categoryValue)"
@@ -103,9 +104,9 @@ with sync_playwright() as playwright:
     assert options[0] == 'program'
     assert set(options) == {'program', '最近使用', '文件夹', '其他', '工作', '游戏', '开发'}
     category_menu.locator('[data-category-value="工作"]').click()
-    assert manager.locator('#appManagerCategory').input_value() == '工作'
-    manager.locator('#appManagerCategory').fill('媒体')
-    assert manager.locator('#appManagerCategory').input_value() == '媒体'
+    assert tool.locator('#appManagerCategory').input_value() == '工作'
+    tool.locator('#appManagerCategory').fill('媒体')
+    assert tool.locator('#appManagerCategory').input_value() == '媒体'
     manager.close()
     context.close()
     browser.close()

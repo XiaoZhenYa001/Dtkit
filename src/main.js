@@ -7,7 +7,8 @@ import './css/tool-shortcut.css';
 // ============================================
 // 导入核心模块
 // ============================================
-import appState, { getActiveTab, syncManagedStorageLayout } from './core/state.js';
+import appState, { createPageId, getActiveTab, syncManagedStorageLayout } from './core/state.js';
+import { createToolPageHost, readToolWorkspace } from './core/toolPageHost.js';
 import DOM, { initDOM } from './core/dom.js';
 import { showToast } from './core/utils.js';
 import { bootstrapDesktopOrganizer } from './core/desktopOrganizer.js';
@@ -20,14 +21,7 @@ import { initializeMinimizeMode } from './core/minimizeMode.js';
 // ============================================
 import {
     getAllTools,
-    initTool,
-    loadTool,
     getTool,
-    destroyTool,
-    hasToolTemplate,
-    renderToolView,
-    showDynamicContainer,
-    hideDynamicContainer,
     applyDisabledTools
 } from './tools/index.js';
 
@@ -55,10 +49,9 @@ import { loadViewAssets } from './views/lazyAssets.js';
 // 内容视图管理
 // ============================================
 
-let pendingToolInitFrame = null;
 let pendingScrollRestoreFrame = null;
-const toolOpenRequests = new Map();
 let viewRenderRequest = 0;
+let toolPageHost = null;
 
 function restoreCurrentScrollPosition(requestId) {
     if (pendingScrollRestoreFrame !== null) cancelAnimationFrame(pendingScrollRestoreFrame);
@@ -123,15 +116,8 @@ function updateContentView() {
     if (!activeTab) return;
     const requestId = ++viewRenderRequest;
 
-    if (pendingToolInitFrame !== null) {
-        cancelAnimationFrame(pendingToolInitFrame);
-        pendingToolInitFrame = null;
-    }
-    
-    // 销毁当前工具（清理资源）
-    if (appState.currentToolId && appState.currentToolId !== activeTab.toolId) {
-        destroyTool(appState.currentToolId);
-    }
+    toolPageHost?.hide();
+    toolPageHost?.prune();
     
     // 隐藏所有视图
     DOM.toolLibraryView?.classList.remove('view--active');
@@ -141,9 +127,6 @@ function updateContentView() {
     // 默认隐藏导航栏
     if (DOM.navbar) DOM.navbar.style.display = 'none';
     
-    // 隐藏动态工具容器
-    hideDynamicContainer();
-    
     // 判断显示哪个视图
     if (activeTab.toolId === 'settings') {
         appState.currentToolId = null;
@@ -152,23 +135,16 @@ function updateContentView() {
     }
     else if (activeTab.toolId) {
         const tool = getTool(activeTab.toolId);
-        if (tool) {
+        if (tool && tool.enabled !== false && tool.status !== 'planned') {
             // 工具页面也显示导航栏（后退/前进按钮）
             if (DOM.navbar) DOM.navbar.style.display = 'flex';
             
-            if (hasToolTemplate(activeTab.toolId)) {
-                renderToolView(activeTab.toolId);
-                showDynamicContainer();
-            }
+            toolPageHost?.show(activeTab);
             appState.currentToolId = activeTab.toolId;
-            const toolIdToInitialize = activeTab.toolId;
-            pendingToolInitFrame = requestAnimationFrame(() => {
-                pendingToolInitFrame = null;
-                const latestTab = getActiveTab();
-                if (latestTab?.toolId === toolIdToInitialize && appState.currentToolId === toolIdToInitialize) {
-                    initTool(toolIdToInitialize);
-                }
-            });
+        } else {
+            DOM.toolLibraryView?.classList.add('view--active');
+            if (DOM.navbar) DOM.navbar.style.display = 'flex';
+            appState.currentToolId = null;
         }
     }
     else if (appState.currentView === 'settings') {
@@ -222,6 +198,7 @@ function getTabBadgeByTool(toolId) {
 
 async function openTool(toolId, toolName, toolIcon) {
     const requestedTool = getTool(toolId);
+    if (!requestedTool || requestedTool.enabled === false) return;
     if (requestedTool?.status === 'planned') {
         showToast(`${requestedTool.name}正在开发中，敬请期待`, 'info');
         return;
@@ -229,58 +206,22 @@ async function openTool(toolId, toolName, toolIcon) {
 
     captureCurrentScrollPosition();
 
-    // 检查是否已有标签打开了该工具
-    let existingTab = appState.tabs.find(t => t.toolId === toolId);
-    
-    if (existingTab) {
-        switchTab(existingTab.id);
-        return;
-    }
-    
-    const targetTabId = appState.activeTabId;
-    const requestToken = Symbol(toolId);
-    toolOpenRequests.set(targetTabId, requestToken);
-
-    try {
-        await loadTool(toolId);
-    } catch (error) {
-        if (toolOpenRequests.get(targetTabId) !== requestToken) return;
-        toolOpenRequests.delete(targetTabId);
-        console.error(`[DtKit] 工具加载失败: ${toolId}`, error);
-        showToast(`工具加载失败：${toolName}`, 'error');
-        return;
-    }
-
-    if (toolOpenRequests.get(targetTabId) !== requestToken) return;
-    toolOpenRequests.delete(targetTabId);
-
-    // 加载期间可能发生了第二次打开请求。
-    existingTab = appState.tabs.find(t => t.toolId === toolId);
-    if (existingTab) {
-        switchTab(existingTab.id);
-        return;
-    }
-
-    // 将结果写回发起请求时的标签，避免异步加载期间切换标签导致串页。
-    const targetTab = appState.tabs.find(tab => tab.id === targetTabId);
+    const targetTab = getActiveTab();
     if (!targetTab) return;
-
-    const loadedTool = getTool(toolId);
-    
+    const ordinal = appState.tabs.filter(tab => tab.toolId === toolId).length + 1;
     targetTab.toolId = toolId;
-    targetTab.title = loadedTool?.name || toolName;
-    targetTab.icon = loadedTool?.icon || toolIcon;
+    targetTab.instanceId = createPageId();
+    targetTab.title = `${requestedTool.name || toolName}${ordinal > 1 ? ` · ${ordinal}` : ''}`;
+    targetTab.icon = requestedTool.icon || toolIcon;
     targetTab.badge = getTabBadgeByTool(toolId);
     
     // 添加到历史栈（保存 toolId 和 viewType）
-    recordHistoryEntry(targetTab, { toolId, viewType: targetTab.viewType });
+    recordHistoryEntry(targetTab, { toolId, viewType: targetTab.viewType, instanceId: targetTab.instanceId });
     
     appState.currentView = toolId;
     renderTabs();
-    if (appState.activeTabId === targetTabId) {
-        updateContentView();
-        updateBackForwardButtons();
-    }
+    updateContentView();
+    updateBackForwardButtons();
 }
 
 // ============================================
@@ -310,6 +251,7 @@ function initNavButtonListeners() {
                 appState.currentView = 'toolLibrary';
                 if (activeTab) {
                     activeTab.toolId = null;
+                    activeTab.instanceId = null;
                     activeTab.viewType = 'toolLibrary';
                     activeTab.title = '工具库';
                     activeTab.icon = 'ri-apps-2-line';
@@ -320,6 +262,7 @@ function initNavButtonListeners() {
                 appState.currentView = 'favorites';
                 if (activeTab) {
                     activeTab.toolId = null;
+                    activeTab.instanceId = null;
                     activeTab.viewType = 'favorites';
                     activeTab.title = '收藏';
                     activeTab.icon = 'ri-star-line';
@@ -332,7 +275,7 @@ function initNavButtonListeners() {
                 if (settingsTab) {
                     switchTab(settingsTab.id);
                 } else {
-                    const newTabId = 'tab_' + Date.now();
+                    const newTabId = createPageId('tab');
                     appState.tabs.push({
                         id: newTabId,
                         title: '设置',
@@ -375,7 +318,9 @@ function initCallbacks() {
     setTabCallbacks({
         onSwitchTab: switchTab,
         onUpdateContentView: updateContentView,
-        onUpdateBackForwardButtons: updateBackForwardButtons
+        onUpdateBackForwardButtons: updateBackForwardButtons,
+        onBeforeCloseTab: tabId => toolPageHost?.prepareCloseTab(tabId),
+        onCloseTab: tabId => toolPageHost?.prune(tabId)
     });
     
     // 导航组件回调
@@ -414,6 +359,20 @@ async function initializeApp() {
     } catch (error) {
         console.error('[DtKit] 工具模块配置同步失败', error);
     }
+    toolPageHost = createToolPageHost({ contentArea: DOM.contentArea, getTool, appState,
+        onNewPage: toolId => { const tool = getTool(toolId); addTab(); openTool(toolId, tool.name, tool.icon); },
+        onRename: () => {
+            const tab = getActiveTab(); if (!tab) return;
+            const title = window.prompt('页面名称', tab.title)?.trim().slice(0, 80);
+            if (title) { tab.title = title; renderTabs(); }
+        }
+    });
+    const workspace = readToolWorkspace(getTool);
+    if (workspace) {
+        appState.tabs = workspace.tabs; appState.activeTabId = workspace.activeTabId;
+        const tab = getActiveTab(); appState.currentView = tab.toolId || tab.viewType;
+        toolPageHost.restore(workspace.pages);
+    }
     
     // 初始化模块间回调
     initCallbacks();
@@ -430,9 +389,11 @@ async function initializeApp() {
     initSearchListener();
     initAddTabListener();
     initClearFavoritesListener();
+    if (workspace) updateContentView();
     window.addEventListener('dtkit-tool-modules-changed', () => {
         renderToolLibrary();
         renderFavoritesPage();
+        toolPageHost.prune();
     });
     window.addEventListener('dtkit:open-tool-new-tab', event => {
         const toolId = event.detail?.toolId;
@@ -455,6 +416,13 @@ async function initializeApp() {
     initializePowerLifecycle().catch(error => {
         console.error('[DtKit] 节能生命周期启动失败', error);
     });
+    const listen = window.__TAURI__?.event?.listen;
+    if (listen) listen('main-sleep-request', async event => {
+        let ready = false;
+        try { ready = await toolPageHost.persist({ prepareSleep: true }); }
+        catch (error) { console.error('[DtKit] 休眠前保存页面失败', error); }
+        await window.__TAURI__.core.invoke('main_sleep_ready', { token: event.payload?.token, ready });
+    }).catch(error => console.error('[DtKit] 页面休眠握手不可用', error));
 
     initializeMinimizeMode().catch(error => {
         console.error('[DtKit] 最小化策略同步失败', error);

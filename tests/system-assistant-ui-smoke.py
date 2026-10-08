@@ -15,6 +15,14 @@ MOCK_TAURI = """
     { id: 'two', name: 'Updater Service', command: 'C:\\\\Program Files\\\\Updater\\\\update.exe', targetPath: null, sourceKind: 'registry', sourceLabel: '所有用户 · 64 位 Run', sourceDetail: 'Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run', scope: 'system', enabled: true, canToggle: true, requiresElevation: true },
     { id: 'three', name: 'Workspace Helper', command: 'C:\\\\Users\\\\Demo\\\\Startup\\\\Workspace.lnk', targetPath: 'C:\\\\Users\\\\Demo\\\\Startup\\\\Workspace.lnk.dtkit-disabled', sourceKind: 'startupFolder', sourceLabel: '当前用户 · 启动文件夹', sourceDetail: 'C:\\\\Users\\\\Demo\\\\Startup', scope: 'user', enabled: false, canToggle: true, requiresElevation: false }
   ];
+  items.forEach(item => Object.assign(item, {
+    fingerprint: 'revision-1', managed: !item.enabled,
+    canReveal: Boolean(item.targetPath), canRevealSource: item.sourceKind === 'startupFolder',
+    targetExists: Boolean(item.targetPath), disabledReason: item.enabled ? null : '由 DtKit 停用，可恢复'
+  }));
+  items.find(item => item.id === 'two').canToggle = false;
+  const calls = [];
+  window.__systemAssistantCalls = calls;
   const snapshot = () => ({
     items: items.map(item => ({ ...item })),
     total: items.length,
@@ -26,9 +34,12 @@ MOCK_TAURI = """
   });
   window.__TAURI__ = {
     core: { invoke: async (command, args = {}) => {
+      calls.push({command, args});
+      if (['scan_system_startup_items', 'set_system_startup_enabled', 'reveal_system_startup_item', 'open_system_startup_settings'].includes(command) && args.toolId !== 'system-assistant') throw 'Unexpected tool authorization';
       if (command === 'scan_system_startup_items') return snapshot();
       if (command === 'set_system_startup_enabled') {
         const item = items.find(entry => entry.id === args.id);
+        if (!item || args.expectedFingerprint !== item.fingerprint) throw '启动项已变化，请重新扫描';
         if (item) item.enabled = args.enabled;
         return snapshot();
       }

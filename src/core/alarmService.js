@@ -1,8 +1,8 @@
 import {
     ALARM_STORAGE_KEY,
     readAlarmData,
-    recordTriggeredAlarm,
-    writeAlarmData
+    recordTriggeredAlarmOnce,
+    updateAlarmData
 } from './alarmStore.js';
 import { AlarmSyncQueue } from './alarmSync.js';
 
@@ -11,7 +11,26 @@ const SYNC_STATUS_EVENT = 'dtkit:alarm-sync-status';
 
 let initialized = false;
 let unlistenAlarm = null;
+let initializationPromise = null;
+let activeAlarmModule = null;
+let sharedServiceApi = null;
+let sharedAudioApi = null;
 let alarmSyncStatus = { state: 'idle', attempt: 0, maxAttempts: 4 };
+
+function getParentService() {
+    const currentWindow = globalThis.window;
+    if (!currentWindow?.__DTKIT_TOOL_PAGE_CONTEXT?.embedded) return null;
+    try {
+        if (currentWindow.parent === currentWindow || currentWindow.parent.location.origin !== currentWindow.location.origin) return null;
+        return currentWindow.parent.__DTKIT_SHARED_ALARM_SERVICE__ || null;
+    } catch { return null; }
+}
+
+export function stopAlarmAudio(taskId = null) {
+    const parent = getParentService();
+    if (parent) return parent.stopAudio(taskId);
+    return activeAlarmModule?.stopBackgroundAlarmAudio?.(taskId) ?? false;
+}
 
 function emitSyncStatus(detail) {
     alarmSyncStatus = detail;
@@ -21,7 +40,14 @@ function emitSyncStatus(detail) {
 const alarmSyncQueue = new AlarmSyncQueue(async tasks => {
     const invoke = getInvoke();
     if (!invoke) return false;
-    await invoke('sync_alarm_tasks', { tasks });
+    const syncLatest = async () => {
+        const latest = readAlarmData();
+        await invoke('sync_alarm_tasks', { tasks: Array.isArray(latest.tasks) ? latest.tasks : tasks });
+    };
+    // A slow IPC response from another window must not restore an older schedule.
+    const locks = globalThis.navigator?.locks;
+    if (locks?.request) await locks.request('dtkit-alarm-scheduler', syncLatest);
+    else await syncLatest();
     return true;
 }, { onStatus: emitSyncStatus });
 
@@ -148,26 +174,31 @@ export function getAlarmRemainingSeconds(task, now = Date.now(), { includePaused
 }
 
 export function syncAlarmTasks(tasks) {
+    const parent = getParentService();
+    if (parent) return parent.sync(tasks);
     if (!getInvoke()) return Promise.resolve(false);
     return alarmSyncQueue.request(tasks);
 }
 
 export function getAlarmSyncStatus() {
+    const parent = getParentService();
+    if (parent) return parent.getStatus();
     return alarmSyncStatus;
 }
 
-function updateStoredTaskAfterTrigger(triggeredTask) {
-    const data = readAlarmData();
-    if (recordTriggeredAlarm(data, triggeredTask)) writeAlarmData(data);
-}
-
-async function handleAlarmTriggered(task) {
-    updateStoredTaskAfterTrigger(task);
+async function handleAlarmTriggered(task, { acknowledge = true } = {}) {
+    const result = await updateAlarmData(data => recordTriggeredAlarmOnce(data, task));
+    const invoke = getInvoke();
+    if (acknowledge && invoke && typeof task.triggerId === 'string') {
+        await invoke('ack_missed_alarm_triggers', { triggerIds: [task.triggerId] });
+    }
+    if (!result.changed) return;
     globalThis.window?.dispatchEvent(new CustomEvent(TRIGGER_EVENT, { detail: task }));
 
     if (task.action === 'sound') {
         try {
             const alarmModule = await import('../tools/alarm-clock/index.js');
+            activeAlarmModule = alarmModule;
             await alarmModule.handleBackgroundAlarmTrigger(task);
         } catch (error) {
             console.error('[AlarmService] 播放提醒音失败', error);
@@ -175,35 +206,66 @@ async function handleAlarmTriggered(task) {
     }
 }
 
-export async function initializeAlarmService() {
-    if (initialized) return;
-    initialized = true;
-
+async function initializeOwnedService() {
     const listen = getListen();
     if (!listen) return;
 
     unlistenAlarm = await listen('alarm-triggered', event => {
-        handleAlarmTriggered(event.payload);
+        handleAlarmTriggered(event.payload).catch(error => console.error('[AlarmService] 更新提醒记录失败', error));
     });
 
     const invoke = getInvoke();
     if (invoke) {
-        const missedTriggers = await invoke('take_missed_alarm_triggers');
-        for (const task of missedTriggers) await handleAlarmTriggered(task);
+        // A durable log and a failed-write buffer can require more than one batch.
+        // Drain only at initialization, and acknowledge a batch after all records
+        // have reached local storage to avoid a native disk write for every item.
+        for (let batch = 0; batch < 4; batch += 1) {
+            const missedTriggers = await invoke('take_missed_alarm_triggers');
+            if (!Array.isArray(missedTriggers) || missedTriggers.length === 0) break;
+            for (const task of missedTriggers) await handleAlarmTriggered(task, { acknowledge: false });
+            const triggerIds = missedTriggers.map(task => task.triggerId).filter(id => typeof id === 'string');
+            if (triggerIds.length) await invoke('ack_missed_alarm_triggers', { triggerIds });
+            if (missedTriggers.length < 200) break;
+        }
     }
 
-    const data = readAlarmData();
-    const tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, 200) : [];
-    tasks.forEach(normalizeAlarmTask);
-    tasks.forEach(task => prepareAlarmTaskSchedule(task));
-    if (tasks.length > 0) writeAlarmData({ ...data, tasks });
-    await syncAlarmTasks(tasks);
+    const { data } = await updateAlarmData(data => {
+        const previous = JSON.stringify(data.tasks);
+        data.tasks = data.tasks.slice(0, 200);
+        data.tasks.forEach(normalizeAlarmTask);
+        data.tasks.forEach(task => prepareAlarmTaskSchedule(task));
+        return previous !== JSON.stringify(data.tasks);
+    });
+    await syncAlarmTasks(data.tasks);
+    initialized = true;
+}
+
+export function initializeAlarmService() {
+    const parent = getParentService();
+    if (parent) return parent.ready();
+    if (initializationPromise) return initializationPromise;
+    if (initialized) return Promise.resolve();
+    initializationPromise = Promise.resolve().then(initializeOwnedService).catch(error => {
+        unlistenAlarm?.(); unlistenAlarm = null; initialized = false;
+        throw error;
+    }).finally(() => { initializationPromise = null; });
+    const currentWindow = globalThis.window;
+    if (currentWindow) {
+        sharedServiceApi = { ready: initializeAlarmService, sync: syncAlarmTasks, getStatus: getAlarmSyncStatus, stopAudio: stopAlarmAudio };
+        sharedAudioApi = { stop: taskId => stopAlarmAudio(taskId), stopAll: () => stopAlarmAudio() };
+        currentWindow.__DTKIT_SHARED_ALARM_SERVICE__ = sharedServiceApi;
+        currentWindow.__DTKIT_SHARED_ALARM_AUDIO__ = sharedAudioApi;
+    }
+    return initializationPromise;
 }
 
 export function destroyAlarmService() {
     unlistenAlarm?.();
     unlistenAlarm = null;
     initialized = false;
+    if (globalThis.window?.__DTKIT_SHARED_ALARM_SERVICE__ === sharedServiceApi) delete window.__DTKIT_SHARED_ALARM_SERVICE__;
+    if (globalThis.window?.__DTKIT_SHARED_ALARM_AUDIO__ === sharedAudioApi) delete window.__DTKIT_SHARED_ALARM_AUDIO__;
+    sharedServiceApi = null; sharedAudioApi = null;
 }
 
 export {

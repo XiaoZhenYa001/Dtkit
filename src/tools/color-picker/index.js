@@ -11,6 +11,7 @@ let colorState = {
     currentColor: '#3b82f6',
     abortController: null,
     colorPickUnlisten: null,
+    pendingRequest: null,
 };
 
 /**
@@ -191,8 +192,12 @@ async function initColorPickerTool() {
     copyRgba?.addEventListener('click', () => copyToClipboard(rgbaInput.value, copyRgba), { signal });
     screenPicker?.addEventListener('click', async () => {
         screenPicker.disabled = true;
-        try { await invoke('start_screen_color_pick'); }
+        const requestId = crypto.randomUUID();
+        colorState.pendingRequest = requestId;
+        try { await invoke('start_screen_color_pick', { requestId }); }
         catch (error) {
+            if (colorState.pendingRequest !== requestId) return;
+            colorState.pendingRequest = null;
             screenPicker.disabled = false;
             screenPicker.querySelector('small').textContent = String(error);
         }
@@ -200,6 +205,8 @@ async function initColorPickerTool() {
 
     colorState.colorPickUnlisten?.();
     colorState.colorPickUnlisten = await globalThis.window?.__TAURI__?.event?.listen?.('screen-color-picked', event => {
+        if (!colorState.pendingRequest || event.payload?.requestId !== colorState.pendingRequest) return;
+        colorState.pendingRequest = null;
         screenPicker.disabled = false;
         screenPicker.querySelector('small').textContent = event.payload?.cancelled ? '已取消，点击可重新选择' : '点击桌面任意像素';
         if (event.payload?.color) updateColor(event.payload.color, true);
@@ -448,6 +455,7 @@ function destroyColorPickerTool() {
     }
     colorState.colorPickUnlisten?.();
     colorState.colorPickUnlisten = null;
+    colorState.pendingRequest = null;
 }
 
 // 注册工具

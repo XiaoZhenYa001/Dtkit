@@ -103,7 +103,8 @@ async function init() {
     document.getElementById('mirrorSelect').addEventListener('click', selectRegion, { signal });
     document.getElementById('mirrorRefresh').addEventListener('click', refresh, { signal });
     document.getElementById('mirrorList').addEventListener('click', control, { signal });
-    window.addEventListener('focus', refresh, { signal });
+    if (!window.__DTKIT_TOOL_PAGE_CONTEXT?.embedded) window.addEventListener('focus', refresh, { signal });
+    window.addEventListener('dtkit:power-state', event => { if (!event.detail?.suspended) refresh(); }, { signal });
     const listen = window.__TAURI__?.event?.listen;
     if (listen) {
         try {

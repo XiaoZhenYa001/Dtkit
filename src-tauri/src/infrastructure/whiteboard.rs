@@ -16,6 +16,7 @@ const THUMBNAIL_LIMIT: usize = 700 * 1024;
 #[derive(Default)]
 pub(crate) struct WhiteboardEditManager {
     owners: Mutex<HashMap<String, String>>,
+    operations: Mutex<()>,
 }
 
 impl WhiteboardEditManager {
@@ -54,6 +55,32 @@ impl WhiteboardEditManager {
         }
         Ok(())
     }
+
+    pub(crate) fn release_window(&self, label: &str) {
+        if let Ok(mut owners) = self.owners.lock() {
+            owners.retain(|_, owner| owner_window(owner) != label);
+        }
+    }
+}
+
+fn edit_owner(label: &str, instance_id: Option<&str>) -> Result<String, String> {
+    match instance_id {
+        None => Ok(label.to_string()),
+        Some(id)
+            if !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')) =>
+        {
+            Ok(format!("{label}::{id}"))
+        }
+        _ => Err("白板页面标识无效".to_string()),
+    }
+}
+
+fn owner_window(owner: &str) -> &str {
+    owner.split_once("::").map_or(owner, |(label, _)| label)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +100,7 @@ pub(crate) struct WhiteboardOpenResult {
     document: Value,
     draft: Option<Value>,
     editable: bool,
+    is_formal: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +210,11 @@ fn write_index(path: &Path, items: &[WhiteboardMeta]) -> Result<(), String> {
 
 #[tauri::command]
 pub(crate) fn list_whiteboards(app: AppHandle) -> Result<Vec<WhiteboardMeta>, String> {
+    let manager = app.state::<WhiteboardEditManager>();
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
     let (_, drafts, index) = roots(&app)?;
     let mut items = read_index(&index)?;
     for item in &mut items {
@@ -197,20 +230,18 @@ pub(crate) fn load_whiteboard(
     window: WebviewWindow,
     manager: tauri::State<'_, WhiteboardEditManager>,
     id: String,
+    instance_id: Option<String>,
 ) -> Result<WhiteboardOpenResult, String> {
     safe_id(&id)?;
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
     let (boards, drafts, index) = roots(&app)?;
-    let meta = read_index(&index)?
-        .into_iter()
-        .find(|item| item.id == id)
-        .ok_or_else(|| "白板不存在".to_string())?;
-    let document: Value = serde_json::from_slice(
-        &fs::read(boards.join(&id).join("board.json"))
-            .map_err(|error| format!("读取白板失败: {error}"))?,
-    )
-    .map_err(|error| format!("白板数据损坏: {error}"))?;
+    let formal_meta = read_index(&index)?.into_iter().find(|item| item.id == id);
     let draft_path = drafts.join(format!("{id}.json"));
-    let draft = if draft_path.is_file() {
+    let draft: Option<Value> = if draft_path.is_file() {
         Some(
             serde_json::from_slice(
                 &fs::read(draft_path).map_err(|error| format!("读取恢复草稿失败: {error}"))?,
@@ -220,12 +251,44 @@ pub(crate) fn load_whiteboard(
     } else {
         None
     };
-    let editable = manager.acquire(&id, window.label())?;
+    let is_formal = formal_meta.is_some();
+    let document: Value = if is_formal {
+        serde_json::from_slice(
+            &fs::read(boards.join(&id).join("board.json"))
+                .map_err(|error| format!("读取白板失败: {error}"))?,
+        )
+        .map_err(|error| format!("白板数据损坏: {error}"))?
+    } else {
+        draft
+            .as_ref()
+            .and_then(|value| value.get("document"))
+            .cloned()
+            .ok_or_else(|| "白板不存在".to_string())?
+    };
+    let meta = formal_meta.unwrap_or_else(|| WhiteboardMeta {
+        id: id.clone(),
+        name: clean_name(
+            draft
+                .as_ref()
+                .and_then(|value| value.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("未命名白板"),
+        ),
+        created_at: 0,
+        updated_at: draft
+            .as_ref()
+            .and_then(|value| value.get("savedAt"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        has_draft: true,
+    });
+    let editable = manager.acquire(&id, &owner)?;
     Ok(WhiteboardOpenResult {
         meta,
         document,
         draft,
         editable,
+        is_formal,
     })
 }
 
@@ -235,14 +298,21 @@ pub(crate) fn save_whiteboard(
     window: WebviewWindow,
     manager: tauri::State<'_, WhiteboardEditManager>,
     request: SaveWhiteboardRequest,
+    instance_id: Option<String>,
 ) -> Result<WhiteboardMeta, String> {
+    let _native_work = super::launch::keep_native_work(&app);
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
     let (boards, drafts, index) = roots(&app)?;
     let mut items = read_index(&index)?;
     let id = request
         .id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     safe_id(&id)?;
-    if !manager.acquire(&id, window.label())? {
+    if !manager.acquire(&id, &owner)? {
         return Err("该白板正在另一个窗口编辑；请先接管编辑权".to_string());
     }
     let now = Utc::now().timestamp_millis();
@@ -282,9 +352,16 @@ pub(crate) fn save_whiteboard_draft(
     window: WebviewWindow,
     manager: tauri::State<'_, WhiteboardEditManager>,
     request: SaveDraftRequest,
+    instance_id: Option<String>,
 ) -> Result<(), String> {
     safe_id(&request.id)?;
-    if !manager.acquire(&request.id, window.label())? {
+    let _native_work = super::launch::keep_native_work(&app);
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
+    if !manager.acquire(&request.id, &owner)? {
         return Err("该白板正在另一个窗口编辑，当前窗口不会覆盖它的草稿".to_string());
     }
     let (_, drafts, _) = roots(&app)?;
@@ -296,8 +373,23 @@ pub(crate) fn save_whiteboard_draft(
 }
 
 #[tauri::command]
-pub(crate) fn discard_whiteboard_draft(app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn discard_whiteboard_draft(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    instance_id: Option<String>,
+) -> Result<(), String> {
     safe_id(&id)?;
+    let _native_work = super::launch::keep_native_work(&app);
+    let manager = app.state::<WhiteboardEditManager>();
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    if !manager.acquire(&id, &owner)? {
+        return Err("该白板正在另一个页面编辑，当前页面不会清理它的草稿".to_string());
+    }
     let (_, drafts, _) = roots(&app)?;
     let path = drafts.join(format!("{id}.json"));
     if path.exists() {
@@ -330,11 +422,23 @@ pub(crate) fn take_over_whiteboard_edit(
     window: WebviewWindow,
     manager: tauri::State<'_, WhiteboardEditManager>,
     id: String,
+    instance_id: Option<String>,
 ) -> Result<(), String> {
     safe_id(&id)?;
-    if let Some(previous_owner) = manager.take_over(&id, window.label())? {
-        if let Some(previous_window) = app.get_webview_window(&previous_owner) {
-            let _ = previous_window.emit("whiteboard-edit-revoked", &id);
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    let _operation = manager
+        .operations
+        .lock()
+        .map_err(|_| "白板存储状态不可用".to_string())?;
+    if let Some(previous_owner) = manager.take_over(&id, &owner)? {
+        if let Some(previous_window) = app.get_webview_window(owner_window(&previous_owner)) {
+            let instance = previous_owner
+                .split_once("::")
+                .map(|(_, instance)| instance);
+            let _ = previous_window.emit(
+                "whiteboard-edit-revoked",
+                serde_json::json!({ "id": id, "instanceId": instance }),
+            );
         }
     }
     Ok(())
@@ -345,9 +449,11 @@ pub(crate) fn release_whiteboard_edit(
     window: WebviewWindow,
     manager: tauri::State<'_, WhiteboardEditManager>,
     id: String,
+    instance_id: Option<String>,
 ) -> Result<(), String> {
     safe_id(&id)?;
-    manager.release(&id, window.label())
+    let owner = edit_owner(window.label(), instance_id.as_deref())?;
+    manager.release(&id, &owner)
 }
 
 #[cfg(test)]
@@ -385,5 +491,33 @@ mod tests {
         assert!(!manager.acquire(&id, "quick-host-1").unwrap());
         manager.release(&id, "quick-host-2").unwrap();
         assert!(manager.acquire(&id, "main").unwrap());
+    }
+
+    #[test]
+    fn pages_in_one_window_have_separate_edit_leases() {
+        let manager = WhiteboardEditManager::default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let first = edit_owner("main", Some("page-1")).unwrap();
+        let second = edit_owner("main", Some("page-2")).unwrap();
+        assert!(manager.acquire(&id, &first).unwrap());
+        assert!(!manager.acquire(&id, &second).unwrap());
+        manager.release(&id, &second).unwrap();
+        assert!(!manager.acquire(&id, &second).unwrap());
+        assert_eq!(
+            manager.take_over(&id, &second).unwrap(),
+            Some(first.clone())
+        );
+        manager.release(&id, &first).unwrap();
+        assert!(!manager.acquire(&id, &first).unwrap());
+        manager.release_window("main");
+        assert!(manager.acquire(&id, &first).unwrap());
+    }
+
+    #[test]
+    fn edit_owner_rejects_ambiguous_page_identifiers_and_keeps_legacy_calls() {
+        assert_eq!(edit_owner("main", None).unwrap(), "main");
+        assert!(edit_owner("main", Some("page::other")).is_err());
+        assert!(edit_owner("main", Some("")).is_err());
+        assert_eq!(owner_window("main::page-1"), "main");
     }
 }

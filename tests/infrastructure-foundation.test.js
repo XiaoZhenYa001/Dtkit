@@ -15,7 +15,7 @@ test('quick host is a separate minimal frontend entry', () => {
     assert.match(html, /id="quickMaximize"/);
     assert.match(html, /id="quickPin"/);
     assert.doesNotMatch(html, /src=["']\.\/main\.js|tools\/index|alarmService/);
-    assert.doesNotMatch(script, /setInterval|requestAnimationFrame|alarmService/);
+    assert.doesNotMatch(script, /setInterval|requestAnimationFrame|import\s*\{[^}]+\}\s*from\s*['"][^'"]*alarmService/);
     assert.match(script, /import\('\.\.\/tools\/index\.js'\)/);
     assert.match(script, /runtime\.loadTool\(target\.toolId\)/);
     assert.match(script, /search_local_files/);
@@ -164,7 +164,7 @@ test('tool shortcuts are mounted from tool metadata instead of a centralized too
 });
 
 test('system assistant scans on demand and keeps startup changes reversible', () => {
-    const frontend = read('src/tools/system-assistant/index.js');
+    const frontend = read('src/tools/system-assistant/view.js');
     const backend = read('src-tauri/src/infrastructure/system_assistant.rs');
 
     assert.doesNotMatch(frontend, /setInterval\s*\(/);

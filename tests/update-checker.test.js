@@ -12,7 +12,7 @@ import {
 test('release versions are parsed and compared as semantic numeric triples', () => {
     assert.deepEqual(parseVersion('v0.2.7'), [0, 2, 7]);
     assert.equal(compareVersions('v0.10.0', '0.2.7'), 1);
-    assert.equal(compareVersions('0.2.7', CURRENT_VERSION), 0);
+    assert.equal(compareVersions('0.2.9', CURRENT_VERSION), 0);
     assert.equal(compareVersions('v0.2.6', CURRENT_VERSION), -1);
     assert.equal(parseVersion('release-0.2.7'), null);
 });
@@ -33,15 +33,15 @@ test('a repository without a published release is a supported state', async () =
     assert.equal(release, null);
 });
 
-test('application manifests and visible build information stay on v0.2.7', () => {
+test('application manifests and visible build information stay on v0.2.9', () => {
     const root = new URL('../', import.meta.url);
     const packageJson = JSON.parse(fs.readFileSync(new URL('package.json', root), 'utf8'));
     const tauriConfig = JSON.parse(fs.readFileSync(new URL('src-tauri/tauri.conf.json', root), 'utf8'));
     const cargo = fs.readFileSync(new URL('src-tauri/Cargo.toml', root), 'utf8');
     const html = fs.readFileSync(new URL('src/index.html', root), 'utf8');
-    assert.equal(packageJson.version, '0.2.7');
-    assert.equal(tauriConfig.version, '0.2.7');
-    assert.match(cargo, /^version = "0\.2\.7"/m);
-    assert.match(html, /v0\.2\.7/);
-    assert.match(html, /Build 20260824/);
+    assert.equal(packageJson.version, '0.2.9');
+    assert.equal(tauriConfig.version, '0.2.9');
+    assert.match(cargo, /^version = "0\.2\.9"/m);
+    assert.match(html, /v0\.2\.9/);
+    assert.match(html, /Build 20261007/);
 });

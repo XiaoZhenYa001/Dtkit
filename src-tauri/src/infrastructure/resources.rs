@@ -23,13 +23,22 @@ pub(crate) enum MinimizeMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResourcePolicy {
+    #[serde(default = "default_standard_retention")]
     pub(crate) quick_host_standard_retention_seconds: u64,
+    #[serde(default = "default_efficient_retention")]
     pub(crate) quick_host_efficient_retention_seconds: u64,
     pub(crate) max_workers_on_battery: usize,
     pub(crate) max_workers_on_ac: usize,
     pub(crate) cache_limit_bytes: u64,
     pub(crate) cache_retention_days: u32,
     pub(crate) log_retention_days: u32,
+}
+
+fn default_standard_retention() -> u64 {
+    60
+}
+fn default_efficient_retention() -> u64 {
+    10
 }
 
 impl Default for ResourcePolicy {
@@ -151,15 +160,6 @@ impl ResourceGovernor {
         Ok(())
     }
 
-    pub(crate) fn quick_host_retention_seconds(&self) -> u64 {
-        let policy = self.policy();
-        match self.mode() {
-            MinimizeMode::Standard => policy.quick_host_standard_retention_seconds,
-            MinimizeMode::Efficient => policy.quick_host_efficient_retention_seconds,
-            MinimizeMode::Deep => 0,
-        }
-    }
-
     pub(crate) fn effective_worker_limit(&self) -> usize {
         let policy = self.policy();
         worker_limit_for_source(&policy, current_power_source())
@@ -251,6 +251,7 @@ pub(crate) struct ResourceSnapshot {
     native_working_set_bytes: Option<u64>,
     webview_count: usize,
     main_window_open: bool,
+    tool_only: bool,
     quick_host_open: bool,
     active_jobs: usize,
     recorded_jobs: usize,
@@ -303,7 +304,8 @@ pub(crate) async fn get_resource_snapshot(app: AppHandle) -> Result<ResourceSnap
         native_working_set_bytes: process_working_set_bytes(),
         webview_count: app.webview_windows().len(),
         main_window_open: app.get_webview_window("main").is_some(),
-        quick_host_open: app.get_webview_window("quick-host").is_some(),
+        tool_only: app.state::<super::launch::LaunchRuntime>().is_tool_only(),
+        quick_host_open: app.state::<QuickHostManager>().has_active_content(),
         active_jobs: jobs.active_count(),
         recorded_jobs: job_records.len(),
         registered_shortcuts: shortcuts.binding_count(),
@@ -319,17 +321,8 @@ pub(crate) async fn get_resource_snapshot(app: AppHandle) -> Result<ResourceSnap
 pub(crate) async fn release_idle_resources(
     app: AppHandle,
 ) -> Result<ResourceReleaseResult, String> {
-    app.state::<PasswordVaultManager>().release_idle_state();
-    let quick_host_released = app.get_webview_window("quick-host").is_some();
-    if quick_host_released {
-        let release_app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-            release_app
-                .state::<QuickHostManager>()
-                .release_now(&release_app);
-        });
-    }
+    app.state::<PasswordVaultManager>().release_cached_index();
+    let quick_host_released = app.state::<QuickHostManager>().release_hidden(&app);
     let hidden_organizer_released =
         app.get_webview_window("desktop-organizer")
             .is_some_and(|window| {
@@ -354,16 +347,17 @@ mod tests {
     fn defaults_match_the_low_resource_product_policy() {
         let governor = ResourceGovernor::default();
         assert_eq!(governor.mode(), MinimizeMode::Efficient);
-        assert_eq!(governor.quick_host_retention_seconds(), 10);
+        assert_eq!(governor.policy().quick_host_efficient_retention_seconds, 10);
         assert_eq!(governor.policy().max_workers_on_battery, 2);
         assert_eq!(governor.policy().max_workers_on_ac, 4);
     }
 
     #[test]
-    fn deep_mode_releases_the_quick_host_immediately() {
+    fn deep_mode_preserves_worker_policy() {
         let governor = ResourceGovernor::default();
         governor.set_mode(MinimizeMode::Deep).unwrap();
-        assert_eq!(governor.quick_host_retention_seconds(), 0);
+        assert_eq!(governor.mode(), MinimizeMode::Deep);
+        assert_eq!(governor.policy().max_workers_on_battery, 2);
     }
 
     #[test]
@@ -376,6 +370,18 @@ mod tests {
         let mut policy = ResourcePolicy::default();
         policy.cache_limit_bytes = 1;
         assert!(governor.set_policy(policy).is_err());
+    }
+
+    #[test]
+    fn removed_retention_controls_remain_compatible_with_saved_policies() {
+        let mut serialized = serde_json::to_value(ResourcePolicy::default()).unwrap();
+        let fields = serialized.as_object_mut().unwrap();
+        fields.remove("quickHostStandardRetentionSeconds");
+        fields.remove("quickHostEfficientRetentionSeconds");
+        let policy: ResourcePolicy = serde_json::from_value(serialized).unwrap();
+        assert_eq!(policy.quick_host_standard_retention_seconds, 60);
+        assert_eq!(policy.quick_host_efficient_retention_seconds, 10);
+        assert!(policy.validate().is_ok());
     }
 
     #[test]

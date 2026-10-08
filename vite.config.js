@@ -20,7 +20,9 @@ export default defineConfig({
             input: {
                 main: `${projectRoot}src/index.html`,
                 quick: `${projectRoot}src/quick.html`,
+                toolPage: `${projectRoot}src/tool-page.html`,
                 stickyNote: `${projectRoot}src/sticky-note.html`,
+                timetableWidget: `${projectRoot}src/timetable-widget.html`,
                 colorPicker: `${projectRoot}src/color-pick.html`,
                 screenRegion: `${projectRoot}src/screen-region.html`,
                 longCaptureBorder: `${projectRoot}src/long-capture-border.html`,

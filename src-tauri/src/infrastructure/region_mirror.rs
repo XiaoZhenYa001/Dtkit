@@ -34,6 +34,13 @@ struct Sessions {
 pub(crate) struct RegionMirrorManager(Arc<Mutex<Sessions>>);
 
 impl RegionMirrorManager {
+    pub(crate) fn has_active_mirrors(&self) -> bool {
+        self.0
+            .lock()
+            .map(|sessions| !sessions.entries.is_empty())
+            .unwrap_or(true)
+    }
+
     fn snapshot(&self) -> Vec<MirrorInfo> {
         self.0
             .lock()
@@ -83,6 +90,8 @@ impl RegionMirrorManager {
         }
         drop(sessions);
         self.emit(app);
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(super::launch::finish_tool_only_if_idle(app_handle));
     }
 }
 

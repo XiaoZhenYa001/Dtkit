@@ -116,7 +116,7 @@ export function getActiveTab() {
  */
 export function createNewTabConfig() {
     return {
-        id: 'tab_' + Date.now(),
+        id: createPageId('tab'),
         title: '工具库',
         icon: 'ri-apps-2-line',
         badge: '工作台',
@@ -126,6 +126,11 @@ export function createNewTabConfig() {
         history: [{ toolId: null, viewType: 'toolLibrary' }],
         historyIndex: 0
     };
+}
+
+let pageSequence = 0;
+export function createPageId(prefix = 'page') {
+    return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}_${++pageSequence}`}`;
 }
 
 // 导出状态单例

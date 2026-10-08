@@ -121,6 +121,13 @@ window.__TAURI__ = {
 """
 
 
+def tool_view(page):
+    """Tools in the main app live in an isolated page; quick/editor entries are direct."""
+    if page.locator("#toolLibraryView").count():
+        return page.frame_locator("iframe.tool-page-frame:not([hidden])")
+    return page
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -138,7 +145,7 @@ def wait_for_calls(page, command, count):
 
 
 def note_card(page, note_id):
-    return page.locator(f'.notes-card[data-note-id="{note_id}"]')
+    return tool_view(page).locator(f'.notes-card[data-note-id="{note_id}"]')
 
 
 def open_editor(browser, base_url, errors, *, width=340, height=390):
@@ -146,9 +153,9 @@ def open_editor(browser, base_url, errors, *, width=340, height=390):
     page.add_init_script(MOCK + "\nwindow.__noteItems = [window.__note({opened:true})];")
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(f"{base_url}/sticky-note.html?id={NOTE_ID}", wait_until="networkidle")
-    expect(page.locator("#noteTitle")).to_have_value("购物清单")
-    expect(page.locator("#noteContent")).to_have_value("牛奶\n苹果")
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
+    expect(tool_view(page).locator("#noteTitle")).to_have_value("购物清单")
+    expect(tool_view(page).locator("#noteContent")).to_have_value("牛奶\n苹果")
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
     return page
 
 
@@ -158,54 +165,54 @@ def test_main_panel(browser, base_url, errors):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(base_url, wait_until="networkidle")
     page.locator('[data-tool-id="sticky-notes"] .tool-card__title').click()
-    expect(page.locator(".notes-shell")).to_be_visible()
-    expect(page.locator(".notes-card")).to_have_count(0)
-    expect(page.locator("#notesCreate")).to_be_enabled()
+    expect(tool_view(page).locator(".notes-shell")).to_be_visible()
+    expect(tool_view(page).locator(".notes-card")).to_have_count(0)
+    expect(tool_view(page).locator("#notesCreate")).to_be_enabled()
 
     # Creation is persisted before opening its editor, and an open note cannot be archived.
-    page.locator("#notesCreate").click()
-    expect(page.locator(".notes-card")).to_have_count(1)
+    tool_view(page).locator("#notesCreate").click()
+    expect(tool_view(page).locator(".notes-card")).to_have_count(1)
     wait_for_calls(page, "open_sticky_note", 1)
     commands = page.evaluate("window.__noteCalls.map(call => call.command)")
     assert commands.index("create_sticky_note") < commands.index("open_sticky_note")
-    expect(page.locator('[data-note-action="trash"]')).to_be_disabled()
+    expect(tool_view(page).locator('[data-note-action="trash"]')).to_be_disabled()
     assert page.evaluate("window.__noteItems[0].title === '' && window.__noteItems[0].content === ''")
 
     page.evaluate(r"""window.__notesSet([
         window.__note({title:'工作 <img src=x onerror=alert(1)>',content:'明天的设计评审'}),
         window.__note({id:'22222222-2222-4222-8222-222222222222',title:'周末',content:'购物牛奶',color:'green'})
     ])""")
-    expect(page.locator(".notes-card")).to_have_count(2)
+    expect(tool_view(page).locator(".notes-card")).to_have_count(2)
     expect(note_card(page, NOTE_ID)).to_contain_text("工作 <img src=x onerror=alert(1)>")
-    assert page.locator(".notes-card img").count() == 0
-    assert page.locator(".notes-card input, .notes-card textarea, .notes-card [contenteditable=true]").count() == 0
-    page.locator("#notesSearch").fill("设计评审")
-    expect(page.locator(".notes-card")).to_have_count(1)
+    assert tool_view(page).locator(".notes-card img").count() == 0
+    assert tool_view(page).locator(".notes-card input, .notes-card textarea, .notes-card [contenteditable=true]").count() == 0
+    tool_view(page).locator("#notesSearch").fill("设计评审")
+    expect(tool_view(page).locator(".notes-card")).to_have_count(1)
     expect(note_card(page, NOTE_ID)).to_be_visible()
-    page.locator("#notesSearch").fill("周末")
+    tool_view(page).locator("#notesSearch").fill("周末")
     expect(note_card(page, SECOND_ID)).to_be_visible()
-    page.locator("#notesSearch").fill("不存在的文字")
-    expect(page.locator(".notes-card")).to_have_count(0)
-    page.locator("#notesSearch").fill("")
-    expect(page.locator(".notes-card")).to_have_count(2)
+    tool_view(page).locator("#notesSearch").fill("不存在的文字")
+    expect(tool_view(page).locator(".notes-card")).to_have_count(0)
+    tool_view(page).locator("#notesSearch").fill("")
+    expect(tool_view(page).locator(".notes-card")).to_have_count(2)
 
     # Open errors are visible and do not lose the persisted note.
     page.evaluate("window.__noteFailure.open_sticky_note = '创建便签窗口失败'")
     note_card(page, NOTE_ID).locator('.notes-card__content[data-note-action="open"]').click()
-    expect(page.locator("#notesNotice")).to_contain_text("创建便签窗口失败")
+    expect(tool_view(page).locator("#notesNotice")).to_contain_text("创建便签窗口失败")
     expect(note_card(page, NOTE_ID)).to_be_visible()
     page.evaluate("delete window.__noteFailure.open_sticky_note")
 
     note_card(page, NOTE_ID).locator('[data-note-action="trash"]').click()
-    expect(page.locator(".notes-card")).to_have_count(1)
-    page.locator("#notesTrashTab").click()
+    expect(tool_view(page).locator(".notes-card")).to_have_count(1)
+    tool_view(page).locator("#notesTrashTab").click()
     expect(note_card(page, NOTE_ID)).to_be_visible()
     note_card(page, NOTE_ID).locator('[data-note-action="restore"]').click()
-    expect(page.locator(".notes-card")).to_have_count(0)
-    page.locator("#notesActiveTab").click()
-    expect(page.locator(".notes-card")).to_have_count(2)
+    expect(tool_view(page).locator(".notes-card")).to_have_count(0)
+    tool_view(page).locator("#notesActiveTab").click()
+    expect(tool_view(page).locator(".notes-card")).to_have_count(2)
     note_card(page, NOTE_ID).locator('[data-note-action="trash"]').click()
-    page.locator("#notesTrashTab").click()
+    tool_view(page).locator("#notesTrashTab").click()
     expect(note_card(page, NOTE_ID)).to_be_visible()
     page.once("dialog", lambda dialog: dialog.dismiss())
     note_card(page, NOTE_ID).locator('[data-note-action="delete"]').click()
@@ -213,70 +220,73 @@ def test_main_panel(browser, base_url, errors):
     assert call_count(page, "delete_sticky_note") == 0
     page.once("dialog", lambda dialog: dialog.accept())
     note_card(page, NOTE_ID).locator('[data-note-action="delete"]').click()
-    expect(page.locator(".notes-card")).to_have_count(0)
+    expect(tool_view(page).locator(".notes-card")).to_have_count(0)
     wait_for_calls(page, "delete_sticky_note", 1)
-    page.locator("#notesActiveTab").click()
+    tool_view(page).locator("#notesActiveTab").click()
 
-    # Tool navigation releases event subscriptions; reopening refreshes persisted records.
-    page.locator('[data-view="toolLibrary"]').click()
+    # Closing a page releases subscriptions; reopening refreshes persisted records.
+    # Ordinary navigation keeps a suspended history page available to return to.
+    notes_tab = page.locator('.tab--active').get_attribute('data-tab-id')
+    page.locator('#addTabBtn').click()
+    page.locator(f'.tab[data-tab-id="{notes_tab}"] .tab__close').click()
     page.wait_for_function("(window.__noteListeners['sticky-notes-changed']?.size || 0) === 0")
     page.locator('[data-tool-id="sticky-notes"] .tool-card__title').click()
-    expect(page.locator(".notes-card")).to_have_count(1)
+    expect(tool_view(page).locator(".notes-card")).to_have_count(1)
     assert page.evaluate("window.__noteListeners['sticky-notes-changed'].size") == 1
     page.screenshot(path=str(SCREENSHOTS / "dtkit-sticky-notes-page.png"), full_page=True)
     page.set_viewport_size({"width": 700, "height": 850})
-    assert page.locator(".notes-shell").evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    assert tool_view(page).locator(".notes-shell").evaluate("element => element.scrollWidth <= element.clientWidth + 1")
     page.screenshot(path=str(SCREENSHOTS / "dtkit-sticky-notes-narrow.png"), full_page=True)
 
     preview = browser.new_page(viewport={"width": 1000, "height": 800})
     preview.goto(base_url, wait_until="networkidle")
     preview.locator('[data-tool-id="sticky-notes"] .tool-card__title').click()
-    expect(preview.locator("#notesCreate")).to_be_disabled()
-    expect(preview.locator("#notesNotice")).to_contain_text("桌面版")
+    expect(tool_view(preview).locator("#notesCreate")).to_be_disabled()
+    expect(tool_view(preview).locator("#notesNotice")).to_contain_text("桌面版")
     preview.close()
     page.close()
 
 
 def test_editor(browser, base_url, errors):
     page = open_editor(browser, base_url, errors)
-    page.locator("#noteTitle").fill("工作 <img src=x onerror=alert(1)>")
-    page.locator("#noteContent").fill("第一行\n第二行 <script>alert(1)</script>")
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
+    tool_view(page).locator("#noteTitle").fill("工作 <img src=x onerror=alert(1)>")
+    tool_view(page).locator("#noteContent").fill("第一行\n第二行 <script>alert(1)</script>")
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
     page.wait_for_function("window.__noteItems[0].content.includes('第二行')")
-    assert page.locator("img").count() == 0
-    page.locator('[data-note-color="blue"]').click()
-    page.locator("#notePin").click()
-    expect(page.locator("#notePin")).to_have_attribute("aria-pressed", "false")
+    assert tool_view(page).locator("img").count() == 0
+    tool_view(page).locator('[data-note-color="blue"]').click()
+    tool_view(page).locator("#notePin").click()
+    expect(tool_view(page).locator("#notePin")).to_have_attribute("aria-pressed", "false")
     page.wait_for_function("window.__noteItems[0].color === 'blue' && !window.__noteItems[0].pinned")
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
 
     # Delayed acknowledgments must not overwrite edits made while a save was in flight.
     page.evaluate("window.__holdNoteSaves = true")
-    page.locator("#noteTitle").fill("首次保存中")
+    tool_view(page).locator("#noteTitle").fill("首次保存中")
     page.wait_for_function("window.__pendingNoteSaves.length === 1")
     first_revision = page.evaluate("window.__pendingNoteSaves[0].draft.revision")
-    page.locator("#noteContent").fill("保存过程中继续输入，不能丢失")
+    tool_view(page).locator("#noteContent").fill("保存过程中继续输入，不能丢失")
     page.evaluate("window.__releaseNoteSave()")
     page.wait_for_function("window.__pendingNoteSaves.length === 1")
     assert page.evaluate("window.__pendingNoteSaves[0].draft.revision") == first_revision + 1
     assert page.evaluate("window.__pendingNoteSaves[0].draft.content") == "保存过程中继续输入，不能丢失"
     page.evaluate("window.__releaseNoteSave()")
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
-    expect(page.locator("#noteContent")).to_have_value("保存过程中继续输入，不能丢失")
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
+    expect(tool_view(page).locator("#noteContent")).to_have_value("保存过程中继续输入，不能丢失")
     assert page.evaluate("window.__noteItems[0].content") == "保存过程中继续输入，不能丢失"
     page.evaluate("window.__holdNoteSaves = false")
     page.screenshot(path=str(SCREENSHOTS / "dtkit-sticky-note-editor.png"), full_page=True)
     page.set_viewport_size({"width": 260, "height": 240})
     assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
-    assert page.locator("#noteContent").bounding_box()["height"] > 30
+    assert tool_view(page).locator("#noteContent").bounding_box()["height"] > 30
     page.close()
 
 
 def test_close_safety(browser, base_url, errors):
     page = open_editor(browser, base_url, errors)
     page.evaluate("window.__holdNoteSaves = true")
-    page.locator("#noteContent").fill("关闭之前必须确认这段内容已保存")
-    page.locator("#noteClose").click()
+    tool_view(page).locator("#noteContent").fill("关闭之前必须确认这段内容已保存")
+    tool_view(page).locator("#noteClose").click()
     page.wait_for_function("window.__pendingNoteSaves.length === 1")
     assert call_count(page, "close_sticky_note") == 0
     page.evaluate("window.__releaseNoteSave()")
@@ -287,18 +297,18 @@ def test_close_safety(browser, base_url, errors):
     # Native close requests use the same save barrier; failure keeps the draft editable.
     page = open_editor(browser, base_url, errors)
     page.evaluate("window.__noteFailure.save_sticky_note = '磁盘暂时不可写'")
-    page.locator("#noteContent").fill("保存失败时保留的草稿")
+    tool_view(page).locator("#noteContent").fill("保存失败时保留的草稿")
     page.evaluate("window.__requestNoteClose()")
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "error")
-    expect(page.locator("#noteRetry")).to_be_visible()
-    expect(page.locator("#noteContent")).to_have_value("保存失败时保留的草稿")
-    expect(page.locator("#noteContent")).to_be_editable()
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "error")
+    expect(tool_view(page).locator("#noteRetry")).to_be_visible()
+    expect(tool_view(page).locator("#noteContent")).to_have_value("保存失败时保留的草稿")
+    expect(tool_view(page).locator("#noteContent")).to_be_editable()
     assert call_count(page, "close_sticky_note") == 0
     page.evaluate("delete window.__noteFailure.save_sticky_note")
-    page.locator("#noteRetry").click()
-    expect(page.locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
+    tool_view(page).locator("#noteRetry").click()
+    expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
     assert page.evaluate("window.__noteItems[0].content") == "保存失败时保留的草稿"
-    page.locator("#noteClose").click()
+    tool_view(page).locator("#noteClose").click()
     wait_for_calls(page, "close_sticky_note", 1)
     page.close()
 

@@ -4,7 +4,8 @@ use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
+use tauri::AppHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,9 +59,13 @@ impl JobTicket {
 }
 
 #[derive(Default)]
-pub(crate) struct JobManager(RwLock<HashMap<String, ManagedJob>>);
+pub(crate) struct JobManager(RwLock<HashMap<String, ManagedJob>>, OnceLock<AppHandle>);
 
 impl JobManager {
+    pub(crate) fn initialize_launch_lifecycle(&self, app: &AppHandle) {
+        let _ = self.1.set(app.clone());
+    }
+
     pub(crate) fn begin(&self, kind: &str, label: &str) -> Result<JobTicket, String> {
         self.begin_limited(kind, label, usize::MAX)
     }
@@ -212,6 +217,13 @@ impl JobManager {
             .ok_or_else(|| format!("任务不存在: {id}"))?;
         mutate(&mut job.record);
         job.record.updated_at = Utc::now().timestamp_millis();
+        let finished = !job.record.status.is_active();
+        drop(jobs);
+        if finished {
+            if let Some(app) = self.1.get() {
+                tauri::async_runtime::spawn(super::launch::finish_tool_only_if_idle(app.clone()));
+            }
+        }
         Ok(())
     }
 }

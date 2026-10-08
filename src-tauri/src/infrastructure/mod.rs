@@ -1,6 +1,8 @@
 pub(crate) mod cleanup;
+pub(crate) mod context_menu;
 pub(crate) mod file_batch;
 pub(crate) mod jobs;
+pub(crate) mod launch;
 pub(crate) mod palette;
 pub(crate) mod passwords;
 pub(crate) mod quick_host;
@@ -11,6 +13,7 @@ pub(crate) mod screenshot;
 pub(crate) mod shortcuts;
 pub(crate) mod snippets;
 pub(crate) mod sticky_notes;
+pub(crate) mod timetable;
 pub(crate) mod storage;
 pub(crate) mod system_assistant;
 pub(crate) mod tool_modules;

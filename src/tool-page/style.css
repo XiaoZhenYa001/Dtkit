@@ -1,0 +1,10 @@
+/* Shared CSS can be emitted after this entry by Vite. Keep the document layout
+   scoped so base.css cannot turn a tool page into a clipped flex viewport. */
+html.tool-page-document { margin: 0; width: 100%; height: 100%; background: transparent; overflow-x: hidden; overflow-y: auto; }
+html.tool-page-document body { margin: 0; width: 100%; min-height: 100%; height: auto; display: block; background: transparent; overflow: visible; }
+#toolPageStatus { padding: 1rem; color: var(--color-text-secondary); }
+#toolPageStatus[hidden] { display: none; }
+#dynamicToolContainer { width: 100%; min-height: 100vh; }
+#dynamicToolContainer .html-preview-view { height: 100vh; min-height: 0; max-height: 100vh; }
+.view-container { width: 100%; min-height: 100vh; padding: 1rem; }
+.app-is-suspended *, .app-is-suspended *::before, .app-is-suspended *::after { animation-play-state: paused !important; }

@@ -141,7 +141,8 @@ async function init() {
     byId('notesActiveTab').addEventListener('click', () => { trash = false; render(); }, { signal });
     byId('notesTrashTab').addEventListener('click', () => { trash = true; render(); }, { signal });
     byId('notesRefresh').addEventListener('click', refresh, { signal });
-    window.addEventListener('focus', scheduleRefresh, { signal });
+    if (!window.__DTKIT_TOOL_PAGE_CONTEXT?.embedded) window.addEventListener('focus', scheduleRefresh, { signal });
+    window.addEventListener('dtkit:power-state', event => { if (!event.detail?.suspended) scheduleRefresh(); }, { signal });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefresh(); }, { signal });
     try {
         const listen = window.__TAURI__?.event?.listen;

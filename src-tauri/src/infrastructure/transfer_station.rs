@@ -352,6 +352,7 @@ fn is_safe_to_open(name: &str) -> bool {
 
 #[tauri::command]
 pub(crate) async fn list_transfer_items(app: AppHandle) -> Result<Vec<TransferItem>, String> {
+    let _work = super::launch::keep_native_work(&app);
     tauri::async_runtime::spawn_blocking(move || {
         expire_items(&app)?;
         list_items_in(&items_root(&app)?)
@@ -365,6 +366,7 @@ pub(crate) async fn import_transfer_files(
     app: AppHandle,
     request: ImportTransferRequest,
 ) -> Result<ImportTransferResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     tauri::async_runtime::spawn_blocking(move || import_files(&app, request))
         .await
         .map_err(|error| format!("导入任务失败: {error}"))?
@@ -376,6 +378,7 @@ pub(crate) async fn export_transfer_item(
     item_id: String,
     destination: String,
 ) -> Result<String, String> {
+    let _work = super::launch::keep_native_work(&app);
     tauri::async_runtime::spawn_blocking(move || export_item(&app, &item_id, &destination))
         .await
         .map_err(|error| format!("导出任务失败: {error}"))?
@@ -400,6 +403,7 @@ pub(crate) async fn remove_transfer_item(
     item_id: String,
     permanent: bool,
 ) -> Result<RemoveTransferResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     if manager
         .current_share()
         .await
@@ -433,6 +437,7 @@ pub(crate) async fn restore_transfer_item(
     app: AppHandle,
     batch_id: String,
 ) -> Result<RestoreTransferResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     if !safe_batch_id(&batch_id) {
         return Err("恢复批次标识无效".to_string());
     }
@@ -576,6 +581,7 @@ async fn run_lan_share(
         "lan-share-stopped",
         serde_json::json!({ "shareId": share_id, "reason": reason }),
     );
+    super::launch::finish_tool_only_if_idle(app).await;
 }
 
 #[tauri::command]

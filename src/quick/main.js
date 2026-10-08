@@ -1,5 +1,10 @@
 import { detectCommand, evaluateExpression, formatNumber, transformText } from './commandEngine.js';
+import { installToolPageRuntime } from '../core/toolPageRuntime.js';
 import '../css/tool-shortcut.css';
+
+const nativeEvents = window.__TAURI__?.event;
+const initialParams = new URLSearchParams(location.search);
+let pageRuntime = null;
 
 const TOOL_LABELS = Object.freeze({
     'timestamp-converter': '时间戳转换', 'json-formatter': 'JSON / YAML / XML 转换',
@@ -10,8 +15,10 @@ const TOOL_LABELS = Object.freeze({
     'alarm-clock': '定时闹钟', 'file-batch': '文件批处理',
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
     'system-assistant': '系统助手',
+    'startup-manager': '自启动管理',
+    'context-menu': '右键菜单管理',
     'whiteboard': '白板', 'password-vault': '密码',
-    'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注', 'region-mirror': '区域悬浮', 'sticky-notes': '便签'
+    'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注', 'region-mirror': '区域悬浮', 'sticky-notes': '便签', 'timetable': '课表'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
 const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
@@ -39,6 +46,8 @@ let selectedIndex = 0;
 let currentActions = [];
 let disabledToolIds = new Set();
 let lastActivityTouch = 0;
+let dismissing = null;
+let targetQueue = Promise.resolve();
 
 async function loadToolModulePolicy() {
     try {
@@ -65,8 +74,8 @@ async function getToolRuntime() {
     return toolRuntime;
 }
 
-function releaseTool() {
-    if (activeToolId && toolRuntime) toolRuntime.destroyTool(activeToolId);
+async function releaseTool() {
+    await pageRuntime.releaseTool();
     activeToolId = null;
     setToolChrome();
     toolContainer.replaceChildren();
@@ -246,7 +255,8 @@ function moveSelection(offset) {
 
 async function renderTarget(target) {
     const generation = ++renderGeneration;
-    releaseTool();
+    await releaseTool();
+    if (pageRuntime.disposed || generation !== renderGeneration) return;
     palette.hidden = target.kind !== 'palette';
     if (target.kind === 'palette') {
         await loadToolModulePolicy();
@@ -276,8 +286,13 @@ async function renderTarget(target) {
         toolContainer.innerHTML = tool.template();
         activeToolId = target.toolId;
         setToolChrome(target.toolId);
+        pageRuntime.attachTool(tool);
         await Promise.resolve(tool.init());
-        if (generation !== renderGeneration) return releaseTool();
+        if (pageRuntime.disposed || generation !== renderGeneration) return;
+        if (target.toolId === 'alarm-clock') {
+            const { initializeAlarmService } = await import('../core/alarmService.js');
+            await initializeAlarmService();
+        }
         status.hidden = true;
         content.classList.add('quick-content--tool');
         document.title = `${toolName} · DtKit`;
@@ -295,8 +310,17 @@ function targetFromLocation() {
 }
 
 async function dismiss() {
-    releaseTool();
-    await invoke('dismiss_quick_host');
+    if (dismissing) return dismissing;
+    dismissing = (async () => {
+        await pageRuntime?.flush();
+        await pageRuntime?.dispose();
+        await invoke('dismiss_quick_host');
+    })().catch(error => {
+        dismissing = null;
+        description.textContent = `关闭前保存失败：${error}`;
+        status.hidden = false;
+    });
+    return dismissing;
 }
 
 document.getElementById('quickClose').addEventListener('click', dismiss);
@@ -346,8 +370,28 @@ input.addEventListener('keydown', event => {
         refreshPalette();
     }
 });
-document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !input.value) dismiss();
+window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !input.value
+        && !document.querySelector('dialog[open]')
+        && (!palette.hidden || !event.target.closest('textarea, input, [contenteditable="true"]'))) dismiss();
 });
-globalThis.window?.__TAURI__?.event?.listen('quick-host-target', event => renderTarget(event.payload));
-renderTarget(targetFromLocation());
+function enqueueTarget(target) {
+    targetQueue = targetQueue.then(() => renderTarget(target)).catch(error => {
+        description.textContent = String(error); status.hidden = false;
+    });
+}
+nativeEvents?.listen('quick-host-target', event => { if (pageRuntime) enqueueTarget(event.payload); });
+nativeEvents?.listen('quick-host-close-request', dismiss);
+nativeEvents?.listen('app-power-state', event => pageRuntime?.setSuspended(Boolean(event.payload?.suspended)));
+// Keep window controls usable even if the tool runtime fails to initialize.
+try {
+    pageRuntime = installToolPageRuntime({
+        instanceId: initialParams.get('instanceId') || `quick-${crypto.randomUUID()}`,
+        toolId: initialParams.get('toolId'), embedded: false
+    });
+    enqueueTarget(targetFromLocation());
+} catch (error) {
+    heading.textContent = '工具初始化失败';
+    description.textContent = String(error?.message || error);
+    status.hidden = false;
+}

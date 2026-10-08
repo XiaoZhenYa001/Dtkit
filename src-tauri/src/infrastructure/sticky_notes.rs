@@ -311,6 +311,7 @@ async fn io<T: Send + 'static>(
     app: &AppHandle,
     operation: impl FnOnce(StickyNoteManager, PathBuf) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
+    let _work = super::launch::keep_native_work(app);
     let manager = app.state::<StickyNoteManager>().inner().clone();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || operation(manager, storage_path(&app)?))
@@ -571,6 +572,7 @@ fn build_note_window(app: &AppHandle, record: &StoredNote) -> Result<WebviewWind
 
 #[tauri::command]
 pub(crate) async fn open_sticky_note(window: WebviewWindow, id: String) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(window.app_handle());
     authorize_manager(&window)?;
     validate_id(&id)?;
     let app = window.app_handle();
@@ -637,6 +639,7 @@ pub(crate) async fn open_sticky_note(window: WebviewWindow, id: String) -> Resul
 
 #[tauri::command]
 pub(crate) async fn close_sticky_note(window: WebviewWindow, id: String) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(window.app_handle());
     authorize_note(&window, &id, true)?;
     let app = window.app_handle();
     if is_manager(window.label()) {

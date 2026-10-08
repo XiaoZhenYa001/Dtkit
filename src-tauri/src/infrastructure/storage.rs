@@ -579,6 +579,7 @@ pub(crate) async fn migrate_storage_root(
     target_root: String,
     legacy_download_root: Option<String>,
 ) -> Result<StorageMigrationResult, String> {
+    let _native_work = super::launch::keep_native_work(&app);
     if app.state::<super::jobs::JobManager>().active_count() > 0 {
         return Err("请等待当前文件任务完成后再迁移文件目录".to_string());
     }
@@ -595,28 +596,41 @@ pub(crate) async fn migrate_storage_root(
     {
         return Err("请先关闭快捷工具窗口，再迁移文件目录".to_string());
     }
-    if app.state::<super::sticky_notes::StickyNoteManager>().has_open_notes() {
+    if app
+        .state::<super::sticky_notes::StickyNoteManager>()
+        .has_open_notes()
+    {
         return Err("请先关闭便签小窗，确保内容保存后再迁移文件目录".to_string());
     }
-    let manager = app.state::<StorageManager>();
-    let current = manager.layout()?;
-    let bootstrap_file = manager.bootstrap_file()?;
+    let migration_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        migrate_layout(
+        // Keep registry recovery records and their active storage root together.
+        let context_menu = migration_app.state::<super::context_menu::ContextMenuManager>();
+        let _registry_guard = context_menu.migration_guard()?;
+        let system_assistant =
+            migration_app.state::<super::system_assistant::SystemAssistantManager>();
+        let _startup_guard = system_assistant.migration_guard()?;
+        let alarms = migration_app.state::<crate::alarm_scheduler::AlarmScheduler>();
+        let _alarm_guard = alarms.migration_guard()?;
+        let manager = migration_app.state::<StorageManager>();
+        let current = manager.layout()?;
+        let bootstrap_file = manager.bootstrap_file()?;
+        let result = migrate_layout(
             &current,
             &bootstrap_file,
             PathBuf::from(target_root),
             legacy_download_root.map(PathBuf::from),
-        )
+        )?;
+        manager.replace_layout(result.layout.clone())?;
+        Ok::<_, String>(result)
     })
     .await
     .map_err(|error| format!("迁移任务异常结束: {error}"))??;
-    app.state::<StorageManager>()
-        .replace_layout(result.layout.clone())?;
     app.state::<super::passwords::PasswordVaultManager>()
         .reset_for_storage_change();
     app.state::<super::snippets::SnippetManager>().invalidate();
-    app.state::<super::sticky_notes::StickyNoteManager>().invalidate();
+    app.state::<super::sticky_notes::StickyNoteManager>()
+        .invalidate();
     Ok(result)
 }
 

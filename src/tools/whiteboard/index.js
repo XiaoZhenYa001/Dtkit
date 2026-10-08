@@ -1,7 +1,10 @@
 import { registerTool } from '../toolRegistry.js';
 import '../../css/tools/whiteboard.css';
 
-const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
+const invoke = (command, args = {}) => globalThis.window?.__TAURI__?.core?.invoke?.(command, {
+    ...args,
+    instanceId: globalThis.window?.__DTKIT_TOOL_PAGE_CONTEXT?.instanceId ?? null
+});
 const DRAFT_DELAY_MS = 60_000;
 const MAX_HISTORY = 40;
 const MAX_ELEMENTS = 2_000;
@@ -19,7 +22,8 @@ const state = {
     isFormal: false, dirty: false, readOnly: false, logicalWidth: 1, logicalHeight: 1, pixelRatio: 1,
     abortController: null, resizeObserver: null, resizeFrame: null, drawFrame: null, draftTimer: null,
     formulaRuntime: null, formulaLoading: null, historyObserver: null, histories: [],
-    sequence: 0, spacePressed: false, totalPoints: 0, editRevokedUnlisten: null
+    sequence: 0, spacePressed: false, totalPoints: 0, editRevokedUnlisten: null,
+    draftRevision: 0, savedDraftRevision: -1
 };
 
 let boundsCache = new WeakMap();
@@ -201,6 +205,8 @@ function applyDocument(document, fallbackName = state.boardName) {
     state.totalPoints = countStrokePoints(state.elements);
     boundsCache = new WeakMap();
     state.dirty = Boolean(document?.savedAt);
+    state.draftRevision = 0;
+    state.savedDraftRevision = document?.savedAt ? 0 : -1;
     redraw();
     updateControls();
 }
@@ -469,21 +475,25 @@ function countStrokePoints(elements = state.elements) {
 
 function pushUndo(snapshot = cloneElements()) { state.undo.push(snapshot); if (state.undo.length > MAX_HISTORY) state.undo.shift(); state.redo = []; }
 
-function markDirty() { state.dirty = true; setStatus('有未保存修改', 'warning'); scheduleDraft(); updateControls(); }
+function markDirty() { state.dirty = true; state.draftRevision++; setStatus('有未保存修改', 'warning'); scheduleDraft(); updateControls(); }
 
 function scheduleDraft() {
     if (state.draftTimer !== null) return;
     state.draftTimer = setTimeout(() => { state.draftTimer = null; saveDraftNow(); }, DRAFT_DELAY_MS);
 }
 
-async function saveDraftNow() {
+async function saveDraftNow(strict = false) {
     if (!state.dirty || !state.boardId || state.readOnly) return;
+    if (state.savedDraftRevision === state.draftRevision) return;
+    const boardId = state.boardId;
+    const revision = state.draftRevision;
     try {
         const document = documentValue();
-        if (invoke) await invoke('save_whiteboard_draft', { request: { id: state.boardId, name: state.boardName, document } });
+        if (globalThis.window?.__TAURI__?.core?.invoke) await invoke('save_whiteboard_draft', { request: { id: state.boardId, name: state.boardName, document } });
         else localStorage.setItem(`dtkit_whiteboard_draft_${state.boardId}`, JSON.stringify({ name: state.boardName, document, savedAt: Date.now() }));
+        if (state.boardId === boardId) state.savedDraftRevision = revision;
         setStatus('恢复草稿已保存');
-    } catch (error) { setStatus(`草稿保存失败：${error}`, 'warning'); }
+    } catch (error) { setStatus(`草稿保存失败：${error}`, 'warning'); if (strict) throw error; }
 }
 
 function thumbnailDataUrl() {
@@ -502,7 +512,10 @@ async function saveBoard(asNew = false) {
         const previousId = state.boardId;
         const request = { id: asNew ? null : state.boardId, name: state.boardName, document: documentValue(), thumbnailDataUrl: thumbnailDataUrl() };
         const meta = invoke ? await invoke('save_whiteboard', { request }) : { id: request.id || state.boardId, name: state.boardName, updatedAt: Date.now() };
-        if (asNew && invoke) await invoke('discard_whiteboard_draft', { id: previousId });
+        if (asNew && invoke) {
+            await invoke('discard_whiteboard_draft', { id: previousId });
+            await releaseEdit(previousId);
+        }
         state.boardId = meta.id; state.boardName = meta.name; state.isFormal = true; state.dirty = false;
         setReadOnly(false);
         if (input) input.value = state.boardName;
@@ -733,7 +746,7 @@ async function openBoard(id) {
     if (id === state.boardId) return;
     await saveDraftNow(); await releaseEdit(); setStatus('正在打开白板…', 'saving');
     try {
-        const result = await invoke('load_whiteboard', { id }); state.boardId = result.meta.id; state.boardName = result.meta.name; state.isFormal = true;
+        const result = await invoke('load_whiteboard', { id }); state.boardId = result.meta.id; state.boardName = result.meta.name; state.isFormal = result.isFormal !== false;
         applyDocument(result.draft?.document || result.document, result.meta.name); state.dirty = Boolean(result.draft); setReadOnly(result.editable === false);
         setStatus(state.readOnly ? '已以只读方式打开' : result.draft ? '已恢复未保存草稿' : '正式白板已打开', state.readOnly || result.draft ? 'warning' : 'saved'); await loadHistory();
     } catch (error) { setStatus(`打开失败：${error}`, 'warning'); }
@@ -742,7 +755,7 @@ async function openBoard(id) {
 function newBoard() {
     const previousId = state.boardId;
     Promise.resolve(saveDraftNow()).finally(() => releaseEdit(previousId));
-    state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; replaceElements([]); state.camera = { x: 0, y: 0, zoom: 1 }; state.undo = []; state.redo = []; state.dirty = false; setReadOnly(false); redraw(); updateControls(); setStatus('新白板');
+    state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; replaceElements([]); state.camera = { x: 0, y: 0, zoom: 1 }; state.undo = []; state.redo = []; state.dirty = false; state.draftRevision = 0; state.savedDraftRevision = -1; setReadOnly(false); redraw(); updateControls(); setStatus('新白板');
 }
 
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
@@ -815,13 +828,17 @@ function bindEvents(signal) {
 async function initWhiteboardTool() {
     destroyWhiteboardTool(); state.abortController = new AbortController(); state.canvas = document.getElementById('whiteboardCanvas'); state.committedCanvas = document.getElementById('whiteboardCommittedCanvas'); state.surface = document.getElementById('whiteboardSurface'); state.formulaLayer = document.getElementById('whiteboardFormulaLayer');
     if (!state.canvas || !state.committedCanvas || !state.surface) return;
-    readPrefs(); state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; replaceElements([]); bindEvents(state.abortController.signal);
+    readPrefs(); state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; state.dirty = false; state.readOnly = false; state.draftRevision = 0; state.savedDraftRevision = -1; replaceElements([]); bindEvents(state.abortController.signal);
     if (typeof ResizeObserver === 'function') { state.resizeObserver = new ResizeObserver(scheduleResize); state.resizeObserver.observe(state.surface); } else window.addEventListener('resize', scheduleResize, { signal: state.abortController.signal });
     const listen = globalThis.window?.__TAURI__?.event?.listen;
     if (listen) {
+        const signal = state.abortController.signal;
         Promise.resolve(listen('whiteboard-edit-revoked', event => {
-            if (event.payload === state.boardId) { setReadOnly(true); setStatus('编辑权已由另一窗口接管', 'warning'); }
-        })).then(unlisten => { state.editRevokedUnlisten = unlisten; });
+            const revoked = event.payload;
+            const instanceId = globalThis.window?.__DTKIT_TOOL_PAGE_CONTEXT?.instanceId ?? null;
+            const isOwner = typeof revoked === 'string' || (revoked?.instanceId ?? null) === instanceId;
+            if (isOwner && (typeof revoked === 'string' ? revoked : revoked?.id) === state.boardId) { setReadOnly(true); setStatus('编辑权已由另一页面接管', 'warning'); }
+        })).then(unlisten => { if (signal.aborted) unlisten?.(); else state.editRevokedUnlisten = unlisten; });
     }
     importLegacyBoard(); updateControls(); scheduleResize(); await loadHistory();
 }
@@ -830,14 +847,64 @@ function destroyWhiteboardTool() {
     finishPointer();
     const closingBoardId = state.boardId;
     const draftPromise = state.dirty ? saveDraftNow() : Promise.resolve();
-    Promise.resolve(draftPromise).finally(() => releaseEdit(closingBoardId));
+    const closing = Promise.resolve(draftPromise).finally(() => releaseEdit(closingBoardId));
     clearTimeout(state.draftTimer); state.draftTimer = null; state.abortController?.abort(); state.abortController = null; state.resizeObserver?.disconnect(); state.resizeObserver = null; state.historyObserver?.disconnect(); state.historyObserver = null; state.editRevokedUnlisten?.(); state.editRevokedUnlisten = null;
     if (state.resizeFrame !== null) cancelAnimationFrame(state.resizeFrame); state.resizeFrame = null; cancelPendingDraw(); state.canvas = null; state.context = null; state.committedCanvas = null; state.committedContext = null; state.surface = null; state.formulaLayer = null; state.pointerId = null; state.active = null;
+    return closing;
+}
+
+function serializeWhiteboard() {
+    const hasNativeStore = Boolean(globalThis.window?.__TAURI__?.core?.invoke);
+    return {
+        version: 1, boardId: state.boardId, boardName: state.boardName,
+        isFormal: state.isFormal, dirty: state.dirty,
+        // Native drafts already own the potentially large document. Do not duplicate
+        // that document into the workspace's localStorage journal.
+        document: hasNativeStore ? null : structuredClone(documentValue()),
+        ui: { mode: state.mode, color: state.color, width: state.width, camera: { ...state.camera } }
+    };
+}
+
+async function restoreWhiteboard(snapshot) {
+    if (snapshot?.version !== 1 || !/^[0-9a-f-]{36}$/i.test(snapshot.boardId || '')) return;
+    const hasNativeStore = Boolean(globalThis.window?.__TAURI__?.core?.invoke);
+    if (hasNativeStore && (snapshot.isFormal || snapshot.dirty)) {
+        // Re-read shared native data and acquire this page's lease. A sleep snapshot
+        // must never overwrite changes made by another window while it was asleep.
+        const result = await invoke('load_whiteboard', { id: snapshot.boardId });
+        state.boardId = result.meta.id;
+        state.boardName = result.meta.name;
+        state.isFormal = result.isFormal !== false;
+        applyDocument(result.draft?.document || result.document, result.meta.name);
+        state.dirty = Boolean(result.draft);
+        state.savedDraftRevision = state.draftRevision;
+        setReadOnly(result.editable === false);
+    } else {
+        state.boardId = snapshot.boardId;
+        state.boardName = typeof snapshot.boardName === 'string' ? snapshot.boardName.slice(0, 60) : '未命名白板';
+        state.isFormal = false;
+        if (snapshot.document && Array.isArray(snapshot.document.elements)) applyDocument(snapshot.document, state.boardName);
+        state.dirty = Boolean(snapshot.dirty);
+    }
+    const ui = snapshot.ui || {};
+    if (['pen','highlighter','eraser','line','arrow','rect','ellipse','select','pan','text','note','formula'].includes(ui.mode)) state.mode = ui.mode;
+    if (/^#[0-9a-f]{6}$/i.test(ui.color || '')) state.color = ui.color;
+    if (Number.isFinite(ui.width)) state.width = Math.min(24, Math.max(1, ui.width));
+    if (ui.camera && [ui.camera.x, ui.camera.y, ui.camera.zoom].every(Number.isFinite)) state.camera = { x: ui.camera.x, y: ui.camera.y, zoom: Math.min(8, Math.max(0.1, ui.camera.zoom)) };
+    redraw(); updateControls();
+    setStatus(state.readOnly ? '另一页面正在编辑，已以只读方式恢复' : '已恢复白板工作区', state.readOnly ? 'warning' : 'saved');
+}
+
+async function flushWhiteboard() {
+    finishPointer();
+    clearTimeout(state.draftTimer); state.draftTimer = null;
+    await saveDraftNow(true);
 }
 
 registerTool({
     id: 'whiteboard', name: '白板', icon: 'ri-brush-2-line', colorClass: 'tool-card__icon--orange', category: 'design', status: 'ready',
-    description: '无限画布、教学纸张、公式、形状与本地历史白板。', template: getTemplate, init: initWhiteboardTool, destroy: destroyWhiteboardTool
+    description: '无限画布、教学纸张、公式、形状与本地历史白板。', template: getTemplate, init: initWhiteboardTool, destroy: destroyWhiteboardTool,
+    serialize: serializeWhiteboard, restore: restoreWhiteboard, flush: flushWhiteboard
 });
 
 export { destroyWhiteboardTool, initWhiteboardTool };

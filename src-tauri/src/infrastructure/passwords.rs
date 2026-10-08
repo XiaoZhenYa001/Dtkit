@@ -391,6 +391,12 @@ impl PasswordVaultManager {
         self.release_idle_state();
     }
 
+    pub(crate) fn release_cached_index(&self) {
+        // Imports belong to individual tool pages and may still be active in another window.
+        let _access = self.index_build.lock().ok();
+        self.invalidate_index();
+    }
+
     pub(crate) fn release_idle_state(&self) {
         // Wait for any in-flight index build or vault mutation, then release the final state.
         let _access = self.index_build.lock().ok();
@@ -876,7 +882,13 @@ fn safe_import_metadata(value: &str) -> String {
     safe
 }
 
-fn import_issue(id: String, editable: bool, source: String, entry: &ImportedPassword, errors: Vec<String>) -> ImportIssue {
+fn import_issue(
+    id: String,
+    editable: bool,
+    source: String,
+    entry: &ImportedPassword,
+    errors: Vec<String>,
+) -> ImportIssue {
     ImportIssue {
         id,
         editable,
@@ -918,8 +930,18 @@ fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
             if candidates.len() < 100 {
                 let id = Uuid::new_v4().to_string();
                 let source = format!("第 {} 条", index + 1);
-                issues.push(import_issue(id.clone(), true, source.clone(), &imported, errors));
-                candidates.push(PendingCandidate { id, source, entry: imported });
+                issues.push(import_issue(
+                    id.clone(),
+                    true,
+                    source.clone(),
+                    &imported,
+                    errors,
+                ));
+                candidates.push(PendingCandidate {
+                    id,
+                    source,
+                    entry: imported,
+                });
             } else {
                 uneditable_invalid += 1;
                 wipe_string(&mut imported.password);
@@ -927,9 +949,18 @@ fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
         }
     }
     if uneditable_invalid > 0 {
-        warnings.push(format!("另有 {uneditable_invalid} 条错误条目未展开显示，请在源文件中修正"));
+        warnings.push(format!(
+            "另有 {uneditable_invalid} 条错误条目未展开显示，请在源文件中修正"
+        ));
     }
-    Ok(ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues })
+    Ok(ParsedImport {
+        entries,
+        candidates,
+        total,
+        uneditable_invalid,
+        warnings,
+        issues,
+    })
 }
 
 fn csv_column(headers: &csv::StringRecord, aliases: &[&str]) -> Option<usize> {
@@ -967,7 +998,10 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
                 total += 1;
                 uneditable_invalid += 1;
                 if issues.len() < 100 {
-                    let line = error.position().map(|position| position.line()).unwrap_or((total + 1) as u64);
+                    let line = error
+                        .position()
+                        .map(|position| position.line())
+                        .unwrap_or((total + 1) as u64);
                     issues.push(ImportIssue {
                         id: String::new(),
                         editable: false,
@@ -1013,8 +1047,18 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
             if candidates.len() < 100 {
                 let id = Uuid::new_v4().to_string();
                 let source = format!("第 {source_line} 行");
-                issues.push(import_issue(id.clone(), true, source.clone(), &imported, errors));
-                candidates.push(PendingCandidate { id, source, entry: imported });
+                issues.push(import_issue(
+                    id.clone(),
+                    true,
+                    source.clone(),
+                    &imported,
+                    errors,
+                ));
+                candidates.push(PendingCandidate {
+                    id,
+                    source,
+                    entry: imported,
+                });
             } else {
                 uneditable_invalid += 1;
                 wipe_string(&mut imported.password);
@@ -1022,9 +1066,19 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
         }
     }
     if uneditable_invalid > issues.iter().filter(|issue| !issue.editable).count() {
-        warnings.push(format!("另有 {} 条错误条目未展开显示，请在源文件中修正", uneditable_invalid - issues.iter().filter(|issue| !issue.editable).count()));
+        warnings.push(format!(
+            "另有 {} 条错误条目未展开显示，请在源文件中修正",
+            uneditable_invalid - issues.iter().filter(|issue| !issue.editable).count()
+        ));
     }
-    Ok(ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues })
+    Ok(ParsedImport {
+        entries,
+        candidates,
+        total,
+        uneditable_invalid,
+        warnings,
+        issues,
+    })
 }
 
 fn load_settings(storage: &StorageManager) -> PasswordSettings {
@@ -1042,6 +1096,7 @@ fn load_settings(storage: &StorageManager) -> PasswordSettings {
 
 #[tauri::command]
 pub(crate) fn list_passwords(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     query: Option<String>,
@@ -1050,6 +1105,7 @@ pub(crate) fn list_passwords(
     category: Option<String>,
     limit: Option<usize>,
 ) -> Result<PasswordSearchResponse, String> {
+    let _work = super::launch::keep_native_work(&app);
     let now = Utc::now().timestamp_millis();
     let vault_path = expected_vault_path(&storage)?;
     let (scope, needle) = parse_search(query.as_deref().unwrap_or_default());
@@ -1181,9 +1237,11 @@ pub(crate) fn get_password_detail(
 
 #[tauri::command]
 pub(crate) fn get_password_overview(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
 ) -> Result<PasswordOverview, String> {
+    let _work = super::launch::keep_native_work(&app);
     let now = Utc::now().timestamp_millis();
     let vault_path = expected_vault_path(&storage)?;
     if let Some(overview) = manager.overview_cached(&vault_path, now) {
@@ -1208,11 +1266,13 @@ pub(crate) fn get_password_overview(
 
 #[tauri::command]
 pub(crate) fn set_password_favorite(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     id: String,
     favorite: bool,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(&app);
     let _access = manager
         .index_build
         .lock()
@@ -1232,10 +1292,12 @@ pub(crate) fn set_password_favorite(
 
 #[tauri::command]
 pub(crate) fn save_password_entry(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     mut entry: PasswordDraft,
 ) -> Result<PasswordSummary, String> {
+    let _work = super::launch::keep_native_work(&app);
     validate_draft(&entry)?;
     let _access = manager
         .index_build
@@ -1301,11 +1363,13 @@ pub(crate) fn save_password_entry(
 
 #[tauri::command]
 pub(crate) fn remove_password_entry(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     id: String,
     permanent: bool,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(&app);
     let _access = manager
         .index_build
         .lock()
@@ -1335,10 +1399,12 @@ pub(crate) fn remove_password_entry(
 
 #[tauri::command]
 pub(crate) fn restore_password_entry(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     id: String,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(&app);
     let _access = manager
         .index_build
         .lock()
@@ -1358,10 +1424,12 @@ pub(crate) fn restore_password_entry(
 
 #[tauri::command]
 pub(crate) fn empty_password_trash(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     confirmed: bool,
 ) -> Result<usize, String> {
+    let _work = super::launch::keep_native_work(&app);
     if !confirmed {
         return Err("清空密码回收站需要明确确认".to_string());
     }
@@ -1404,15 +1472,18 @@ pub(crate) fn preview_password_import(
         .unwrap_or_default()
         .to_lowercase();
     let (parsed, format) = match extension.as_str() {
-        "json" => {
-            (parse_json_import(&bytes)?, "JSON v1")
-        }
-        "csv" => {
-            (parse_csv_import(&bytes)?, "CSV")
-        }
+        "json" => (parse_json_import(&bytes)?, "JSON v1"),
+        "csv" => (parse_csv_import(&bytes)?, "CSV"),
         _ => return Err("仅支持 .json 和 .csv 导入文件".to_string()),
     };
-    let ParsedImport { entries, candidates, total, uneditable_invalid, warnings, issues } = parsed;
+    let ParsedImport {
+        entries,
+        candidates,
+        total,
+        uneditable_invalid,
+        warnings,
+        issues,
+    } = parsed;
     let existing = load_vault(&storage)?;
     let keys = existing
         .items
@@ -1438,7 +1509,14 @@ pub(crate) fn preview_password_import(
         .pending
         .lock()
         .map_err(|_| "导入预览状态不可用".to_string())?
-        .insert(token.clone(), PendingImport { entries, candidates, uneditable_invalid });
+        .insert(
+            token.clone(),
+            PendingImport {
+                entries,
+                candidates,
+                uneditable_invalid,
+            },
+        );
     Ok(ImportPreview {
         token,
         format: format.to_string(),
@@ -1452,7 +1530,10 @@ pub(crate) fn preview_password_import(
     })
 }
 
-fn pending_duplicate_count(storage: &StorageManager, pending: &PendingImport) -> Result<usize, String> {
+fn pending_duplicate_count(
+    storage: &StorageManager,
+    pending: &PendingImport,
+) -> Result<usize, String> {
     let existing = load_vault(storage)?;
     let mut seen = existing
         .items
@@ -1460,7 +1541,11 @@ fn pending_duplicate_count(storage: &StorageManager, pending: &PendingImport) ->
         .filter(|entry| entry.deleted_at.is_none())
         .map(PasswordRecord::duplicate_key)
         .collect::<HashSet<_>>();
-    Ok(pending.entries.iter().filter(|entry| !seen.insert(entry.duplicate_key())).count())
+    Ok(pending
+        .entries
+        .iter()
+        .filter(|entry| !seen.insert(entry.duplicate_key()))
+        .count())
 }
 
 #[tauri::command]
@@ -1499,8 +1584,8 @@ pub(crate) fn update_password_import_entry(
     let mut item = None;
     let issue = if errors.is_empty() {
         let candidate = pending.candidates.remove(index);
-        let record = imported_record(candidate.entry)
-            .ok_or_else(|| "条目仍缺少名称或密码".to_string())?;
+        let record =
+            imported_record(candidate.entry).ok_or_else(|| "条目仍缺少名称或密码".to_string())?;
         item = Some(record.safe_summary());
         pending.entries.push(record);
         None
@@ -1526,11 +1611,13 @@ pub(crate) fn update_password_import_entry(
 
 #[tauri::command]
 pub(crate) fn commit_password_import(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     manager: tauri::State<'_, PasswordVaultManager>,
     token: String,
     strategy: DuplicateStrategy,
 ) -> Result<ImportResult, String> {
+    let _work = super::launch::keep_native_work(&app);
     let mut pending = manager
         .pending
         .lock()
@@ -1600,9 +1687,11 @@ pub(crate) fn get_password_settings(storage: tauri::State<'_, StorageManager>) -
 
 #[tauri::command]
 pub(crate) fn set_password_settings(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     settings: PasswordSettings,
 ) -> Result<PasswordSettings, String> {
+    let _work = super::launch::keep_native_work(&app);
     settings.validate()?;
     let path = settings_path(&storage)?;
     let bytes =
@@ -1720,6 +1809,7 @@ pub(crate) async fn copy_password(
     manager: tauri::State<'_, PasswordVaultManager>,
     id: String,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(&app);
     let _access = manager
         .index_build
         .lock()
@@ -1745,7 +1835,9 @@ pub(crate) async fn copy_password(
     let clear_after = load_settings(&storage).clipboard_clear_seconds;
     drop(vault);
     if clear_after > 0 {
+        let clipboard_work = super::launch::keep_native_work(&app);
         tauri::async_runtime::spawn(async move {
+            let _clipboard_work = clipboard_work;
             tokio::time::sleep(Duration::from_secs(clear_after)).await;
             let _ = clear_clipboard_if_unchanged(sequence, &fingerprint);
             drop(app);
@@ -1761,6 +1853,7 @@ pub(crate) async fn copy_password_field(
     id: String,
     field: String,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(&app);
     let vault = load_vault(&storage)?;
     let entry = vault
         .items
@@ -1792,7 +1885,9 @@ pub(crate) async fn copy_password_field(
     let clear_after = load_settings(&storage).clipboard_clear_seconds;
     drop(vault);
     if sensitive && clear_after > 0 {
+        let clipboard_work = super::launch::keep_native_work(&app);
         tauri::async_runtime::spawn(async move {
+            let _clipboard_work = clipboard_work;
             tokio::time::sleep(Duration::from_secs(clear_after)).await;
             let _ = clear_clipboard_if_unchanged(sequence, &fingerprint);
             drop(app);
@@ -2037,6 +2132,63 @@ fn clear_clipboard_if_unchanged(_sequence: u32, _expected_hash: &[u8]) -> Result
 mod tests {
     use super::*;
 
+    fn manager_with_pending_imports() -> PasswordVaultManager {
+        let manager = PasswordVaultManager::default();
+        manager.replace_index(
+            PathBuf::from("vault.dpapi"),
+            &PasswordVault {
+                version: VAULT_VERSION,
+                items: Vec::new(),
+            },
+        );
+        let mut pending = manager.pending.lock().unwrap();
+        for token in ["main-import", "quick-import"] {
+            let parsed = parse_json_import(
+                br#"{"app":"REPassCard","version":1,"count":2,"passwords":[{"service":"Mail","password":"import-secret"},{"service":"","password":"correction-secret"}]}"#,
+            )
+            .unwrap();
+            pending.insert(
+                token.to_string(),
+                PendingImport {
+                    entries: parsed.entries,
+                    candidates: parsed.candidates,
+                    uneditable_invalid: parsed.uneditable_invalid,
+                },
+            );
+        }
+        drop(pending);
+        manager
+    }
+
+    #[test]
+    fn releasing_cached_index_preserves_each_windows_pending_import() {
+        let manager = manager_with_pending_imports();
+        assert!(manager.index.read().unwrap().is_some());
+
+        manager.release_cached_index();
+
+        assert!(manager.index.read().unwrap().is_none());
+        let pending = manager.pending.lock().unwrap();
+        assert_eq!(pending.len(), 2);
+        for token in ["main-import", "quick-import"] {
+            let import = pending.get(token).unwrap();
+            assert_eq!(import.entries.len(), 1);
+            assert_eq!(import.entries[0].password, "import-secret");
+            assert_eq!(import.candidates.len(), 1);
+            assert_eq!(import.candidates[0].entry.password, "correction-secret");
+        }
+    }
+
+    #[test]
+    fn changing_storage_clears_cached_index_and_all_pending_imports() {
+        let manager = manager_with_pending_imports();
+
+        manager.reset_for_storage_change();
+
+        assert!(manager.index.read().unwrap().is_none());
+        assert!(manager.pending.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn scoped_search_never_searches_passwords() {
         let mut entry = imported_record(ImportedPassword {
@@ -2240,7 +2392,10 @@ mod tests {
         assert_eq!(parsed.issues[0].source, "第 2 条");
         assert_eq!(parsed.issues[0].username, "missing-name");
         assert_eq!(parsed.issues[1].service, "Mail");
-        assert!(parsed.issues[1].errors.iter().any(|error| error == "密码为空"));
+        assert!(parsed.issues[1]
+            .errors
+            .iter()
+            .any(|error| error == "密码为空"));
         let serialized = serde_json::to_string(&parsed.issues).unwrap();
         assert!(!serialized.contains("secret-2"));
     }

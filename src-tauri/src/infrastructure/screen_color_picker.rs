@@ -1,4 +1,6 @@
-use super::screenshot::{capture_virtual_screen, wait_for_hidden_window, ScreenCapture};
+use super::screenshot::{
+    capture_virtual_screen, wait_for_hidden_window, ScreenCapture, ScreenRequestContext,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,6 +15,7 @@ const OVERLAY_LABEL_PREFIX: &str = "color-picker-overlay-";
 #[derive(Clone)]
 struct ColorPickSession {
     owner_label: String,
+    request: ScreenRequestContext,
     capture: Option<ScreenCapture>,
 }
 
@@ -25,6 +28,8 @@ pub(crate) struct ScreenColorPickerManager {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ColorPickResult {
+    #[serde(flatten)]
+    request: ScreenRequestContext,
     color: Option<String>,
     cancelled: bool,
 }
@@ -32,6 +37,7 @@ struct ColorPickResult {
 fn restore_owner(app: &AppHandle, session: ColorPickSession, color: Option<String>) {
     if let Some(owner) = app.get_webview_window(&session.owner_label) {
         let result = ColorPickResult {
+            request: session.request.clone(),
             cancelled: color.is_none(),
             color,
         };
@@ -59,7 +65,11 @@ fn normalize_hex_color(value: Option<String>) -> Result<Option<String>, String> 
 pub(crate) async fn start_screen_color_pick(
     window: WebviewWindow,
     manager: tauri::State<'_, ScreenColorPickerManager>,
+    instance_id: Option<String>,
+    request_id: Option<String>,
 ) -> Result<(), String> {
+    let request = ScreenRequestContext::new(instance_id, request_id)?;
+    let _work = super::launch::keep_native_work(window.app_handle());
     let owner_label = window.label().to_string();
     window
         .hide()
@@ -121,6 +131,7 @@ pub(crate) async fn start_screen_color_pick(
             label.clone(),
             ColorPickSession {
                 owner_label,
+                request,
                 capture: Some(capture),
             },
         );
@@ -186,6 +197,22 @@ pub(crate) fn finish_screen_color_pick(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_color_result_targets_one_specific_page_request() {
+        let request =
+            ScreenRequestContext::new(Some("page-b".into()), Some("color-request-7".into()))
+                .unwrap();
+        let result = ColorPickResult {
+            request,
+            color: Some("#12ABEF".into()),
+            cancelled: false,
+        };
+        let payload = serde_json::to_value(result).unwrap();
+        assert_eq!(payload["instanceId"], "page-b");
+        assert_eq!(payload["requestId"], "color-request-7");
+        assert_eq!(payload["color"], "#12ABEF");
+    }
 
     #[test]
     fn picked_colors_are_strict_six_digit_hex_values() {

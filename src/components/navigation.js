@@ -64,6 +64,7 @@ function normalizeHistoryItem(historyItem) {
             toolId: historyItem.toolId ?? null,
             viewType: historyItem.viewType || 'toolLibrary'
         };
+        if (typeof historyItem.instanceId === 'string') normalized.instanceId = historyItem.instanceId;
         const scrollTop = Number(historyItem.scrollTop);
         if (Number.isFinite(scrollTop) && scrollTop >= 0) normalized.scrollTop = scrollTop;
         return normalized;
@@ -89,7 +90,7 @@ export function getCurrentHistoryScrollTop() {
 function isSameHistoryItem(left, right) {
     const a = normalizeHistoryItem(left);
     const b = normalizeHistoryItem(right);
-    return a.toolId === b.toolId && a.viewType === b.viewType;
+    return a.toolId === b.toolId && a.viewType === b.viewType && a.instanceId === b.instanceId;
 }
 
 function isHistoryItemAvailable(historyItem) {
@@ -126,7 +127,8 @@ function applyHistoryItem(historyItem) {
     const activeTab = getActiveTab();
     if (!activeTab) return false;
 
-    const { toolId, viewType } = normalizeHistoryItem(historyItem);
+    const { toolId, viewType, instanceId } = normalizeHistoryItem(historyItem);
+    activeTab.instanceId = instanceId || null;
 
     if (toolId === null) {
         activeTab.viewType = viewType;

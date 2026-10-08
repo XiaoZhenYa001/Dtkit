@@ -9,6 +9,10 @@ const AUDIO_LOAD_TIMEOUT_MS = 5_000;
 const MAX_PLAYBACK_MS = 7 * 60 * 1_000;
 const PREVIEW_DURATION_MS = 3_000;
 
+function backgroundTimers() {
+    return globalThis.window?.__DTKIT_BACKGROUND_TIMERS__ || { setTimeout, clearTimeout };
+}
+
 export function enqueueUniqueAudioTask(queue, currentTaskId, task, maxSize = DEFAULT_MAX_QUEUE_SIZE) {
     if (currentTaskId === task.id || queue.some(item => item.id === task.id)) {
         return { queue: [...queue], added: false };
@@ -131,6 +135,7 @@ export class AlarmAudioManager {
             audio: null,
             blobUrl: null,
             timeoutId: null,
+            timers: backgroundTimers(),
             onError: null,
             stop: false,
             cleaned: false
@@ -156,7 +161,7 @@ export class AlarmAudioManager {
                 this.cleanupController(controller);
             };
             audio.addEventListener('error', controller.onError);
-            controller.timeoutId = setTimeout(
+            controller.timeoutId = controller.timers.setTimeout(
                 () => this.cleanupController(controller),
                 MAX_PLAYBACK_MS
             );
@@ -179,10 +184,11 @@ export class AlarmAudioManager {
 
     waitUntilPlayable(audio) {
         if (audio.readyState >= 2) return Promise.resolve();
+        const timers = backgroundTimers();
         return new Promise((resolve, reject) => {
             let timeoutId;
             const cleanup = () => {
-                clearTimeout(timeoutId);
+                timers.clearTimeout(timeoutId);
                 audio.removeEventListener('canplay', onCanPlay);
                 audio.removeEventListener('error', onError);
             };
@@ -196,7 +202,7 @@ export class AlarmAudioManager {
             };
             audio.addEventListener('canplay', onCanPlay);
             audio.addEventListener('error', onError);
-            timeoutId = setTimeout(() => {
+            timeoutId = timers.setTimeout(() => {
                 cleanup();
                 reject(new Error('音频加载超时'));
             }, AUDIO_LOAD_TIMEOUT_MS);
@@ -224,7 +230,7 @@ export class AlarmAudioManager {
         if (!controller || controller.cleaned) return;
         controller.cleaned = true;
         controller.stop = true;
-        if (controller.timeoutId) clearTimeout(controller.timeoutId);
+        if (controller.timeoutId) controller.timers.clearTimeout(controller.timeoutId);
         controller.timeoutId = null;
         if (controller.audio) {
             if (controller.onError) controller.audio.removeEventListener('error', controller.onError);

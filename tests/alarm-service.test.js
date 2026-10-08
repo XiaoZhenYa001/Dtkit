@@ -5,9 +5,13 @@ import test from 'node:test';
 import {
     getAlarmRemainingSeconds,
     getCountdownRemainingSeconds,
+    getAlarmSyncStatus,
+    initializeAlarmService,
     normalizeAlarmTask,
     pauseAlarmTaskSchedule,
-    prepareAlarmTaskSchedule
+    prepareAlarmTaskSchedule,
+    stopAlarmAudio,
+    syncAlarmTasks
 } from '../src/core/alarmService.js';
 import { formatAlarmDuration } from '../src/tools/alarm-clock/taskListView.js';
 import { createAlarmTask } from '../src/tools/alarm-clock/taskFactory.js';
@@ -18,6 +22,9 @@ import {
     applyTriggeredAlarmTaskState,
     readAlarmData,
     recordTriggeredAlarm,
+    recordTriggeredAlarmOnce,
+    reorderAlarmTasks,
+    updateAlarmData,
     writeAlarmData
 } from '../src/core/alarmStore.js';
 import {
@@ -225,6 +232,72 @@ test('alarm task state transitions preserve deterministic countdown schedules', 
     assert.equal(task.config.deadlineAt, now + 140_000);
 });
 
+test('independent alarm pages mutate the latest shared record without deleting other pages tasks', async () => {
+    const values = new Map();
+    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+    let pending = Promise.resolve();
+    const locks = { request: (_name, callback) => {
+        const operation = pending.then(callback);
+        pending = operation.catch(() => {});
+        return operation;
+    } };
+    writeAlarmData({ tasks: [], completedToday: 4, lastDate: 'today' }, storage);
+    await Promise.all([
+        updateAlarmData(data => { data.tasks.push({ id: 'first', enabled: true }); }, { storage, locks }),
+        updateAlarmData(data => { data.tasks.push({ id: 'second', enabled: true }); }, { storage, locks })
+    ]);
+    await updateAlarmData(data => { data.tasks.find(task => task.id === 'first').enabled = false; }, { storage, locks });
+    const data = readAlarmData(storage);
+    assert.deepEqual(data.tasks, [{ id: 'first', enabled: false }, { id: 'second', enabled: true }]);
+    assert.equal(data.completedToday, 4);
+    assert.equal(data.revision, 3);
+});
+
+test('reordering a stale alarm page preserves new tasks and does not resurrect deleted tasks', () => {
+    const tasks = [{ id: 'a' }, { id: 'new' }, { id: 'c' }];
+    assert.deepEqual(reorderAlarmTasks(tasks, ['c', 'deleted', 'a']), [{ id: 'c' }, { id: 'a' }, { id: 'new' }]);
+});
+
+test('an alarm trigger is recorded once across native windows and missed-trigger replay', () => {
+    const now = 1_800_000_000_000;
+    const data = { tasks: [countdownTask()], completedToday: 2, lastDate: new Date(now).toDateString() };
+    const trigger = { id: 'countdown-test', triggerId: 'native-trigger-1', triggeredAt: now };
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now), true);
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now + 2000), false);
+    assert.equal(data.completedToday, 3);
+    assert.deepEqual(data.processedTriggers, ['native-trigger-1']);
+});
+
+test('a failed alarm persistence transaction leaves the previous shared record intact', async () => {
+    const initial = JSON.stringify({ tasks: [{ id: 'existing' }], revision: 5 });
+    const storage = { getItem: () => initial, setItem: () => { throw new Error('disk full'); } };
+    await assert.rejects(updateAlarmData(data => { data.tasks.push({ id: 'new' }); }, { storage, locks: null }), /保存闹钟数据失败/);
+    assert.deepEqual(readAlarmData(storage), JSON.parse(initial));
+});
+
+test('embedded alarm pages delegate scheduling and audio control to the trusted parent service', async () => {
+    const previousWindow = globalThis.window;
+    const calls = [];
+    const status = { state: 'synced' };
+    const parent = { location: { origin: 'https://tauri.localhost' }, __DTKIT_SHARED_ALARM_SERVICE__: {
+        ready: async () => calls.push('ready'),
+        sync: async tasks => { calls.push(tasks[0].id); return true; },
+        getStatus: () => status,
+        stopAudio: id => { calls.push(id || 'stopAll'); return true; }
+    } };
+    globalThis.window = { parent, location: { origin: 'https://tauri.localhost' }, __DTKIT_TOOL_PAGE_CONTEXT: { embedded: true } };
+    try {
+        await initializeAlarmService();
+        assert.equal(await syncAlarmTasks([{ id: 'shared-task' }]), true);
+        assert.equal(getAlarmSyncStatus(), status);
+        assert.equal(stopAlarmAudio('shared-task'), true);
+        assert.equal(stopAlarmAudio(), true);
+        assert.deepEqual(calls, ['ready', 'shared-task', 'shared-task', 'stopAll']);
+    } finally {
+        if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    }
+});
+
 test('alarm sync queue retries transient failures and reports recovery', async () => {
     let attempts = 0;
     const delays = [];
@@ -281,14 +354,14 @@ test('alarm tool contains only the visible countdown refresh interval', async ()
 
     assert.equal(intervals.length, 1);
     assert.equal(source.includes('alarmState.timers'), false);
-    assert.match(source, /syncAlarmTasks\(alarmState\.tasks\)/);
+    assert.match(source, /syncAlarmTasks\(data\.tasks\)/);
     assert.match(source, /dtkit:power-state/);
     assert.match(source, /clearInterval\(alarmState\.countdownInterval\)/);
     assert.match(source, /getElementById\('taskListPanel'\)/);
     assert.match(source, /new AlarmAudioManager\(\)/);
     assert.match(source, /updateAlarmTaskCountdowns\(/);
     assert.doesNotMatch(source, /querySelector\(`\[data-countdown-id=/);
-    assert.match(source, /saveTasks\(\{ sync: false \}\)/);
+    assert.match(source, /saveTasks\(\{ sync: false, mutate:/);
     assert.doesNotMatch(source, /cdn\.jsdelivr\.net|window\.Sortable|preloadedAudios/);
 });
 
@@ -319,7 +392,7 @@ test('main window close routes to the tray and only the tray quit action exits',
     assert.doesNotMatch(rustSource, /std::process::exit\(0\)/);
 });
 
-test('a second app launch is intercepted before other plugins and restores the existing main window', async () => {
+test('a second app launch is intercepted before other plugins and dispatches its validated target', async () => {
     const cargo = await readFile(new URL('../src-tauri/Cargo.toml', import.meta.url), 'utf8');
     const rustSource = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
     const singleInstanceIndex = rustSource.indexOf('.plugin(tauri_plugin_single_instance::init');
@@ -327,7 +400,7 @@ test('a second app launch is intercepted before other plugins and restores the e
 
     assert.match(cargo, /tauri-plugin-single-instance/);
     assert.ok(singleInstanceIndex >= 0 && singleInstanceIndex < dialogIndex);
-    assert.match(rustSource, /tauri_plugin_single_instance::init\(\|app, _args, _cwd\|[\s\S]*ensure_main_window\(app\)/);
+    assert.match(rustSource, /tauri_plugin_single_instance::init\(\|app, args, _cwd\|[\s\S]*LaunchTarget::parse[\s\S]*launch_target\(app, target\)/);
 });
 
 test('restoring the main window resumes frontend rendering before it is shown', async () => {

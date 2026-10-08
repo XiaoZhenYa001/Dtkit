@@ -42,6 +42,7 @@ pub(crate) struct ScreenCapture {
 #[derive(Clone)]
 struct ScreenRegionCaptureSession {
     owner_label: String,
+    request: ScreenRequestContext,
     hidden_quick_hosts: Vec<TemporarilyHiddenQuickHost>,
     capture: Option<ScreenCapture>,
     long_direction: Option<String>,
@@ -73,8 +74,37 @@ pub(crate) struct ScreenRegionCaptureManager {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScreenRegionCaptureResult {
+    #[serde(flatten)]
+    request: ScreenRequestContext,
     cancelled: bool,
     capture: Option<ScreenCapture>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScreenRequestContext {
+    pub(crate) instance_id: Option<String>,
+    pub(crate) request_id: Option<String>,
+}
+
+impl ScreenRequestContext {
+    pub(crate) fn new(
+        instance_id: Option<String>,
+        request_id: Option<String>,
+    ) -> Result<Self, String> {
+        let valid = |value: &str| {
+            !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+        };
+        match (&instance_id, &request_id) {
+            (None, None) => {} // Compatibility with older single-page callers.
+            (Some(instance), Some(request)) if valid(instance) && valid(request) => {}
+            _ => return Err("屏幕操作缺少有效的页面或请求标识".to_string()),
+        }
+        Ok(Self {
+            instance_id,
+            request_id,
+        })
+    }
 }
 
 fn hide_quick_hosts_for_capture(
@@ -135,6 +165,7 @@ fn restore_region_capture_owner(
 ) {
     if let Some(owner) = app.get_webview_window(&session.owner_label) {
         let result = ScreenRegionCaptureResult {
+            request: session.request.clone(),
             cancelled: capture.is_none(),
             capture,
         };
@@ -696,7 +727,11 @@ pub(crate) async fn start_screen_region_capture(
     manager: tauri::State<'_, ScreenRegionCaptureManager>,
     long_direction: Option<String>,
     max_segments: Option<u8>,
+    instance_id: Option<String>,
+    request_id: Option<String>,
 ) -> Result<(), String> {
+    let request = ScreenRequestContext::new(instance_id, request_id)?;
+    let _work = super::launch::keep_native_work(window.app_handle());
     if let Some(direction) = &long_direction {
         if direction != "vertical" && direction != "horizontal" {
             return Err("长截图方向无效".to_string());
@@ -763,6 +798,7 @@ pub(crate) async fn start_screen_region_capture(
         label.clone(),
         ScreenRegionCaptureSession {
             owner_label,
+            request,
             hidden_quick_hosts,
             capture: Some(capture),
             long_direction,
@@ -839,6 +875,7 @@ pub(crate) async fn finish_screen_region_capture(
     long_direction: Option<String>,
     max_segments: Option<u8>,
 ) -> Result<(), String> {
+    let _work = super::launch::keep_native_work(window.app_handle());
     let mut session = manager
         .sessions
         .lock()
@@ -927,10 +964,12 @@ pub(crate) async fn finish_screen_region_capture(
 
 #[tauri::command]
 pub(crate) fn save_annotated_screenshot(
+    app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     filename: String,
     data_url: String,
 ) -> Result<String, String> {
+    let _work = super::launch::keep_native_work(&app);
     validate_leaf_filename(&filename)?;
     if !filename.to_ascii_lowercase().ends_with(".png") {
         return Err("截图只能保存为 PNG 文件".to_string());
@@ -957,9 +996,34 @@ pub(crate) fn save_annotated_screenshot(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_selected_capture;
     #[cfg(target_os = "windows")]
     use super::{find_horizontal_overlap, find_vertical_overlap, LongImage};
+    use super::{validate_selected_capture, ScreenRegionCaptureResult, ScreenRequestContext};
+
+    #[test]
+    fn capture_results_retain_the_exact_page_and_request_identity() {
+        let request =
+            ScreenRequestContext::new(Some("page-a".into()), Some("request-2".into())).unwrap();
+        let result = ScreenRegionCaptureResult {
+            request,
+            cancelled: true,
+            capture: None,
+        };
+        let payload = serde_json::to_value(result).unwrap();
+        assert_eq!(payload["instanceId"], "page-a");
+        assert_eq!(payload["requestId"], "request-2");
+        assert_eq!(payload["cancelled"], true);
+        assert!(ScreenRequestContext::new(Some("page-a".into()), None).is_err());
+        assert!(ScreenRequestContext::new(None, Some("request-2".into())).is_err());
+        assert!(ScreenRequestContext::new(Some("".into()), Some("request-2".into())).is_err());
+        assert!(
+            ScreenRequestContext::new(Some("x".repeat(257)), Some("request-2".into())).is_err()
+        );
+        assert!(
+            ScreenRequestContext::new(Some("page-a\n".into()), Some("request-2".into())).is_err()
+        );
+        assert!(ScreenRequestContext::new(None, None).is_ok());
+    }
 
     #[test]
     fn selected_capture_requires_complete_bounded_png_metadata() {

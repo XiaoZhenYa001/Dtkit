@@ -22,17 +22,21 @@ import {
     toggleAlarmTask
 } from './taskState.js';
 import {
-    applyTriggeredAlarmTaskState,
+    ALARM_DATA_CHANGED_EVENT,
+    ALARM_STORAGE_KEY,
     readAlarmData,
-    writeAlarmData
+    reorderAlarmTasks,
+    updateAlarmData
 } from '../../core/alarmStore.js';
 import {
     ALARM_SYNC_STATUS_EVENT,
     ALARM_TRIGGER_EVENT,
     getAlarmSyncStatus,
     getAlarmRemainingSeconds,
+    initializeAlarmService,
     normalizeAlarmTask,
     prepareAlarmTaskSchedule,
+    stopAlarmAudio,
     syncAlarmTasks
 } from '../../core/alarmService.js';
 
@@ -95,7 +99,9 @@ async function init() {
         // 首次加载：加载音频文件列表
         await loadAvailableAudioFiles();
 
-        // 加载任务并同步到 Rust 调度器
+        await initializeAlarmService();
+        if (alarmState.abortController?.signal.aborted || !document.getElementById('taskListPanel')) return;
+        // 每个页面只缓存展示状态；数据变更基于共享存储的最新记录。
         loadTasks();
         isToolInitialized = true;
         showToast('定时闹钟工具已加载', 'success');
@@ -147,7 +153,10 @@ function bindEvents() {
     const stopAllBtn = document.getElementById('stopAllAlarmsBtn');
     if (stopAllBtn) {
         stopAllBtn.addEventListener('click', () => {
-            if (!audioManager.hasActiveAudio) {
+            const hadLocalAudio = audioManager.hasActiveAudio;
+            const shared = window.__DTKIT_SHARED_ALARM_AUDIO__;
+            const stoppedShared = shared?.stopAll ? shared.stopAll() : stopAlarmAudio();
+            if (!hadLocalAudio && !stoppedShared) {
                 showToast('当前没有正在播放的闹钟', 'info');
                 return;
             }
@@ -291,12 +300,7 @@ async function selectProgramFile() {
 // ============================================
 // 添加任务
 // ============================================
-function addTask() {
-    if (alarmState.tasks.length >= MAX_ALARM_TASKS) {
-        showToast(`最多创建 ${MAX_ALARM_TASKS} 个闹钟任务`, 'warning');
-        return;
-    }
-
+async function addTask() {
     const selectedAudio = document.querySelector('.alarm-audio-item.selected');
     const fallbackAudio = audioManager.availableFiles[0];
     const { task, error } = createAlarmTask({
@@ -321,14 +325,12 @@ function addTask() {
         return;
     }
 
-    // 添加到任务列表顶部（新任务在最前面）
-    alarmState.tasks.unshift(task);
-
     // 计算下一次触发时间并交给 Rust 调度器
     startTask(task);
-
-    // 保存并同步任务
-    saveTasks();
+    if (!await saveTasks({ mutate: tasks => {
+        if (tasks.length >= MAX_ALARM_TASKS) throw new Error(`最多创建 ${MAX_ALARM_TASKS} 个闹钟任务`);
+        tasks.unshift(task);
+    } })) return;
 
     // 重新渲染列表
     renderTaskList();
@@ -385,78 +387,66 @@ function startTask(task, options) {
 function stopTask(taskId) {
     console.log(`[AlarmClock] 停止任务: ${taskId}`);
     audioManager.stop(taskId);
+    const shared = window.__DTKIT_SHARED_ALARM_AUDIO__;
+    if (shared?.stop) shared.stop(taskId); else stopAlarmAudio(taskId);
 }
 
 // ============================================
 // 暂停任务
 // ============================================
-function pauseTask(taskId) {
-    const task = pauseAlarmTask(alarmState.tasks, taskId);
-    if (!task) return;
-
-    saveTasks();
-    renderTaskList();
-    updateStats();
-    console.log(`[AlarmClock] 任务已暂停: ${task.name}`);
+async function pauseTask(taskId) {
+    await saveTasks({ mutate: tasks => Boolean(pauseAlarmTask(tasks, taskId)) });
 }
 
 // ============================================
 // 恢复任务
 // ============================================
-function resumeTask(taskId) {
-    const task = resumeAlarmTask(alarmState.tasks, taskId);
-    if (!task) return;
-
-    saveTasks();
-    renderTaskList();
-    updateStats();
-    console.log(`[AlarmClock] 任务已恢复: ${task.name}`);
+async function resumeTask(taskId) {
+    await saveTasks({ mutate: tasks => Boolean(resumeAlarmTask(tasks, taskId)) });
 }
 
 // ============================================
 // 切换任务状态（启用/禁用）
 // ============================================
-function toggleTask(taskId) {
-    const task = toggleAlarmTask(alarmState.tasks, taskId);
-    if (!task) return;
-    if (!task.enabled) stopTask(taskId);
-
-    saveTasks();
-    renderTaskList();
-    updateStats();
+async function toggleTask(taskId) {
+    await saveTasks({ mutate: tasks => {
+        const task = toggleAlarmTask(tasks, taskId);
+        if (!task) return false;
+        if (!task.enabled) stopTask(taskId);
+    } });
 }
 
 // ============================================
 // 删除任务
 // ============================================
-function deleteTask(taskId) {
+async function deleteTask(taskId) {
     stopTask(taskId);
-    alarmState.tasks = alarmState.tasks.filter(t => t.id !== taskId);
-    saveTasks();
-    renderTaskList();
-    updateStats();
-    showToast('任务已删除', 'info');
+    if (await saveTasks({ mutate: (tasks, data) => {
+        data.tasks = tasks.filter(task => task.id !== taskId);
+        return data.tasks.length !== tasks.length;
+    } })) showToast('任务已删除', 'info');
 }
 
 // ============================================
 // 保存任务到 localStorage
 // ============================================
-function saveTasks({ sync = true } = {}) {
-    const data = {
-        tasks: alarmState.tasks,
-        completedToday: alarmState.completedToday,
-        lastDate: new Date().toDateString()
-    };
-    if (!writeAlarmData(data)) {
-        showToast('保存闹钟数据失败，请检查可用存储空间', 'error');
-        return false;
-    }
-    if (sync) {
-        syncAlarmTasks(alarmState.tasks).catch(error => {
+async function saveTasks({ sync = true, mutate = () => false } = {}) {
+    try {
+        const { data, changed } = await updateAlarmData(data => mutate(data.tasks, data));
+        loadTasks();
+        renderTaskList();
+        updateStats();
+        if (sync && changed) syncAlarmTasks(data.tasks).catch(error => {
             console.error('[AlarmClock] 同步 Rust 调度器失败', error);
         });
+        return true;
+    } catch (error) {
+        showToast(String(error?.message || error), 'error');
+        loadTasks();
+        renderTaskList();
+        updateStats();
+        return false;
     }
-    return true;
 }
 
 // ============================================
@@ -465,7 +455,6 @@ function saveTasks({ sync = true } = {}) {
 function loadTasks() {
     try {
         const data = readAlarmData();
-        if (Object.keys(data).length === 0) return;
         alarmState.tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, MAX_ALARM_TASKS) : [];
 
         // 检查日期，重置今日计数
@@ -480,7 +469,6 @@ function loadTasks() {
             normalizeAlarmTask(task);
             if (task.enabled) startTask(task);
         });
-        saveTasks();
     } catch (err) {
         console.error('[AlarmClock] 加载任务失败:', err);
         alarmState.tasks = [];
@@ -499,16 +487,14 @@ function renderTaskList() {
         onPause: pauseTask,
         onResume: resumeTask,
         onToggle: toggleTask,
-        onRestart(task) {
-            if (!restartCountdownTask(alarmState.tasks, task.id)) return;
-            saveTasks();
-            renderTaskList();
-            updateStats();
+        async onRestart(task) {
+            await saveTasks({ mutate: tasks => Boolean(restartCountdownTask(tasks, task.id)) });
         },
         onDelete: deleteTask,
         onReorder(tasks) {
-            alarmState.tasks = tasks;
-            saveTasks({ sync: false });
+            saveTasks({ sync: false, mutate: (current, data) => {
+                data.tasks = reorderAlarmTasks(current, tasks.map(task => task.id));
+            } });
         }
     });
 }
@@ -580,11 +566,8 @@ function startGlobalCountdown() {
     }, 1000);
 }
 
-function applyTriggeredTaskState(triggeredTask) {
-    const task = alarmState.tasks.find(item => item.id === triggeredTask.id);
-    if (!applyTriggeredAlarmTaskState(task)) return;
-
-    alarmState.completedToday++;
+function applyTriggeredTaskState() {
+    loadTasks();
     if (document.getElementById('taskListPanel')) renderTaskList();
     updateStats();
 }
@@ -624,6 +607,18 @@ window.addEventListener(ALARM_TRIGGER_EVENT, event => {
     applyTriggeredTaskState(event.detail);
 });
 
+function refreshSharedTasks() {
+    if (!document.getElementById('taskListPanel')) return;
+    loadTasks();
+    renderTaskList();
+    updateStats();
+}
+
+window.addEventListener(ALARM_DATA_CHANGED_EVENT, refreshSharedTasks);
+window.addEventListener('storage', event => {
+    if (event.key === ALARM_STORAGE_KEY) refreshSharedTasks();
+});
+
 window.addEventListener(ALARM_SYNC_STATUS_EVENT, event => {
     updateAlarmSyncStatus(event.detail, { notify: true });
 });
@@ -636,6 +631,7 @@ window.addEventListener('dtkit:power-state', event => {
         }
         audioManager.suspend();
     } else if (document.getElementById('taskListPanel')) {
+        refreshSharedTasks();
         startGlobalCountdown();
         updateStats();
     }
@@ -646,6 +642,80 @@ export async function handleBackgroundAlarmTrigger(task) {
     if (audioManager.availableFiles.length === 0) await loadAvailableAudioFiles();
     task.__backendTriggered = true;
     await audioManager.play(task);
+}
+
+export function stopBackgroundAlarmAudio(taskId = null) {
+    const hadAudio = audioManager.hasActiveAudio;
+    if (taskId) audioManager.stop(taskId); else audioManager.stopAll();
+    return hadAudio;
+}
+
+const DRAFT_FORM_FIELDS = ['alarmTaskName', 'alarmTaskType', 'alarmTimeInput',
+    'countdownHours', 'countdownMinutes', 'countdownSeconds', 'intervalValue',
+    'intervalUnit', 'alarmActionType', 'repeatEnabled'];
+
+function serializePageDraft() {
+    const fields = {};
+    for (const id of DRAFT_FORM_FIELDS) {
+        const node = document.getElementById(id);
+        if (!node) continue;
+        fields[id] = { value: node.value, checked: node.checked,
+            selectionStart: node.selectionStart, selectionEnd: node.selectionEnd,
+            selectionDirection: node.selectionDirection };
+    }
+    return { version: 1, fields,
+        repeatDays: [...document.querySelectorAll('input[name="repeatDay"]:checked')].map(node => node.value),
+        audioPath: document.querySelector('.alarm-audio-item.selected')?.dataset.audioPath || '',
+        programPath: document.getElementById('selectedFilePath')?.textContent || '',
+        focusedField: document.hasFocus() ? document.activeElement?.id : null,
+        configScrollTop: document.querySelector('.alarm-config-panel')?.scrollTop || 0,
+        listScrollTop: document.getElementById('taskListPanel')?.scrollTop || 0 };
+}
+
+async function restorePageDraft(snapshot) {
+    if (snapshot?.version !== 1 || !snapshot.fields) return;
+    for (const id of DRAFT_FORM_FIELDS) {
+        const node = document.getElementById(id);
+        const saved = snapshot.fields[id];
+        if (!node || typeof saved?.value !== 'string') continue;
+        node.value = node.maxLength > 0 ? saved.value.slice(0, node.maxLength) : saved.value;
+        if (typeof saved.checked === 'boolean') node.checked = saved.checked;
+        if (Number.isInteger(saved.selectionStart) && Number.isInteger(saved.selectionEnd)) {
+            try { node.setSelectionRange(saved.selectionStart, saved.selectionEnd,
+                ['none', 'forward', 'backward'].includes(saved.selectionDirection) ? saved.selectionDirection : 'none'); }
+            catch { /* numeric, checkbox and time controls have no selection range */ }
+        }
+    }
+    const days = new Set(Array.isArray(snapshot.repeatDays) ? snapshot.repeatDays.map(String) : []);
+    document.querySelectorAll('input[name="repeatDay"]').forEach(node => { node.checked = days.has(node.value); });
+    handleTaskTypeChange();
+    await handleActionTypeChange();
+    if (!alarmState.abortController || alarmState.abortController.signal.aborted) return;
+    const repeat = document.getElementById('repeatEnabled')?.checked !== false;
+    const dayGroup = document.getElementById('repeatDaysGroup');
+    if (dayGroup) {
+        dayGroup.style.display = repeat ? 'flex' : 'none';
+        dayGroup.style.opacity = repeat ? '1' : '0';
+        dayGroup.style.transform = repeat ? 'translateY(0)' : 'translateY(-10px)';
+    }
+    const program = document.getElementById('selectedFilePath');
+    if (program && typeof snapshot.programPath === 'string') { program.textContent = snapshot.programPath; program.title = snapshot.programPath; }
+    const audioItems = [...document.querySelectorAll('.alarm-audio-item')];
+    const selectedAudio = audioItems.find(node => node.dataset.audioPath === snapshot.audioPath);
+    if (selectedAudio) for (const node of audioItems) {
+        const selected = node === selectedAudio;
+        node.classList.toggle('selected', selected); node.setAttribute('aria-checked', String(selected)); node.tabIndex = selected ? 0 : -1;
+    }
+    // Page drafts restore only the unfinished form. Scheduled tasks and counts
+    // always come from the latest shared record, including changes during sleep.
+    refreshSharedTasks();
+    const configPanel = document.querySelector('.alarm-config-panel');
+    if (configPanel) configPanel.scrollTop = Math.max(0, Number(snapshot.configScrollTop) || 0);
+    const listPanel = document.getElementById('taskListPanel');
+    if (listPanel) listPanel.scrollTop = Math.max(0, Number(snapshot.listScrollTop) || 0);
+    if (!document.documentElement.classList.contains('app-is-suspended') && DRAFT_FORM_FIELDS.includes(snapshot.focusedField)) {
+        document.getElementById(snapshot.focusedField)?.focus({ preventScroll: true });
+    }
 }
 
 // ============================================
@@ -685,5 +755,7 @@ registerTool({
     category: 'utility',
     template: getAlarmTemplate,
     init,
-    destroy
+    destroy,
+    serialize: serializePageDraft,
+    restore: restorePageDraft
 });

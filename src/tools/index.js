@@ -211,6 +211,26 @@ export const toolManifests = Object.freeze([
         loader: () => import('./system-assistant/index.js')
     },
     {
+        id: 'startup-manager',
+        name: '自启动管理',
+        icon: 'ri-rocket-2-line',
+        colorClass: 'tool-card__icon--purple',
+        category: 'utility',
+        status: 'ready',
+        description: '按需检测自动启动程序，打开文件位置，关闭或恢复自启动。',
+        loader: () => import('./startup-manager/index.js')
+    },
+    {
+        id: 'context-menu',
+        name: '右键菜单管理',
+        icon: 'ri-menu-2-line',
+        colorClass: 'tool-card__icon--blue',
+        category: 'utility',
+        status: 'ready',
+        description: '按文件、文件夹、桌面等场景整理右键菜单，支持可恢复的启停。',
+        loader: () => import('./context-menu/index.js')
+    },
+    {
         id: 'text-snippets',
         name: '文本片段库',
         icon: 'ri-file-copy-2-line',
@@ -239,6 +259,16 @@ export const toolManifests = Object.freeze([
         status: 'ready',
         description: '随手记录灵感与待办，自动保存为可置顶的桌面便签。',
         loader: () => import('./sticky-notes/index.js')
+    },
+    {
+        id: 'timetable',
+        name: '课表',
+        icon: 'ri-calendar-line',
+        colorClass: 'tool-card__icon--green',
+        category: 'utility',
+        status: 'ready',
+        description: '一目了然的每周课表，支持单双周、学期归档、导入导出与轻量桌面小部件。',
+        loader: () => import('./timetable/index.js')
     },
     {
         id: 'screenshot-annotator',

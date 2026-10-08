@@ -1,4 +1,8 @@
-from playwright.sync_api import sync_playwright
+import os
+
+from playwright.sync_api import expect, sync_playwright
+
+BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
 
 MOCK = r"""
 (() => {
@@ -12,6 +16,7 @@ MOCK = r"""
   window.__toggleMaximizeCalls = 0;
   window.__alwaysOnTopCalls = [];
   window.__dtkitListeners = {};
+  window.__dtkitEmit = (name,payload) => { for(const callback of window.__dtkitListeners[name] || []) callback({payload}); };
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input, options) => {
     if (String(input).includes('api.github.com/repos/XiaoZhenYa001/Dtkit/releases/latest')) {
@@ -34,7 +39,7 @@ MOCK = r"""
         const capture = args.longDirection
           ? {dataUrl:pixel,width:640,height:1040,x:0,y:0}
           : {dataUrl:pixel,width:640,height:360,x:0,y:0};
-        queueMicrotask(() => window.__dtkitListeners['screen-region-captured']?.({payload:{cancelled:false,capture}}));
+        queueMicrotask(() => window.__dtkitEmit('screen-region-captured',{cancelled:false,capture,instanceId:args.instanceId,requestId:args.requestId}));
         return null;
       }
       if (command === 'get_screen_region_capture') return {dataUrl:pixel,width:640,height:360,x:0,y:0};
@@ -48,7 +53,7 @@ MOCK = r"""
       return null;
     }},
     dialog: {open: async () => null},
-    event: {listen: async (name, callback) => { window.__dtkitListeners[name] = callback; return () => delete window.__dtkitListeners[name]; }},
+    event: {listen: async (name, callback) => { (window.__dtkitListeners[name] ||= new Set()).add(callback); return () => window.__dtkitListeners[name].delete(callback); }},
     window: {getCurrentWindow: () => ({
       toggleMaximize: async () => { window.__toggleMaximizeCalls += 1; },
       setAlwaysOnTop: async value => { window.__alwaysOnTopCalls.push(value); },
@@ -58,12 +63,16 @@ MOCK = r"""
 })();
 """
 
+def tool_view(page):
+    return page.frame_locator("iframe.tool-page-frame:not([hidden])")
+
+
 def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1360, "height": 880})
         page.add_init_script(MOCK)
-        page.goto("http://127.0.0.1:9005", wait_until="networkidle")
+        page.goto(BASE_URL, wait_until="networkidle")
 
         page.locator("#searchInput").fill("白板")
         assert page.locator("#designToolsSection").is_visible()
@@ -100,36 +109,36 @@ def run():
         page.locator('[data-view="toolLibrary"]').click()
 
         page.locator('[data-tool-id="text-snippets"]').click()
-        page.locator(".snippet-shell").wait_for()
-        page.locator(".snippet-row").first.wait_for()
-        assert page.locator(".snippet-row").count() == 2
-        assert page.locator("#snippetTagStrip button").count() == 2
-        page.locator(".snippet-row").first.click()
-        assert page.locator(".snippet-row").first.get_attribute("aria-selected") == "true"
-        page.locator("#snippetAdd").click()
-        page.locator("#snippetTitle").fill("不会保存")
-        page.locator("#snippetContent").fill("取消编辑")
-        page.locator("#snippetEditorCancel").click()
-        assert not page.locator("#snippetEditor").is_visible()
+        tool_view(page).locator(".snippet-shell").wait_for()
+        tool_view(page).locator(".snippet-row").first.wait_for()
+        assert tool_view(page).locator(".snippet-row").count() == 2
+        assert tool_view(page).locator("#snippetTagStrip button").count() == 2
+        tool_view(page).locator(".snippet-row").first.click()
+        assert tool_view(page).locator(".snippet-row").first.get_attribute("aria-selected") == "true"
+        tool_view(page).locator("#snippetAdd").click()
+        tool_view(page).locator("#snippetTitle").fill("不会保存")
+        tool_view(page).locator("#snippetContent").fill("取消编辑")
+        tool_view(page).locator("#snippetEditorCancel").click()
+        assert not tool_view(page).locator("#snippetEditor").is_visible()
         assert not page.evaluate("window.__dtkitCalls.some(c => c.command === 'save_snippet')")
 
         # Side navigation is part of the same per-tab browser history.
         page.locator('[data-view="favorites"]').click()
         page.locator("#favoritesView.view--active").wait_for()
         page.locator("#backBtn").click()
-        page.locator(".snippet-shell").wait_for()
+        tool_view(page).locator(".snippet-shell").wait_for()
         page.locator("#backBtn").click()
         page.locator("#toolLibraryView.view--active").wait_for()
         page.locator("#forwardBtn").click()
-        page.locator(".snippet-shell").wait_for()
+        tool_view(page).locator(".snippet-shell").wait_for()
         page.screenshot(path="C:/tmp/dtkit-snippets-detail.png", full_page=True)
 
         page.locator('[data-view="toolLibrary"]').click()
         page.set_viewport_size({"width": 1088, "height": 760})
         capture_calls = page.evaluate("window.__dtkitCalls.filter(c => c.command === 'start_screen_region_capture').length")
         page.locator('[data-tool-id="screenshot-annotator"]').click()
-        page.locator('.capture-loading[data-state="ready"]').wait_for(state="visible")
-        toolbar_groups = page.locator(".capture-toolbar").evaluate("""toolbar => {
+        tool_view(page).locator('.capture-loading[data-state="ready"]').wait_for(state="visible")
+        toolbar_groups = tool_view(page).locator(".capture-toolbar").evaluate("""toolbar => {
           const tools = toolbar.querySelector('.capture-tools').getBoundingClientRect();
           const actions = toolbar.querySelector('.capture-actions').getBoundingClientRect();
           const lastTool = toolbar.querySelector('.capture-tools > :last-child').getBoundingClientRect();
@@ -148,93 +157,116 @@ def run():
         assert groups_separated and children_separated
         assert favorite_reflows_after_resize
         assert page.evaluate("window.__dtkitCalls.filter(c => c.command === 'start_screen_region_capture').length") == capture_calls
-        assert page.locator("#captureAgainLabel").inner_text() == "开始截图"
-        page.locator("#captureAgain").click()
-        page.locator("#captureCanvas").wait_for(state="visible")
-        assert page.locator("#captureCanvas").evaluate("canvas => canvas.width") == 640
-        assert page.locator("#captureLoading").is_hidden()
-        assert page.locator("#captureSave").is_enabled()
-        bounds = page.locator("#captureCanvas").bounding_box()
-        page.locator('[data-capture-mode="pen"]').click()
+        assert tool_view(page).locator("#captureAgainLabel").inner_text() == "开始截图"
+        tool_view(page).locator("#captureAgain").click()
+        tool_view(page).locator("#captureCanvas").wait_for(state="visible")
+        assert tool_view(page).locator("#captureCanvas").evaluate("canvas => canvas.width") == 640
+        assert tool_view(page).locator("#captureLoading").is_hidden()
+        assert tool_view(page).locator("#captureSave").is_enabled()
+        bounds = tool_view(page).locator("#captureCanvas").bounding_box()
+        tool_view(page).locator('[data-capture-mode="pen"]').click()
         page.mouse.move(bounds["x"] + 20, bounds["y"] + 20)
-        page.locator("#captureBrushCursor").wait_for(state="visible")
-        brush_box = page.locator("#captureBrushCursor").bounding_box()
+        tool_view(page).locator("#captureBrushCursor").wait_for(state="visible")
+        brush_box = tool_view(page).locator("#captureBrushCursor").bounding_box()
         assert brush_box["width"] >= 4 and brush_box["height"] >= 4
         page.mouse.move(bounds["x"] + 10, bounds["y"] + 10)
         page.mouse.down()
         page.mouse.move(bounds["x"] + 60, bounds["y"] + 40)
         page.mouse.up()
-        assert page.locator("#captureUndo").is_enabled()
-        page.locator('[data-capture-mode="text"]').click()
+        assert tool_view(page).locator("#captureUndo").is_enabled()
+        tool_view(page).locator('[data-capture-mode="text"]').click()
         page.mouse.click(bounds["x"] + 100, bounds["y"] + 80)
-        assert page.locator("#captureInlineText").is_visible()
-        editor_bounds = page.locator("#captureInlineText").bounding_box()
+        assert tool_view(page).locator("#captureInlineText").is_visible()
+        editor_bounds = tool_view(page).locator("#captureInlineText").bounding_box()
         assert abs(editor_bounds["x"] - (bounds["x"] + 100)) <= 4
         assert abs(editor_bounds["y"] - (bounds["y"] + 80)) <= 4
-        page.locator("#captureInlineText").fill("重点")
-        page.locator("#captureInlineText").press("Enter")
-        assert page.locator("#captureInlineText").is_hidden()
-        assert int(page.locator("#captureCanvas").get_attribute("data-annotation-count")) >= 2
-        page.locator('[data-capture-mode="select"]').click()
+        tool_view(page).locator("#captureInlineText").fill("重点")
+        tool_view(page).locator("#captureInlineText").press("Enter")
+        assert tool_view(page).locator("#captureInlineText").is_hidden()
+        assert int(tool_view(page).locator("#captureCanvas").get_attribute("data-annotation-count")) >= 2
+        tool_view(page).locator('[data-capture-mode="select"]').click()
         page.mouse.dblclick(bounds["x"] + 105, bounds["y"] + 75)
-        assert page.locator("#captureInlineText").is_visible()
-        page.locator("#captureInlineText").fill("重点修改")
+        assert tool_view(page).locator("#captureInlineText").is_visible()
+        tool_view(page).locator("#captureInlineText").fill("重点修改")
         page.mouse.click(bounds["x"] + 340, bounds["y"] + 250)
-        assert page.locator("#captureInlineText").is_hidden()
-        page.locator("#captureShapeTrigger").click()
-        assert page.locator("#captureShapeMenu").is_visible()
-        page.locator('[data-shape-style="fill"]').click()
-        page.locator('[data-shape-mode="ellipse"]').click()
-        assert "椭圆" in page.locator("#captureShapeTrigger").inner_text()
+        assert tool_view(page).locator("#captureInlineText").is_hidden()
+        tool_view(page).locator("#captureShapeTrigger").click()
+        assert tool_view(page).locator("#captureShapeMenu").is_visible()
+        tool_view(page).locator('[data-shape-style="fill"]').click()
+        tool_view(page).locator('[data-shape-mode="ellipse"]').click()
+        assert "椭圆" in tool_view(page).locator("#captureShapeTrigger").inner_text()
         page.mouse.move(bounds["x"] + 180, bounds["y"] + 120)
         page.mouse.down()
         page.mouse.move(bounds["x"] + 260, bounds["y"] + 190)
         page.mouse.up()
-        assert int(page.locator("#captureCanvas").get_attribute("data-annotation-count")) >= 3
-        assert page.locator("#captureZoomValue").inner_text().endswith("%")
-        zoom_before = page.locator("#captureZoomValue").inner_text()
-        page.locator("#captureZoomIn").click()
-        assert page.locator("#captureZoomValue").inner_text() != zoom_before
-        page.locator("#captureCanvasTrigger").click()
-        page.locator("#captureCornerRadius").fill("28")
-        assert page.locator("#captureCanvas").get_attribute("data-corner-radius") == "28"
-        page.locator("#captureLong").click()
-        assert page.locator("#captureLongDialog").is_visible()
-        page.locator('[data-long-direction="vertical"]').click()
-        page.locator("#captureLongStart").click()
-        page.wait_for_function("document.querySelector('#captureCanvas').height === 1040")
+        assert int(tool_view(page).locator("#captureCanvas").get_attribute("data-annotation-count")) >= 3
+        assert tool_view(page).locator("#captureZoomValue").inner_text().endswith("%")
+        zoom_before = tool_view(page).locator("#captureZoomValue").inner_text()
+        tool_view(page).locator("#captureZoomIn").click()
+        assert tool_view(page).locator("#captureZoomValue").inner_text() != zoom_before
+        tool_view(page).locator("#captureCanvasTrigger").click()
+        tool_view(page).locator("#captureCornerRadius").fill("28")
+        assert tool_view(page).locator("#captureCanvas").get_attribute("data-corner-radius") == "28"
+        tool_view(page).locator("#captureLong").click()
+        assert tool_view(page).locator("#captureLongDialog").is_visible()
+        tool_view(page).locator('[data-long-direction="vertical"]').click()
+        tool_view(page).locator("#captureLongStart").click()
+        expect(tool_view(page).locator("#captureCanvas")).to_have_attribute("height", "1040")
         long_call = page.evaluate("window.__dtkitCalls.findLast(c => c.command === 'start_screen_region_capture')")
         assert long_call["args"]["longDirection"] == "vertical"
         page.screenshot(path="C:/tmp/dtkit-screenshot-detail.png", full_page=True)
-        page.locator("#captureDelete").click()
-        assert page.locator("#captureCanvas").is_hidden()
-        assert page.locator("#captureLoading").is_visible()
-        assert page.locator("#captureSave").is_disabled()
+        tool_view(page).locator("#captureDelete").click()
+        assert tool_view(page).locator("#captureCanvas").is_hidden()
+        assert tool_view(page).locator("#captureLoading").is_visible()
+        assert tool_view(page).locator("#captureSave").is_disabled()
 
         page.locator('[data-view="toolLibrary"]').click()
         page.locator('[data-tool-id="qr-generator"]').click()
-        page.locator(".qr-workspace").wait_for()
-        page.locator("#qrDataInput").fill("mailto:hello@example.com")
-        page.locator('[data-qr-prefix="tel:"]').click()
-        assert page.locator("#qrDataInput").input_value() == "tel:hello@example.com"
-        page.locator('[data-qr-prefix=""]').click()
-        assert page.locator("#qrDataInput").input_value() == "hello@example.com"
-        assert "17" in page.locator("#qrDataCount").inner_text()
+        tool_view(page).locator(".qr-workspace").wait_for()
+        tool_view(page).locator("#qrDataInput").fill("mailto:hello@example.com")
+        tool_view(page).locator('[data-qr-prefix="tel:"]').click()
+        assert tool_view(page).locator("#qrDataInput").input_value() == "tel:hello@example.com"
+        tool_view(page).locator('[data-qr-prefix=""]').click()
+        assert tool_view(page).locator("#qrDataInput").input_value() == "hello@example.com"
+        assert "17" in tool_view(page).locator("#qrDataCount").inner_text()
         page.screenshot(path="C:/tmp/dtkit-qr-create-detail.png", full_page=True)
-        page.locator('[data-qr-tab="temporary"]').click()
-        assert page.locator("#qrTemporaryPanel").is_visible()
-        assert "10" in page.locator(".qr-temp-intro").inner_text()
-        assert page.locator("#qrCopyContent").is_disabled()
-        assert page.locator("#qrCodePreview").is_hidden()
-        assert page.locator("#qrPreviewEmpty").is_visible()
+        tool_view(page).locator('[data-qr-tab="temporary"]').click()
+        assert tool_view(page).locator("#qrTemporaryPanel").is_visible()
+        assert "10" in tool_view(page).locator(".qr-temp-intro").inner_text()
+        assert tool_view(page).locator("#qrCopyContent").is_disabled()
+        assert tool_view(page).locator("#qrCodePreview").is_hidden()
+        assert tool_view(page).locator("#qrPreviewEmpty").is_visible()
         page.screenshot(path="C:/tmp/dtkit-qr-detail.png", full_page=True)
 
         page.locator('[data-view="toolLibrary"]').click()
         page.locator('[data-tool-id="color-picker"]').click()
-        page.locator("#screenColorPicker").click()
+        tool_view(page).locator("#screenColorPicker").click()
         page.wait_for_function("window.__dtkitCalls.some(c => c.command === 'start_screen_color_pick')")
-        page.evaluate("window.__dtkitListeners['screen-color-picked']({payload:{color:'#12ABEF',cancelled:false}})")
-        assert page.locator("#hexInput").input_value() == "#12ABEF"
+        page.evaluate("() => { const args = window.__dtkitCalls.findLast(call => call.command === 'start_screen_color_pick').args; window.__dtkitEmit('screen-color-picked',{color:'#12ABEF',cancelled:false,instanceId:args.instanceId,requestId:args.requestId}); }")
+        assert tool_view(page).locator("#hexInput").input_value() == "#12ABEF"
+
+        # Pending native selections are routed by both page and request identity.
+        color_a_tab = page.locator('.tab--active').get_attribute('data-tab-id')
+        color_a_frame = page.locator('iframe.tool-page-frame:not([hidden])').element_handle().content_frame()
+        color_a_frame.locator('#screenColorPicker').click()
+        page.wait_for_function("() => window.__dtkitCalls.filter(call => call.command === 'start_screen_color_pick').length === 2")
+        pick_a = page.evaluate("window.__dtkitCalls.findLast(call => call.command === 'start_screen_color_pick').args")
+        page.locator('[data-tool-page-new]').click()
+        color_b_frame = page.locator('iframe.tool-page-frame:not([hidden])').element_handle().content_frame()
+        color_b_frame.locator('#screenColorPicker').wait_for(state='visible')
+        before_b = color_b_frame.locator('#hexInput').input_value()
+        color_b_frame.locator('#screenColorPicker').click()
+        page.wait_for_function("() => window.__dtkitCalls.filter(call => call.command === 'start_screen_color_pick').length === 3")
+        pick_b = page.evaluate("window.__dtkitCalls.findLast(call => call.command === 'start_screen_color_pick').args")
+        assert pick_a['instanceId'] != pick_b['instanceId'] and pick_a['requestId'] != pick_b['requestId']
+        page.evaluate("args => window.__dtkitEmit('screen-color-picked',{...args,color:'#AABBCC',cancelled:false})", pick_a)
+        expect(color_b_frame.locator('#hexInput')).to_have_value(before_b)
+        page.evaluate("args => window.__dtkitEmit('screen-color-picked',{...args,requestId:'outdated-request',color:'#FF0000',cancelled:false})", pick_b)
+        expect(color_b_frame.locator('#hexInput')).to_have_value(before_b)
+        page.evaluate("args => window.__dtkitEmit('screen-color-picked',{...args,color:'#112233',cancelled:false})", pick_b)
+        expect(color_b_frame.locator('#hexInput')).to_have_value('#112233')
+        page.locator(f'.tab[data-tab-id="{color_a_tab}"] .tab__label').click()
+        expect(color_a_frame.locator('#hexInput')).to_have_value('#AABBCC')
 
         page.locator('[data-view="settings"]').click()
         page.locator("#toolModulesSection").scroll_into_view_if_needed()
@@ -242,7 +274,7 @@ def run():
         page.locator("#toolModulesCollapse").click()
         assert page.locator("#toolModulesCollapse").get_attribute("aria-expanded") == "true"
         page.locator("#toolModuleList .tool-module-row").first.wait_for()
-        assert page.locator("#toolModuleList .tool-module-row").count() == 18
+        assert page.locator("#toolModuleList .tool-module-row").count() == 24
         toggle = page.locator('input[data-tool-id="hash-tool"]')
         toggle.uncheck()
         page.wait_for_function("window.__dtkitCalls.some(c => c.command === 'set_tool_module_enabled' && c.args.toolId === 'hash-tool')")
@@ -259,7 +291,7 @@ def run():
 
         quick_page = browser.new_page(viewport={"width": 720, "height": 520})
         quick_page.add_init_script(MOCK)
-        quick_page.goto("http://127.0.0.1:9005/quick.html?kind=tool&toolId=text-snippets", wait_until="networkidle")
+        quick_page.goto(BASE_URL + "/quick.html?kind=tool&toolId=text-snippets", wait_until="networkidle")
         quick_page.locator(".snippet-shell--quick").wait_for()
         assert quick_page.locator(".snippet-row").count() == 2
         quick_page.screenshot(path="C:/tmp/dtkit-snippets-quick-detail.png", full_page=True)
@@ -267,7 +299,7 @@ def run():
 
         quick_capture = browser.new_page(viewport={"width": 900, "height": 620})
         quick_capture.add_init_script(MOCK)
-        quick_capture.goto("http://127.0.0.1:9005/quick.html?kind=tool&toolId=screenshot-annotator", wait_until="networkidle")
+        quick_capture.goto(BASE_URL + "/quick.html?kind=tool&toolId=screenshot-annotator", wait_until="networkidle")
         quick_capture.locator("#captureCanvas").wait_for(state="visible")
         assert quick_capture.evaluate("window.__dtkitCalls.some(c => c.command === 'start_screen_region_capture')")
         assert "quick-tool--screenshot-annotator" in quick_capture.locator("html").get_attribute("class")
@@ -296,7 +328,7 @@ def run():
 
         quick_html = browser.new_page(viewport={"width": 760, "height": 580})
         quick_html.add_init_script(MOCK)
-        quick_html.goto("http://127.0.0.1:9005/quick.html?kind=tool&toolId=html-preview", wait_until="networkidle")
+        quick_html.goto(BASE_URL + "/quick.html?kind=tool&toolId=html-preview", wait_until="networkidle")
         quick_html.locator(".html-preview-container").wait_for(state="visible")
         assert "quick-tool--html-preview" in quick_html.locator("html").get_attribute("class")
         columns = quick_html.locator(".html-preview-main").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length")
@@ -313,7 +345,7 @@ def run():
 
         color_overlay = browser.new_page(viewport={"width": 760, "height": 520})
         color_overlay.add_init_script(MOCK)
-        color_overlay.goto("http://127.0.0.1:9005/color-pick.html", wait_until="networkidle")
+        color_overlay.goto(BASE_URL + "/color-pick.html", wait_until="networkidle")
         color_overlay.locator("#loading").wait_for(state="hidden")
         color_overlay.mouse.move(240, 190)
         color_overlay.wait_for_function("document.querySelector('#pickedRgb').textContent.includes('RGB')")
@@ -328,7 +360,7 @@ def run():
 
         region_overlay = browser.new_page(viewport={"width": 760, "height": 520})
         region_overlay.add_init_script(MOCK)
-        region_overlay.goto("http://127.0.0.1:9005/screen-region.html", wait_until="networkidle")
+        region_overlay.goto(BASE_URL + "/screen-region.html", wait_until="networkidle")
         region_overlay.locator("#regionLoading").wait_for(state="hidden")
         region_overlay.mouse.move(110, 90)
         region_overlay.mouse.down()
@@ -369,7 +401,7 @@ def run():
 
         region_double_click = browser.new_page(viewport={"width": 760, "height": 520})
         region_double_click.add_init_script(MOCK)
-        region_double_click.goto("http://127.0.0.1:9005/screen-region.html", wait_until="networkidle")
+        region_double_click.goto(BASE_URL + "/screen-region.html", wait_until="networkidle")
         region_double_click.locator("#regionLoading").wait_for(state="hidden")
         region_double_click.mouse.move(80, 70)
         region_double_click.mouse.down()
@@ -382,7 +414,7 @@ def run():
 
         region_cancel = browser.new_page(viewport={"width": 760, "height": 520})
         region_cancel.add_init_script(MOCK)
-        region_cancel.goto("http://127.0.0.1:9005/screen-region.html", wait_until="networkidle")
+        region_cancel.goto(BASE_URL + "/screen-region.html", wait_until="networkidle")
         region_cancel.locator("#regionLoading").wait_for(state="hidden")
         region_cancel.mouse.click(300, 200, button="right")
         region_cancel.wait_for_function("window.__dtkitCalls.some(c => c.command === 'finish_screen_region_capture')")
@@ -391,7 +423,7 @@ def run():
 
         region_long = browser.new_page(viewport={"width": 760, "height": 520})
         region_long.add_init_script(MOCK)
-        region_long.goto("http://127.0.0.1:9005/screen-region.html", wait_until="networkidle")
+        region_long.goto(BASE_URL + "/screen-region.html", wait_until="networkidle")
         region_long.locator("#regionLoading").wait_for(state="hidden")
         region_long.mouse.move(100, 80)
         region_long.mouse.down()

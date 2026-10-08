@@ -22,7 +22,8 @@ mod path_safety;
 mod system_actions;
 
 use alarm_scheduler::{
-    create_quick_countdown, sync_alarm_tasks, take_missed_alarm_triggers, AlarmScheduler,
+    ack_missed_alarm_triggers, create_quick_countdown, sync_alarm_tasks,
+    take_missed_alarm_triggers, AlarmScheduler,
 };
 use desktop::commands::*;
 use desktop::hotzone::{
@@ -34,8 +35,12 @@ use infrastructure::cleanup::{
     get_cleanup_status, restore_latest_cleanup, run_storage_cleanup, schedule_automatic_cleanup,
     set_automatic_cleanup_enabled, set_cleanup_retention_days, CleanupManager,
 };
+use infrastructure::context_menu::{
+    scan_context_menu_items, set_context_menu_enabled, ContextMenuManager,
+};
 use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_file_batch};
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
+use infrastructure::launch::{create_tool_launcher, LaunchRuntime, LaunchTarget};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
 use infrastructure::passwords::{
     audit_password_security, commit_password_import, copy_password, copy_password_field,
@@ -48,12 +53,12 @@ use infrastructure::passwords::{
 use infrastructure::quick_host::{
     dismiss_quick_host, open_quick_host, touch_quick_host_activity, QuickHostManager,
 };
+use infrastructure::region_mirror::{
+    control_region_mirror, list_region_mirrors, start_region_mirror, RegionMirrorManager,
+};
 use infrastructure::resources::{
     get_resource_policy, get_resource_snapshot, release_idle_resources, set_minimize_mode,
     set_resource_policy, MinimizeMode, ResourceGovernor,
-};
-use infrastructure::region_mirror::{
-    control_region_mirror, list_region_mirrors, start_region_mirror, RegionMirrorManager,
 };
 use infrastructure::screen_color_picker::{
     finish_screen_color_pick, get_screen_color_pick_capture, start_screen_color_pick,
@@ -74,9 +79,10 @@ use infrastructure::sticky_notes::{
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
 };
+use infrastructure::timetable::{close_timetable_widget, open_timetable_widget, pin_timetable_widget};
 use infrastructure::system_assistant::{
-    reveal_system_startup_item, scan_system_startup_items, set_system_startup_enabled,
-    SystemAssistantManager,
+    open_system_startup_settings, reveal_system_startup_item, scan_system_startup_items,
+    set_system_startup_enabled, SystemAssistantManager,
 };
 use infrastructure::tool_modules::{
     get_tool_module_settings, set_tool_module_enabled, ToolModuleManager,
@@ -266,6 +272,10 @@ fn position_desktop_organizer_at_top_right(window: &WebviewWindow) -> Result<(),
 }
 
 fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.state::<QuickHostManager>().restore_retained(app);
+    if app.state::<LaunchRuntime>().enter_main() {
+        start_main_services(app);
+    }
     APP_SUSPENDED.store(false, Ordering::Relaxed);
     DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
 
@@ -285,6 +295,94 @@ fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .min_inner_size(760.0, 480.0)
         .build()
         .map_err(|error| format!("恢复 DtKit 主窗口失败: {error}"))
+}
+
+fn start_main_services(app: &AppHandle) {
+    if let Err(error) = app.state::<CleanupManager>().restore(app) {
+        eprintln!("[CleanupManager] 忽略无效的已保存策略: {error}");
+    }
+    if let Err(error) = app.state::<ShortcutRegistry>().restore(app) {
+        eprintln!("[ShortcutRegistry] 忽略无效的已保存配置: {error}");
+    }
+    schedule_automatic_cleanup(app);
+    schedule_transfer_expiry_check(app);
+}
+
+fn launch_target(app: &AppHandle, target: LaunchTarget) -> Result<(), String> {
+    match target {
+        LaunchTarget::Main => ensure_main_window(app).map(|_| ()),
+        LaunchTarget::Tool(tool_id) => {
+            if !app.state::<ToolModuleManager>().is_enabled(&tool_id) {
+                return Err("该工具模块已停用".to_string());
+            }
+            let target = infrastructure::quick_host::QuickHostTarget::tool(tool_id)?;
+            app.state::<QuickHostManager>()
+                .open(app, target)
+                .map(|_| ())
+        }
+    }
+}
+
+fn request_main_sleep(app: &AppHandle) {
+    let token = app.state::<LaunchRuntime>().request_sleep();
+    let _ = app.emit_to(
+        "main",
+        "main-sleep-request",
+        serde_json::json!({ "token": token }),
+    );
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if app.state::<LaunchRuntime>().finish_sleep(token) {
+            // No acknowledgement means drafts may not have reached durable storage.
+            // Hide and suspend the existing WebView instead of discarding it.
+            if let Some(window) = app.get_webview_window("main") {
+                set_webview_memory_target(&window, true);
+                let _ = window.hide();
+            }
+        }
+    });
+}
+
+#[tauri::command]
+fn sleep_main_window(window: WebviewWindow) -> Result<bool, String> {
+    if window.label() != "main"
+        && !window
+            .label()
+            .starts_with(infrastructure::quick_host::QUICK_HOST_LABEL_PREFIX)
+    {
+        return Err("当前窗口不能让主界面休眠".to_string());
+    }
+    let app = window.app_handle();
+    if app.get_webview_window("main").is_none() {
+        return Ok(false);
+    }
+    APP_SUSPENDED.store(true, Ordering::Relaxed);
+    emit_main_power_state(app, true, true);
+    request_main_sleep(app);
+    Ok(true)
+}
+
+#[tauri::command]
+fn main_sleep_ready(window: WebviewWindow, token: u64, ready: bool) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以确认主界面休眠".to_string());
+    }
+    let app = window.app_handle();
+    if !app.state::<LaunchRuntime>().finish_sleep(token) {
+        return Ok(()); // A restored/newer window invalidated this old response.
+    }
+    if ready {
+        window.state::<PasswordVaultManager>().release_cached_index();
+        DEEP_SLEEP_CLOSING.store(true, Ordering::Relaxed);
+        window.close().map_err(|error| {
+            DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
+            error.to_string()
+        })
+    } else {
+        set_webview_memory_target(&window, true);
+        window.hide().map_err(|error| error.to_string())
+    }
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
@@ -729,13 +827,24 @@ fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let initial_target = match LaunchTarget::parse(&arguments) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("[Launch] {error}");
+            return;
+        }
+    };
     tauri::Builder::default()
         // 必须最先注册：第二个进程只负责唤醒现有窗口，不初始化托盘、快捷键或 WebView。
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Err(error) = ensure_main_window(app) {
-                eprintln!("[SingleInstance] 恢复现有窗口失败: {error}");
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let result = LaunchTarget::parse(&args.into_iter().skip(1).collect::<Vec<_>>())
+                .and_then(|target| launch_target(app, target));
+            if let Err(error) = result {
+                eprintln!("[SingleInstance] 启动请求失败: {error}");
             }
         }))
+        .manage(LaunchRuntime::default())
         .manage(AlarmScheduler::default())
         .manage(StorageManager::default())
         .manage(CleanupManager::default())
@@ -753,6 +862,7 @@ pub fn run() {
         .manage(SnippetManager::default())
         .manage(StickyNoteManager::default())
         .manage(SystemAssistantManager::default())
+        .manage(ContextMenuManager::default())
         .manage(ToolModuleManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -764,25 +874,20 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
             setup_tray(app)?;
             app.state::<StorageManager>()
                 .initialize(app.handle())
                 .map_err(std::io::Error::other)?;
+            app.state::<JobManager>()
+                .initialize_launch_lifecycle(app.handle());
             if let Err(error) = app.state::<ResourceGovernor>().restore(app.handle()) {
                 eprintln!("[ResourceGovernor] 忽略无效的已保存策略: {error}");
-            }
-            if let Err(error) = app.state::<CleanupManager>().restore(app.handle()) {
-                eprintln!("[CleanupManager] 忽略无效的已保存策略: {error}");
             }
             if let Err(error) = app.state::<ToolModuleManager>().restore(app.handle()) {
                 eprintln!("[ToolModuleManager] 忽略无效的已保存配置: {error}");
             }
-            if let Err(error) = app.state::<ShortcutRegistry>().restore(app.handle()) {
-                eprintln!("[ShortcutRegistry] 忽略无效的已保存配置: {error}");
-            }
-            schedule_automatic_cleanup(app.handle());
-            schedule_transfer_expiry_check(app.handle());
+            launch_target(app.handle(), initial_target.clone()).map_err(std::io::Error::other)?;
             // 注意：热区监听现在通过前端调用 start_hotzone_monitor 命令启动
             // 不再在启动时自动启动，由用户设置控制
             // 这样可以避免不必要的资源消耗
@@ -817,6 +922,13 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .state::<WhiteboardEditManager>()
+                    .release_window(window.label());
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn(infrastructure::launch::finish_tool_only_if_idle(app));
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
                 let minimized = window.is_minimized().unwrap_or(false);
                 let mode = window.state::<ResourceGovernor>().mode();
@@ -838,11 +950,6 @@ pub fn run() {
                 }
 
                 if minimized {
-                    if mode != MinimizeMode::Standard {
-                        window
-                            .state::<QuickHostManager>()
-                            .release_now(window.app_handle());
-                    }
                     if let Some(organizer_window) =
                         window.app_handle().get_webview_window("desktop-organizer")
                     {
@@ -853,17 +960,8 @@ pub fn run() {
                         }
                     }
 
-                    if mode == MinimizeMode::Deep
-                        && !DEEP_SLEEP_CLOSING.swap(true, Ordering::Relaxed)
-                    {
-                        window.state::<PasswordVaultManager>().release_idle_state();
-                        let app = window.app_handle().clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                            if let Some(main_window) = app.get_webview_window("main") {
-                                let _ = main_window.close();
-                            }
-                        });
+                    if mode == MinimizeMode::Deep && suspended != was_suspended {
+                        request_main_sleep(window.app_handle());
                     }
                 }
             }
@@ -885,22 +983,19 @@ pub fn run() {
                 emit_main_power_state(window.app_handle(), suspended, mode == MinimizeMode::Deep);
 
                 let app = window.app_handle();
-                if mode == MinimizeMode::Deep {
-                    window.state::<PasswordVaultManager>().release_idle_state();
-                }
                 if mode == MinimizeMode::Standard {
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.hide();
                     }
                 } else {
-                    window.state::<QuickHostManager>().release_now(app);
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.close();
                     }
                 }
 
                 if close_behavior == MainWindowCloseBehavior::DestroyWebview {
-                    // 销毁主 WebView，但 APP_SUSPENDED 会阻止无窗口时退出事件终止后端。
+                    api.prevent_close();
+                    request_main_sleep(app);
                     return;
                 }
 
@@ -914,6 +1009,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            ack_missed_alarm_triggers,
+            create_tool_launcher,
+            main_sleep_ready,
+            sleep_main_window,
             list_sticky_notes,
             create_sticky_note,
             get_sticky_note,
@@ -923,6 +1022,9 @@ pub fn run() {
             trash_sticky_note,
             restore_sticky_note,
             delete_sticky_note,
+            open_timetable_widget,
+            close_timetable_widget,
+            pin_timetable_widget,
             start_region_mirror,
             list_region_mirrors,
             control_region_mirror,
@@ -1003,8 +1105,11 @@ pub fn run() {
             get_password_settings,
             set_password_settings,
             scan_system_startup_items,
+            scan_context_menu_items,
+            set_context_menu_enabled,
             set_system_startup_enabled,
             reveal_system_startup_item,
+            open_system_startup_settings,
             search_snippets,
             save_snippet,
             delete_snippet,
@@ -1044,12 +1149,18 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } = event
             {
-                if APP_SUSPENDED.load(Ordering::Relaxed) {
+                if app.state::<LaunchRuntime>().is_tool_only() {
+                    api.prevent_exit();
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(infrastructure::launch::finish_tool_only_if_idle(
+                        app,
+                    ));
+                } else if APP_SUSPENDED.load(Ordering::Relaxed) {
                     api.prevent_exit();
                 }
             }
