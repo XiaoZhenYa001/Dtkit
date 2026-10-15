@@ -10,6 +10,7 @@ export function createFolderController({
     renderCategories,
     hydrateIcons,
     loadDesktopFiles,
+    onRender,
     cacheLimit = DEFAULT_CACHE_LIMIT
 }) {
     const cache = new Map();
@@ -36,6 +37,7 @@ export function createFolderController({
 
         categoryList.classList.add('category-list--folder-view');
         categoryList.innerHTML = markup;
+        onRender?.();
         if (contents) queueMicrotask(() => hydrateIcons(categoryList));
 
         if (syncing) setStatus(`正在同步 · ${currentFolder.name}`);

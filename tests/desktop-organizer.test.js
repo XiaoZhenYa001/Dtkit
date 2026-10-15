@@ -60,10 +60,10 @@ test('desktop organizer bootstrap coalesces concurrent monitor starts', async ()
     ]);
 
     assert.deepEqual(results, [true, true]);
-    assert.deepEqual(commands, ['start_hotzone_monitor']);
+    assert.deepEqual(commands, ['get_desktop_organizer_mode', 'set_desktop_organizer_mode']);
 
     await module.stopDesktopOrganizerMonitor();
-    assert.deepEqual(commands, ['start_hotzone_monitor', 'stop_hotzone']);
+    assert.deepEqual(commands, ['get_desktop_organizer_mode', 'set_desktop_organizer_mode', 'set_desktop_organizer_mode']);
 });
 
 test('desktop organizer native hotzone remains available while the main webview is suspended', async () => {
@@ -81,7 +81,7 @@ test('desktop organizer enablement is persisted only after the native monitor st
         __TAURI__: {
             core: {
                 invoke: async command => {
-                    if (command === 'start_hotzone_monitor') throw new Error('native start failed');
+                    if (command === 'set_desktop_organizer_mode') throw new Error('native start failed');
                 }
             }
         }

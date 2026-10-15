@@ -1,10 +1,14 @@
 import { escapeHtml as e } from '../../core/html.js';
-import { COLORS, DAYS, currentWeek, dateKey, weekDays, todayCourses, timeMinutes, formatWeeks } from './model.js';
+import { COLORS, DAYS, currentWeek, dateKey, weekDays, todayCourses, timeMinutes, formatWeeks, courseHighlights } from './model.js';
+import { coursePalette } from './appearance.js';
+import { periodLayout, courseSegments } from './layout.js';
 
 export function applyBackground(element, background) {
     element.dataset.background = background.preset;
     element.style.setProperty('--tt-image', background.preset === 'image' ? `url("${background.image}")` : 'none');
     element.style.setProperty('--tt-mask', String(background.dim / 100));
+    element.dataset.backgroundFit = background.fit || 'contain';
+    element.style.setProperty('--tt-image-fit', background.fit || 'contain');
 }
 export function courseTime(course, semester) {
     return `${semester.periods[course.start - 1].start}–${semester.periods[course.end - 1].end}`;
@@ -26,11 +30,16 @@ export function summary(state, now = new Date()) {
 // ghost courses are shown they receive separate lanes instead of covering text.
 export function renderGrid(container, state, week, editable = true) {
     const days = weekDays(state, week), periods = state.semester.periods;
-    const today = dateKey();
+    const today = dateKey(), rows = periodLayout(periods.length);
+    const highlights = new Map(courseHighlights(state, week).map(item => [`${item.id}:${item.start}`, item.label]));
+    container.dataset.density = state.settings.density || 'compact';
+    const rowOf = period => rows.findIndex(row => row.period === period) + 1;
     container.style.setProperty('--tt-days', days.length);
     container.style.setProperty('--tt-periods', periods.length);
+    container.style.setProperty('--tt-rest-count', rows.length - periods.length);
+    container.style.setProperty('--tt-rows', rows.map(row => row.period ? 'var(--tt-row-height)' : 'var(--tt-rest-height)').join(' '));
     container.innerHTML = `<div class="tt-grid-corner">节次</div>${days.map(item => `<div class="tt-day-head ${item.date === today ? 'is-today' : ''}"><strong>${DAYS[item.day - 1]}</strong><span>${Number(item.date.slice(5, 7))}/${Number(item.date.slice(8))}${item.date === today ? ' · 今天' : ''}</span></div>`).join('')}
-        <div class="tt-ruler">${periods.map((period, index) => `<div class="tt-period"><strong>${index + 1}</strong><span>${period.start}<br>${period.end}</span></div>`).join('')}</div>`;
+        <div class="tt-ruler">${rows.map(row => row.period ? `<div class="tt-period"><strong>${row.period}</strong><span>${periods[row.period - 1].start}<br>${periods[row.period - 1].end}</span></div>` : `<div class="tt-rest tt-rest-label">${row.label}</div>`).join('')}</div>`;
     for (const item of days) {
         const column = document.createElement('div'); column.className = `tt-day-column${item.date === today ? ' is-today' : ''}`;
         const courses = state.semester.courses.filter(course => course.day === item.day && (state.settings.showOtherWeeks || course.weeks.includes(week)))
@@ -44,18 +53,29 @@ export function renderGrid(container, state, week, editable = true) {
         column.style.setProperty('--tt-lanes', Math.max(1, lanes.length));
         for (let index = 1; index <= periods.length; index++) {
             const cell = document.createElement(editable ? 'button' : 'div'); cell.className = 'tt-cell';
-            cell.style.gridRow = String(index); cell.style.gridColumn = '1 / -1';
+            cell.style.gridRow = String(rowOf(index)); cell.style.gridColumn = '1 / -1';
             if (editable) { cell.type = 'button'; cell.dataset.ttAction = 'add-cell'; cell.dataset.day = item.day; cell.dataset.period = index; cell.setAttribute('aria-label', `添加${DAYS[item.day - 1]}第 ${index} 节课程`); }
             column.append(cell);
         }
+        for (const [index, row] of rows.entries()) if (!row.period) {
+            const rest = document.createElement('div'); rest.className = 'tt-rest'; rest.dataset.restAfter = row.after;
+            rest.style.gridRow = String(index + 1); rest.style.gridColumn = '1 / -1'; rest.setAttribute('aria-hidden', 'true'); column.append(rest);
+        }
         for (const { course, lane } of placements) {
+          for (const segment of courseSegments(course)) {
             const active = course.weeks.includes(week), block = document.createElement(editable ? 'button' : 'div');
-            block.className = `tt-course${course.start === course.end ? ' is-single' : ''}${active ? '' : ' is-other-week'}`; block.dataset.color = COLORS.includes(course.color) ? course.color : 'blue';
-            block.style.gridRow = `${course.start} / span ${course.end - course.start + 1}`; block.style.gridColumn = String(lane + 1);
-            block.title = `${course.name}\n${course.room || '未设置教室'}${course.teacher ? ` · ${course.teacher}` : ''}\n${courseTime(course, state.semester)} · 第 ${formatWeeks(course.weeks)} 周${course.notes ? `\n${course.notes}` : ''}`;
-            block.innerHTML = `<strong>${e(course.name)}</strong>${course.room ? `<span>${e(course.room)}</span>` : ''}<small>${course.start === course.end ? `第 ${course.start} 节` : `${course.start}–${course.end} 节`}${active ? '' : ' · 非本周'}</small>`;
-            if (editable) { block.type = 'button'; block.dataset.ttAction = 'edit'; block.dataset.id = course.id; block.setAttribute('aria-label', `编辑 ${course.name}，${DAYS[course.day - 1]} ${course.start}–${course.end} 节${active ? '' : '，非本周'}`); }
+            block.className = `tt-course${segment.start === segment.end ? ' is-single' : ''}${active ? '' : ' is-other-week'}`; block.dataset.color = COLORS.includes(course.color) ? course.color : 'custom';
+            const [paper, ink, line] = coursePalette(course.color, active);
+            block.style.setProperty('--tt-card', paper); block.style.setProperty('--tt-card-ink', ink); block.style.setProperty('--tt-card-line', line);
+            block.style.gridRow = `${rowOf(segment.start)} / span ${segment.end - segment.start + 1}`; block.style.gridColumn = String(lane + 1);
+            const status = highlights.get(`${course.id}:${segment.start}`) || (active ? '' : '非本周');
+            if (status) block.dataset.status = status;
+            block.dataset.id = course.id;
+            block.innerHTML = `<strong>${e(course.name)}</strong>${course.room ? `<span>${e(course.room)}</span>` : ''}<small>${segment.start === segment.end ? `第 ${segment.start} 节` : `${segment.start}–${segment.end} 节`}${status ? ` · ${status}` : ''}</small>`;
+            block.setAttribute('aria-label', `${editable ? '编辑 ' : ''}${course.name}，${DAYS[course.day - 1]} ${course.start}–${course.end} 节${course.room ? `，${course.room}` : ''}${status ? `，${status}` : ''}`);
+            if (editable) { block.type = 'button'; block.dataset.ttAction = 'edit'; }
             column.append(block);
+          }
         }
         container.append(column);
     }
@@ -63,4 +83,8 @@ export function renderGrid(container, state, week, editable = true) {
 export function renderAgenda(container, state) {
     const courses = todayCourses(state);
     container.innerHTML = courses.length ? courses.map(course => `<article class="tt-agenda-card" data-color="${course.color}" data-status="${courseStatus(course, state.semester)}"><div><time>${courseTime(course, state.semester)}</time><span>${courseStatus(course, state.semester)}</span></div><strong>${e(course.name)}</strong><p>${e([course.room, course.teacher].filter(Boolean).join(' · ') || '未设置教室')}</p><small>${course.start}–${course.end} 节${course.notes ? ` · ${e(course.notes)}` : ''}</small></article>`).join('') : `<div class="tt-agenda-empty"><span>☀</span><strong>${e(summary(state))}</strong><p>留一点时间给自己。</p></div>`;
+    container.querySelectorAll('.tt-agenda-card').forEach((card, index) => {
+        const [paper, ink, line] = coursePalette(courses[index].color);
+        card.style.setProperty('--tt-card', paper); card.style.setProperty('--tt-card-ink', ink); card.style.setProperty('--tt-card-line', line);
+    });
 }

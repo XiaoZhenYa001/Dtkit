@@ -1,6 +1,7 @@
 import { showToast } from '../../core/utils.js';
 
 let initialized = false;
+let savedSeconds = 30;
 const invoke = (command, args) => globalThis.window?.__TAURI__?.core?.invoke?.(command, args);
 
 export async function initPasswordSettings() {
@@ -12,6 +13,7 @@ export async function initPasswordSettings() {
     try {
         const settings = await invoke('get_password_settings');
         select.value = String(settings.clipboardClearSeconds);
+        savedSeconds = settings.clipboardClearSeconds;
         select.disabled = false;
         status.textContent = '仅当剪贴板仍是本次复制的密码时才会清除；不会改动之后复制的内容。';
     } catch (error) {
@@ -23,11 +25,13 @@ export async function initPasswordSettings() {
             await invoke('set_password_settings', {
                 settings: { clipboardClearSeconds: Number(select.value) }
             });
+            savedSeconds = Number(select.value);
             status.textContent = select.value === '0'
                 ? '自动清理已关闭；密码仍会被排除在 Windows 剪贴板历史和云同步之外。'
                 : '设置已保存；只会条件清理本次密码。';
             showToast('密码剪贴板策略已更新');
         } catch (error) {
+            select.value = String(savedSeconds);
             status.textContent = `保存失败：${error}`;
             showToast(`保存失败：${error}`, 'error');
         } finally {

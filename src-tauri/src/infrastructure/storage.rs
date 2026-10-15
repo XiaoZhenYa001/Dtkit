@@ -612,6 +612,8 @@ pub(crate) async fn migrate_storage_root(
         let _startup_guard = system_assistant.migration_guard()?;
         let alarms = migration_app.state::<crate::alarm_scheduler::AlarmScheduler>();
         let _alarm_guard = alarms.migration_guard()?;
+        let puzzles=migration_app.state::<super::clipboard_puzzle::PuzzleManager>();
+        let _puzzle_guard=puzzles.migration_guard()?;
         let manager = migration_app.state::<StorageManager>();
         let current = manager.layout()?;
         let bootstrap_file = manager.bootstrap_file()?;

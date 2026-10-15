@@ -1,4 +1,7 @@
+import json
 import os
+from pathlib import Path
+import subprocess
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -68,6 +71,14 @@ def tool_view(page):
 
 
 def run():
+    registry = subprocess.run(
+        ["node", "--input-type=module", "-e",
+         "import {getAllTools} from './src/tools/index.js'; "
+         "console.log(JSON.stringify(getAllTools({includeDisabled:true,includePrimary:true})"
+         ".filter(tool=>tool.status!=='planned').map(tool=>tool.id)));"],
+        cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True,
+    )
+    expected_modules = json.loads(registry.stdout)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1360, "height": 880})
@@ -275,7 +286,11 @@ def run():
         page.locator("#toolModulesCollapse").click()
         assert page.locator("#toolModulesCollapse").get_attribute("aria-expanded") == "true"
         page.locator("#toolModuleList .tool-module-row").first.wait_for()
-        assert page.locator("#toolModuleList .tool-module-row").count() == 24
+        assert page.locator("#toolModuleList .tool-module-row").count() == len(expected_modules)
+        actual_modules = page.locator("#toolModuleList input[data-tool-id]").evaluate_all(
+            "inputs => inputs.map(input => input.dataset.toolId)"
+        )
+        assert set(actual_modules) == set(expected_modules)
         toggle = page.locator('input[data-tool-id="hash-tool"]')
         toggle.uncheck()
         page.wait_for_function("window.__dtkitCalls.some(c => c.command === 'set_tool_module_enabled' && c.args.toolId === 'hash-tool')")

@@ -1,4 +1,5 @@
 pub(crate) mod cleanup;
+pub(crate) mod clipboard_puzzle;
 pub(crate) mod context_menu;
 pub(crate) mod file_batch;
 pub(crate) mod jobs;

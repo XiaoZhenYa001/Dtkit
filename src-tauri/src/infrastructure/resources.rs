@@ -257,6 +257,7 @@ pub(crate) struct ResourceSnapshot {
     recorded_jobs: usize,
     registered_shortcuts: usize,
     lan_share_active: bool,
+    clipboard_collection_active: bool,
     storage: StorageUsage,
 }
 
@@ -314,6 +315,7 @@ pub(crate) async fn get_resource_snapshot(app: AppHandle) -> Result<ResourceSnap
             .has_active_share()
             .await,
         storage: app.state::<StorageManager>().usage()?,
+        clipboard_collection_active: app.state::<super::clipboard_puzzle::PuzzleManager>().has_active_collection(),
     })
 }
 

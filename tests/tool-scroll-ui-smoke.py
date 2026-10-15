@@ -51,6 +51,15 @@ def test_main_scrolling(page, base_url):
     for tool_id in ['unit-converter', 'qr-generator', 'alarm-clock', 'timetable']:
         frame = open_main_tool(page, tool_id)
         surface = page.locator('iframe.tool-page-frame:not([hidden])')
+        if tool_id == 'timetable':
+            board = frame.locator('.tt-board-scroll')
+            assert board.evaluate('n=>n.scrollHeight>n.clientHeight+20')
+            wheel(page, board, 6000)
+            wait_until(page, lambda: board.evaluate('n=>n.scrollTop>20 && n.scrollTop+n.clientHeight>=n.scrollHeight-2'))
+            wheel(page, board, -6000)
+            wait_until(page, lambda: board.evaluate('n=>n.scrollTop===0'))
+            print('Embedded timetable: fixed headers and board scrolling', flush=True)
+            continue
         assert frame.evaluate('document.scrollingElement.scrollHeight > innerHeight + 20'), tool_id
         wheel(page, surface, 6000)
         wait_until(page, lambda: at_bottom(frame))
@@ -99,6 +108,14 @@ def test_quick_scrolling(page, base_url):
         page.goto(base_url + f'/quick.html?kind=tool&toolId={tool_id}', wait_until='networkidle')
         surface = page.locator('#quickContent')
         expect(surface).to_have_class(re.compile(r'quick-content--tool'))
+        if tool_id == 'timetable':
+            board = page.locator('.tt-board-scroll')
+            wheel(page, board, 6000)
+            wait_until(page, lambda: board.evaluate('n=>n.scrollTop>20 && n.scrollTop+n.clientHeight>=n.scrollHeight-2'))
+            wheel(page, board, -6000)
+            wait_until(page, lambda: board.evaluate('n=>n.scrollTop===0'))
+            print('Standalone timetable: fixed headers and board scrolling', flush=True)
+            continue
         wheel(page, surface, 6000)
         wait_until(page, lambda: surface.evaluate('(node) => node.scrollTop > 20 && node.scrollTop + node.clientHeight >= node.scrollHeight - 2'))
         wheel(page, surface, -6000)

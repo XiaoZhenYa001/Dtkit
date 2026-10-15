@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { mainTemplate } from '../src/tools/password-vault/view.js';
 
-const tool = fs.readFileSync(new URL('../src/tools/password-vault/index.js', import.meta.url), 'utf8');
+const tool = ['index.js', 'runtime.js', 'view.js'].map(file => fs.readFileSync(new URL(`../src/tools/password-vault/${file}`, import.meta.url), 'utf8')).join('\n') + mainTemplate();
 const backend = fs.readFileSync(new URL('../src-tauri/src/infrastructure/passwords.rs', import.meta.url), 'utf8');
 const resources = fs.readFileSync(new URL('../src-tauri/src/infrastructure/resources.rs', import.meta.url), 'utf8');
 const lifecycle = fs.readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
@@ -19,9 +20,11 @@ test('password list summaries do not include a password field', () => {
     assert.match(summary, /\bnote\s*:/);
 });
 
-test('password export is intentionally absent in phase one', () => {
-    assert.doesNotMatch(tool, /export_password|密码导出/);
-    assert.doesNotMatch(backend, /export_password/);
+test('password export requires explicit plaintext confirmation', () => {
+    assert.match(tool, /passwordExportConfirmed/);
+    assert.match(tool, /invoke\('export_password_entries'/);
+    assert.match(backend, /if !confirmed/);
+    assert.match(backend, /entries\.iter\(\).*|entry\.deleted_at\.is_none/);
 });
 
 test('password search uses a native metadata-only cache and bounded responses', () => {
@@ -29,7 +32,7 @@ test('password search uses a native metadata-only cache and bounded responses', 
     assert.match(backend, /RwLock<Option<PasswordIndexCache>>/);
     assert.match(backend, /struct PasswordSearchResponse/);
     assert.match(backend, /limit:\s*Option<usize>/);
-    assert.match(tool, /isQuickHost\(\)\s*\?\s*50\s*:\s*200/);
+    assert.match(tool, /isQuickHost\(\)\s*\?\s*50\s*:\s*PAGE_SIZE/);
 });
 
 test('sleep and manual resource release drop password caches without discarding active imports', () => {

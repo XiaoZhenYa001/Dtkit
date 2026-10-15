@@ -92,6 +92,16 @@ export const toolManifests = Object.freeze([
         loader: () => import('./whiteboard/index.js')
     },
     {
+        id: 'clipboard-puzzle',
+        name: '剪贴板拼图',
+        icon: 'ri-clipboard-line',
+        colorClass: 'tool-card__icon--green',
+        category: 'design',
+        status: 'ready',
+        description: '收集文字、链接与图片，在无限画布中整理、区域截取并复制或导出 PNG。',
+        loader: () => import('./clipboard-puzzle/index.js')
+    },
+    {
         id: 'html-preview',
         name: 'HTML 预览',
         icon: 'ri-code-box-line',
@@ -187,7 +197,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--orange',
         category: 'utility',
         status: 'ready',
-        description: '当前 Windows 用户保护的本机密码库，支持快捷搜索与安全复制。',
+        description: '当前 Windows 用户保护的本机密码库，支持快捷搜索、JSON/CSV 导入导出与安全复制。',
         loader: () => import('./password-vault/index.js')
     },
     {

@@ -26,6 +26,10 @@ use alarm_scheduler::{
     take_missed_alarm_triggers, AlarmScheduler,
 };
 use desktop::commands::*;
+use desktop::space::{
+    desktop_space_ready, desktop_space_set_regions, get_desktop_organizer_mode,
+    set_desktop_organizer_mode, DesktopSpaceManager,
+};
 use desktop::hotzone::{
     get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos,
     update_panel_bounds, HotZoneConfig, HotZoneMonitor,
@@ -38,13 +42,18 @@ use infrastructure::cleanup::{
 use infrastructure::context_menu::{
     scan_context_menu_items, set_context_menu_enabled, ContextMenuManager,
 };
+use infrastructure::clipboard_puzzle::{
+    puzzle_asset, puzzle_close, puzzle_collect, puzzle_copy, puzzle_copy_text,
+    puzzle_edit, puzzle_get, puzzle_import_content, puzzle_import_image, puzzle_open, puzzle_open_url, puzzle_output, puzzle_overview,
+    puzzle_remove, puzzle_retention, puzzle_take_clipboard, PuzzleManager,
+};
 use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_file_batch};
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::launch::{create_tool_launcher, LaunchRuntime, LaunchTarget};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
 use infrastructure::passwords::{
     audit_password_security, commit_password_import, copy_password, copy_password_field,
-    discard_password_import, empty_password_trash, get_password_detail,
+    discard_password_import, empty_password_trash, export_password_entries, get_password_detail,
     get_password_entry_for_edit, get_password_overview, get_password_settings, list_passwords,
     open_password_url, preview_password_import, remove_password_entry, restore_password_entry,
     save_password_entry, set_password_favorite, set_password_settings,
@@ -171,6 +180,7 @@ fn ensure_desktop_organizer_window(app: &AppHandle) -> Result<WebviewWindow, Str
         WebviewUrl::App("desktop-organizer/index.html".into()),
     )
     .title("桌面整理")
+    .disable_drag_drop_handler()
     .inner_size(550.0, 450.0)
     .min_inner_size(400.0, 300.0)
     .resizable(true)
@@ -290,6 +300,7 @@ fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     }
 
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .disable_drag_drop_handler()
         .title("DtKit")
         .inner_size(1000.0, 600.0)
         .min_inner_size(760.0, 480.0)
@@ -306,6 +317,9 @@ fn start_main_services(app: &AppHandle) {
     }
     schedule_automatic_cleanup(app);
     schedule_transfer_expiry_check(app);
+    // A standalone tool does not start unrelated desktop services. Resume the
+    // saved desktop mode only once the full app is actually requested.
+    app.state::<DesktopSpaceManager>().resume(app);
 }
 
 fn launch_target(app: &AppHandle, target: LaunchTarget) -> Result<(), String> {
@@ -721,6 +735,11 @@ fn open_file(path: String) -> Result<(), String> {
 // 桌面整理热区监听启动命令
 #[tauri::command]
 fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
+    // A persisted desktop-space choice must never revive the classic hot zone,
+    // including an old frontend waking after main-window deep sleep.
+    if !app.state::<DesktopSpaceManager>().classic_allowed() {
+        return Ok(());
+    }
     // 如果已经在运行，不要重复启动
     if is_hotzone_running() {
         return Ok(());
@@ -732,6 +751,9 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     let app_handle = app.clone();
     monitor.start(move |show| {
         if show {
+            if !app_handle.state::<DesktopSpaceManager>().classic_allowed() {
+                return;
+            }
             if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
                 if let Ok(monitor) = organizer_monitor(&window) {
                     let monitor_pos = monitor.position();
@@ -753,8 +775,10 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                         size.height as i32,
                     );
                 }
-                let _ = window.show();
-                let _ = window.set_focus();
+                let visibility_app = app_handle.clone();
+                let _ = app_handle.run_on_main_thread(move || {
+                    let _ = visibility_app.state::<DesktopSpaceManager>().show_classic_if_allowed(&window);
+                });
             }
         } else if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
             if APP_SUSPENDED.load(Ordering::Relaxed) {
@@ -794,6 +818,7 @@ fn clamp_desktop_organizer_window(app: AppHandle) -> Result<(), String> {
 // 停止桌面整理热区监听
 #[tauri::command]
 fn stop_hotzone(app: AppHandle) -> Result<(), String> {
+    desktop::hotzone::set_user_interacting(false);
     stop_hotzone_monitor();
     if let Some(window) = app.get_webview_window("desktop-organizer") {
         let _ = window.close();
@@ -809,13 +834,16 @@ fn get_hotzone_status() -> bool {
 
 // 显示/隐藏桌面整理窗口
 #[tauri::command]
-fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
+async fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), String> {
+    if !app.state::<DesktopSpaceManager>().classic_allowed() {
+        return Ok(());
+    }
     if show {
         let window = ensure_desktop_organizer_window(&app)?;
         fit_desktop_organizer_to_screen(&window)?;
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        desktop::space::show_classic_window(&app, window).await?;
     } else if let Some(window) = app.get_webview_window("desktop-organizer") {
+        desktop::hotzone::set_user_interacting(false);
         if APP_SUSPENDED.load(Ordering::Relaxed) {
             window.close().map_err(|e| e.to_string())?;
         } else {
@@ -846,6 +874,7 @@ pub fn run() {
         }))
         .manage(LaunchRuntime::default())
         .manage(AlarmScheduler::default())
+        .manage(DesktopSpaceManager::default())
         .manage(StorageManager::default())
         .manage(CleanupManager::default())
         .manage(JobManager::default())
@@ -858,6 +887,7 @@ pub fn run() {
         .manage(ScreenRegionCaptureManager::default())
         .manage(RegionMirrorManager::default())
         .manage(WhiteboardEditManager::default())
+        .manage(PuzzleManager::default())
         .manage(PasswordVaultManager::default())
         .manage(SnippetManager::default())
         .manage(StickyNoteManager::default())
@@ -887,10 +917,10 @@ pub fn run() {
             if let Err(error) = app.state::<ToolModuleManager>().restore(app.handle()) {
                 eprintln!("[ToolModuleManager] 忽略无效的已保存配置: {error}");
             }
+            if let Err(error) = app.state::<DesktopSpaceManager>().restore_config(app.handle()) {
+                eprintln!("[DesktopSpace] 忽略无效的已保存配置: {error}");
+            }
             launch_target(app.handle(), initial_target.clone()).map_err(std::io::Error::other)?;
-            // 注意：热区监听现在通过前端调用 start_hotzone_monitor 命令启动
-            // 不再在启动时自动启动，由用户设置控制
-            // 这样可以避免不必要的资源消耗
             let _ = app; // 消除未使用警告
             Ok(())
         })
@@ -923,6 +953,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<PuzzleManager>().release_window(window.label());
                 window
                     .state::<WhiteboardEditManager>()
                     .release_window(window.label());
@@ -968,6 +999,9 @@ pub fn run() {
 
             // 右上角关闭只进入托盘；真正退出只允许由托盘菜单触发。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "desktop-organizer" {
+                    desktop::hotzone::set_user_interacting(false);
+                }
                 if window.label() != "main" {
                     return;
                 }
@@ -1078,6 +1112,22 @@ pub fn run() {
             dismiss_quick_host,
             touch_quick_host_activity,
             list_whiteboards,
+            puzzle_overview,
+            puzzle_open,
+            puzzle_close,
+            puzzle_edit,
+            puzzle_copy,
+            puzzle_remove,
+            puzzle_retention,
+            puzzle_collect,
+            puzzle_take_clipboard,
+            puzzle_import_image,
+            puzzle_asset,
+            puzzle_output,
+            puzzle_copy_text,
+            puzzle_get,
+            puzzle_import_content,
+            puzzle_open_url,
             load_whiteboard,
             save_whiteboard,
             save_whiteboard_draft,
@@ -1093,6 +1143,7 @@ pub fn run() {
             remove_password_entry,
             restore_password_entry,
             empty_password_trash,
+            export_password_entries,
             preview_password_import,
             update_password_import_entry,
             commit_password_import,
@@ -1138,6 +1189,10 @@ pub fn run() {
             desktop_open_app,
             desktop_locate_app,
             desktop_get_app_icon,
+            get_desktop_organizer_mode,
+            set_desktop_organizer_mode,
+            desktop_space_ready,
+            desktop_space_set_regions,
             start_hotzone_monitor,
             stop_hotzone,
             get_hotzone_status,
@@ -1150,6 +1205,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<DesktopSpaceManager>().shutdown();
+            }
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } = event

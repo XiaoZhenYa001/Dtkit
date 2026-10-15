@@ -6,17 +6,33 @@
     <title>桌面整理</title>
     <link rel="stylesheet" href="../assets/remixicon-subset.css">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="presentation.css">
 </head>
 <body>
     <main class="panel" id="panel">
+        <nav class="desktop-tools" id="desktopTools" aria-label="桌面空间工具" hidden>
+            <button class="header-action" id="desktopSearchButton" type="button" aria-label="搜索桌面项目" title="搜索桌面项目" aria-expanded="false"><i class="ri-search-line"></i></button>
+            <button class="header-action" id="desktopCategoryButton" type="button" aria-label="创建收纳分类" title="创建收纳分类"><i class="ri-add-line"></i></button>
+        </nav>
         <div class="drag-handle" id="dragHandle" title="拖动窗口"><span class="drag-indicator"></span></div>
         <header class="organizer-header">
             <div class="organizer-brand">
                 <span class="organizer-brand__icon"><i class="ri-layout-grid-line"></i></span>
                 <div><span>DESKTOP SPACE</span><h1>桌面整理</h1></div>
             </div>
-            <button class="header-action" id="refreshBtn" type="button" title="重新扫描桌面" aria-label="重新扫描桌面"><i class="ri-refresh-line"></i></button>
+            <div class="organizer-header-actions">
+                <button class="header-action" id="appearanceBtn" type="button" title="桌面外观" aria-label="桌面外观" aria-expanded="false" aria-controls="appearancePanel"><i class="ri-settings-3-line"></i></button>
+                <button class="header-action" id="refreshBtn" type="button" title="重新扫描桌面" aria-label="重新扫描桌面"><i class="ri-refresh-line"></i></button>
+            </div>
         </header>
+        <aside id="appearancePanel" class="appearance-panel" role="dialog" aria-labelledby="appearanceTitle" hidden>
+            <header><strong id="appearanceTitle">桌面外观</strong><button type="button" data-appearance-close aria-label="关闭外观设置">×</button></header>
+            <fieldset><legend>整理方式</legend><div class="appearance-choices"><button type="button" data-presentation-choice="classic" aria-pressed="true">原有方式</button><button type="button" data-presentation-choice="space" aria-pressed="false">桌面空间</button></div></fieldset>
+            <fieldset id="spaceLayoutChoices"><legend>空间布局</legend><div class="appearance-choices"><button type="button" data-layout-choice="shelf" aria-pressed="false">收纳架</button><button type="button" data-layout-choice="islands" aria-pressed="false">独立卡片</button><button type="button" data-layout-choice="drawer" aria-pressed="false">边缘抽屉</button><button type="button" data-layout-choice="zones" aria-pressed="false">展开分区</button></div></fieldset>
+            <fieldset><legend>外观</legend><div class="appearance-choices"><button type="button" data-appearance-choice="warm" aria-pressed="true">暖色</button><button type="button" data-appearance-choice="liquid" aria-pressed="false">液态玻璃</button></div></fieldset>
+            <label class="appearance-motion"><span>减少动态效果</span><input id="organizerReducedMotion" type="checkbox"></label>
+            <p class="appearance-feedback" id="appearanceFeedback" role="status"></p>
+        </aside>
 
         <section class="search-container" aria-label="桌面搜索">
             <label class="search-box" for="searchInput">
@@ -33,6 +49,7 @@
 
         <section class="organizer-content">
             <div class="category-list" id="categoryList" aria-live="polite"></div>
+            <div id="desktopSpaceView" hidden></div>
             <div class="search-results is-initially-hidden" id="searchResults">
                 <div class="search-results-header"><span class="search-results-title">搜索结果</span><span class="search-results-count" id="searchResultsCount">0</span></div>
                 <div class="search-results-list" id="searchResultsList"></div>

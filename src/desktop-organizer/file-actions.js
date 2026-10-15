@@ -6,7 +6,8 @@ export function createFileActions({
     setStatus,
     saveCategories,
     loadDesktopFiles,
-    refreshCurrentView
+    refreshCurrentView,
+    onRename
 }) {
     async function open(path, appId = '') {
         try {
@@ -34,6 +35,7 @@ export function createFileActions({
                 state.fileCategories = migratedCategories;
                 saveCategories();
             }
+            await onRename?.(oldPath, newPath);
             await loadDesktopFiles();
             if (state.folderView.active) await refreshCurrentView();
         } catch (error) {

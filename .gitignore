@@ -12,6 +12,8 @@ dist
 dist
 dist-ssr
 *.local
+tests/artifacts/
+__pycache__/
 
 # Editor directories and files
 .vscode/*

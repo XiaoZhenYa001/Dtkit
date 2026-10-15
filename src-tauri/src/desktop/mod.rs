@@ -5,6 +5,7 @@ pub mod commands;
 pub mod apps;
 pub mod hotzone;
 pub mod scanner;
+pub(crate) mod space;
 
 #[cfg(windows)]
 pub mod icon;

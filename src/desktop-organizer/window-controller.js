@@ -1,6 +1,6 @@
 const PREFS_KEY = 'desktopOrganizerPrefs';
 
-export function createWindowController({ invoke, appWindow, state, dragHandle, storage, document, window }) {
+export function createWindowController({ invoke, appWindow, state, dragHandle, storage, document, window, setInteraction }) {
     let isResizing = false;
     let resizeDirection = '';
     let startX;
@@ -26,6 +26,10 @@ export function createWindowController({ invoke, appWindow, state, dragHandle, s
     let dragMoved = false;
 
     async function notifyInteracting(interacting) {
+        if (setInteraction) {
+            setInteraction('window', interacting);
+            return;
+        }
         try {
             window.__userInteracting = interacting;
             await invoke('set_user_interacting', { interacting });

@@ -1,3 +1,4 @@
+import { courseSegments } from './layout.js';
 export const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 export const COLORS = ['blue', 'green', 'purple', 'orange', 'rose', 'cyan'];
 export const EDUCATIONS = ['小学', '初中', '高中', '中专', '大专', '本科', '硕士', '博士', '其他'];
@@ -42,7 +43,7 @@ export function generatePeriods(count = 12, start = '08:00', duration = 45, rest
 }
 export function createState(today = dateKey()) {
     return { version: 1, revision: 0,
-        settings: { showWeekend: true, showOtherWeeks: false, weekStartsOn: 1, education: '本科', background: { preset: 'paper', image: '', dim: 85 }, widgetMode: 'today', widgetPinned: false },
+        settings: { showWeekend: true, showOtherWeeks: false, weekStartsOn: 1, education: '本科', density: 'compact', background: { preset: 'paper', image: '', imageName: '', fit: 'contain', dim: 85 }, widgetMode: 'today', widgetPinned: false },
         semester: { id: newId(), name: '我的学期', startDate: weekStart(today), totalWeeks: 20, periods: generatePeriods(), courses: [] }, archives: [] };
 }
 function integer(value, min, max, label) {
@@ -77,7 +78,7 @@ export function validateCourse(course, semester) {
     string(course.id, 80, '课程标识', true); string(course.name, 120, '课程名', true);
     string(course.room, 120, '教室'); string(course.teacher, 80, '教师'); string(course.notes, 1000, '备注');
     integer(course.day, 1, 7, '星期'); integer(course.start, 1, semester.periods.length, '开始节'); integer(course.end, course.start, semester.periods.length, '结束节');
-    if (!COLORS.includes(course.color)) throw new Error('课程颜色无效');
+    if (typeof course.color !== 'string' || (!COLORS.includes(course.color) && !/^#[a-f\d]{6}$/i.test(course.color))) throw new Error('课程颜色无效');
     if (!Array.isArray(course.weeks) || !course.weeks.length || course.weeks.length > semester.totalWeeks) throw new Error('课程周次无效');
     course.weeks.forEach((week, index) => { integer(week, 1, semester.totalWeeks, '课程周次'); if (index && week <= course.weeks[index - 1]) throw new Error('课程周次应递增且不重复'); });
     return course;
@@ -104,7 +105,11 @@ export function validateSemester(semester) {
         if (ids.has(course.id)) throw new Error('课程标识重复');
         ids.add(course.id);
         const collision = conflicts(course, semester.courses);
-        if (collision.length) throw new Error(`「${course.name}」与「${collision[0].name}」的时间和周次冲突`);
+        if (collision.length) {
+            const other = collision[0], sharedWeeks = course.weeks.filter(week => other.weeks.includes(week));
+            const start = Math.max(course.start, other.start), end = Math.min(course.end, other.end);
+            throw new Error(`${DAYS[course.day - 1]}第 ${start}${start === end ? '' : `–${end}`} 节 · 第 ${formatWeeks(sharedWeeks)} 周：「${course.name}」与「${other.name}」冲突${other.room ? `（${other.room}）` : ''}`);
+        }
     }
     return semester;
 }
@@ -114,10 +119,16 @@ export function validateState(state) {
     const settings = state.settings;
     if (!settings || typeof settings.showWeekend !== 'boolean' || typeof settings.showOtherWeeks !== 'boolean' || typeof settings.widgetPinned !== 'boolean') throw new Error('课表设置无效');
     integer(settings.weekStartsOn, 1, 7, '每周起始日');
+    settings.density ??= 'compact';
+    if (!['compact', 'comfortable'].includes(settings.density)) throw new Error('课表显示密度无效');
     if (!EDUCATIONS.includes(settings.education) || !['today', 'week'].includes(settings.widgetMode)) throw new Error('学历或小部件模式无效');
     const background = settings.background;
     if (!background || !['paper', 'mint', 'sky', 'lavender', 'image'].includes(background.preset)) throw new Error('背景设置无效');
     string(background.image, 600000, '背景图片'); integer(background.dim, 40, 100, '背景遮罩');
+    // Older backups did not save the original file name or display mode.
+    background.fit ??= 'contain'; background.imageName ??= '';
+    if (!['contain', 'cover'].includes(background.fit)) throw new Error('背景显示方式无效');
+    string(background.imageName, 255, '背景文件名');
     if (background.image && !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(background.image)) throw new Error('背景必须是本地静态图片');
     if (background.preset === 'image' && !background.image) throw new Error('请先选择背景图片');
     validateSemester(state.semester);
@@ -136,14 +147,26 @@ export function todayCourses(state, today = dateKey()) {
     const week = currentWeek(state, today);
     return state.semester.courses.filter(course => course.day === weekday(today) && course.weeks.includes(week)).sort((a, b) => a.start - b.start);
 }
+export function courseHighlights(state, week, now = new Date()) {
+    if (week !== currentWeek(state, dateKey(now))) return [];
+    const minute = now.getHours() * 60 + now.getMinutes();
+    const segments = todayCourses(state, dateKey(now)).flatMap(course => courseSegments(course).map(segment => ({
+        id: course.id, start: segment.start, from: timeMinutes(state.semester.periods[segment.start - 1].start), until: timeMinutes(state.semester.periods[segment.end - 1].end)
+    }))).sort((a, b) => a.from - b.from);
+    const current = segments.find(segment => segment.from <= minute && minute < segment.until);
+    const next = segments.find(segment => segment.from > minute);
+    return [current && { ...current, label: '正在上课' }, next && { ...next, label: '下一节' }].filter(Boolean);
+}
 export function nextBoundary(state, now = new Date()) {
     const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
     let next = tomorrow;
     for (const course of todayCourses(state, dateKey(now))) {
-        for (const time of [state.semester.periods[course.start - 1].start, state.semester.periods[course.end - 1].end]) {
+      for (const segment of courseSegments(course)) {
+        for (const time of [state.semester.periods[segment.start - 1].start, state.semester.periods[segment.end - 1].end]) {
             const minute = timeMinutes(time), timestamp = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(minute / 60), minute % 60).getTime();
             if (timestamp > now.getTime()) next = Math.min(next, timestamp);
         }
+      }
     }
     return Math.max(1000, next - now.getTime() + 100);
 }

@@ -105,6 +105,7 @@ pub(crate) struct IdleState {
     pub(crate) has_jobs: bool,
     pub(crate) has_share: bool,
     pub(crate) has_mirrors: bool,
+    pub(crate) has_collection: bool,
     pub(crate) has_maintenance: bool,
 }
 
@@ -115,6 +116,7 @@ impl IdleState {
             || self.has_jobs
             || self.has_share
             || self.has_mirrors
+            || self.has_collection
             || self.has_maintenance)
     }
 }
@@ -137,6 +139,7 @@ pub(crate) async fn finish_tool_only_if_idle(app: AppHandle) {
         has_mirrors: app
             .state::<super::region_mirror::RegionMirrorManager>()
             .has_active_mirrors(),
+        has_collection: app.state::<super::clipboard_puzzle::PuzzleManager>().has_active_collection(),
         has_maintenance: app.state::<super::cleanup::CleanupManager>().is_running()
             || app.state::<LaunchRuntime>().has_active_operations(),
     };
@@ -324,6 +327,10 @@ mod tests {
             },
             IdleState {
                 has_maintenance: true,
+                ..Default::default()
+            },
+            IdleState {
+                has_collection: true,
                 ..Default::default()
             },
         ] {

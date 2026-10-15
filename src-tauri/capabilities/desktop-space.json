@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-space",
+  "description": "Desktop furniture lifecycle events. Explorer attachment and window regions are scoped by the native desktop manager.",
+  "windows": ["desktop-space"],
+  "permissions": ["core:event:default"]
+}

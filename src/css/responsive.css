@@ -7,8 +7,7 @@
 
 @media (max-width: 1024px) {
     .main-container {
-        margin: 0.6rem;
-        margin-left: 0;
+        margin: 0;
     }
 
     .tool-grid {
@@ -18,7 +17,7 @@
 
 @media (max-width: 768px) {
     .sidebar {
-        width: 4.9rem;
+        width: 4rem;
         padding: 1rem 0.55rem;
     }
 
@@ -38,7 +37,7 @@
     }
 
     .main-container {
-        border-radius: 1.5rem;
+        border-radius: 0;
     }
 
     .tab-container {
@@ -112,7 +111,7 @@
 
 @media (max-width: 560px) {
     .sidebar {
-        width: 4.4rem;
+        width: 4rem;
     }
 
     .nav-btn__label {

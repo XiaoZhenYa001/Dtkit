@@ -128,7 +128,12 @@ pub(crate) fn set_tool_module_enabled(
     tool_id: String,
     enabled: bool,
 ) -> Result<Vec<String>, String> {
-    manager.set_enabled(&app, &tool_id, enabled)
+    let result = manager.set_enabled(&app, &tool_id, enabled)?;
+    if !enabled && tool_id == "clipboard-puzzle" {
+        app.state::<super::clipboard_puzzle::PuzzleManager>().stop();
+        super::clipboard_puzzle::module_stopped(&app);
+    }
+    Ok(result)
 }
 
 #[cfg(test)]

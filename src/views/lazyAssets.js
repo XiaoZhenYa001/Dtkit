@@ -1,7 +1,8 @@
 const assetLoaders = {
     settings: () => Promise.all([
         import('../css/settings.css'),
-        import('./settings.js')
+        import('./settings.js'),
+        import('../css/desktop-organizer-settings.css')
     ]).then(([, settingsModule]) => settingsModule),
 };
 

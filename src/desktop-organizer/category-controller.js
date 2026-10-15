@@ -1,4 +1,5 @@
 import { escapeHtml } from './views/file-view.js';
+import { isValidFileCategoryKey } from './categories.js';
 
 const CUSTOM_CATEGORIES_KEY = 'desktop_organizer_custom_categories';
 const FILE_CATEGORIES_KEY = 'desktop_organizer_file_categories';
@@ -21,9 +22,9 @@ export function createCategoryController({ state, storage, renderCategories, cat
 
             const fileCategories = storage.getItem(FILE_CATEGORIES_KEY);
             const parsedAssignments = fileCategories ? JSON.parse(fileCategories) : {};
-            const validKeys = new Set(state.customCategories.map(category => category.key));
             state.fileCategories = Object.fromEntries(Object.entries(parsedAssignments || {})
-                .filter(([path, key]) => typeof path === 'string' && path.length <= 1024 && validKeys.has(key))
+                .filter(([path, key]) => typeof path === 'string' && path.length > 0 && path.length <= 1024
+                    && isValidFileCategoryKey(key, state.customCategories))
                 .slice(0, 1000));
         } catch (error) {
             console.error('加载自定义分类失败:', error);
@@ -65,6 +66,8 @@ export function createCategoryController({ state, storage, renderCategories, cat
     }
 
     function moveFile(filePath, categoryKey) {
+        if (typeof filePath !== 'string' || !filePath || filePath.length > 1024) return;
+        if (categoryKey !== null && !isValidFileCategoryKey(categoryKey, state.customCategories)) return;
         if (categoryKey === null) delete state.fileCategories[filePath];
         else state.fileCategories[filePath] = categoryKey;
         save();

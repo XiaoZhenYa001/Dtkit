@@ -1,6 +1,7 @@
 import { detectCommand, evaluateExpression, formatNumber, transformText } from './commandEngine.js';
 import { installToolPageRuntime } from '../core/toolPageRuntime.js';
 import '../css/tool-shortcut.css';
+import { createToolLoading } from '../core/toolLoading.js';
 
 const nativeEvents = window.__TAURI__?.event;
 const initialParams = new URLSearchParams(location.search);
@@ -18,6 +19,7 @@ const TOOL_LABELS = Object.freeze({
     'startup-manager': '自启动管理',
     'context-menu': '右键菜单管理',
     'whiteboard': '白板', 'password-vault': '密码',
+    'clipboard-puzzle': '剪贴板拼图',
     'text-snippets': '文本片段库', 'screenshot-annotator': '截图与标注', 'region-mirror': '区域悬浮', 'sticky-notes': '便签', 'timetable': '课表'
 });
 const RECENT_KEY = 'dtkit_quick_recent_actions';
@@ -48,6 +50,7 @@ let disabledToolIds = new Set();
 let lastActivityTouch = 0;
 let dismissing = null;
 let targetQueue = Promise.resolve();
+let toolLoading = null;
 
 async function loadToolModulePolicy() {
     try {
@@ -59,7 +62,7 @@ async function loadToolModulePolicy() {
 }
 
 function setToolChrome(toolId = null) {
-    const isWhiteboard = toolId === 'whiteboard';
+    const isWhiteboard = toolId === 'whiteboard' || toolId === 'clipboard-puzzle';
     shell?.classList.toggle('quick-shell--whiteboard', isWhiteboard);
     [...document.documentElement.classList]
         .filter(name => name.startsWith('quick-tool--'))
@@ -255,6 +258,7 @@ function moveSelection(offset) {
 
 async function renderTarget(target) {
     const generation = ++renderGeneration;
+    toolLoading?.dispose(); toolLoading = null;
     await releaseTool();
     if (pageRuntime.disposed || generation !== renderGeneration) return;
     palette.hidden = target.kind !== 'palette';
@@ -277,12 +281,16 @@ async function renderTarget(target) {
     title.textContent = toolName;
     heading.textContent = `正在加载 ${toolName}…`;
     description.textContent = '仅加载当前工具所需的代码与样式。';
-    status.hidden = false;
+    status.hidden = true;
+    const loading = createToolLoading({ toolId: target.toolId, name: toolName, retry: () => enqueueTarget(target) });
+    toolLoading = loading; content.append(loading.element); toolContainer.inert = true;
     try {
+        loading.stage('正在加载工具');
         const runtime = await getToolRuntime();
         const tool = await runtime.loadTool(target.toolId);
         if (generation !== renderGeneration) return;
         if (typeof tool.template !== 'function' || typeof tool.init !== 'function') throw new Error('工具缺少快捷窗口适配器');
+        loading.stage('正在准备界面');
         toolContainer.innerHTML = tool.template();
         activeToolId = target.toolId;
         setToolChrome(target.toolId);
@@ -294,9 +302,12 @@ async function renderTarget(target) {
             await initializeAlarmService();
         }
         status.hidden = true;
+        loading.dispose(); toolContainer.inert = false;
         content.classList.add('quick-content--tool');
         document.title = `${toolName} · DtKit`;
     } catch (error) {
+        if (pageRuntime.disposed || generation !== renderGeneration) { loading.dispose(); return; }
+        loading.fail(String(error?.message || error));
         setToolChrome();
         document.title = '加载失败 · DtKit';
         heading.textContent = `${toolName} 暂时无法打开`;

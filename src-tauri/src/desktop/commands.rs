@@ -122,15 +122,35 @@ pub fn desktop_locate_app(storage: tauri::State<'_, StorageManager>, path: Strin
 }
 
 #[cfg(windows)]
-#[tauri::command]
-pub fn desktop_get_app_icon(storage: tauri::State<'_, StorageManager>, path: String) -> Result<Option<String>, String> {
-    let path = validated_known_app(&storage, &path)?;
+fn extract_icon_on_worker(path: &Path) -> Result<Option<String>, String> {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) { if self.0 { unsafe { CoUninitialize() }; } }
+    }
+    // Blocking workers do not inherit the WebView UI thread's COM apartment.
+    // Shell icon handlers require one, especially for shortcuts.
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if initialized.is_err() && initialized.0 != 0x80010106u32 as i32 {
+        return Err(format!("图标服务初始化失败: {initialized:?}"));
+    }
+    let _guard = ComGuard(initialized.is_ok());
     Ok(crate::desktop::icon::extract_file_icon(&path.to_string_lossy()))
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn desktop_get_app_icon(app: tauri::AppHandle, path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = app.state::<StorageManager>();
+        let path = validated_known_app(&storage, &path)?;
+        extract_icon_on_worker(&path)
+    }).await.map_err(|error| format!("应用图标读取任务异常结束: {error}"))?
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn desktop_get_app_icon(_storage: tauri::State<'_, StorageManager>, _path: String) -> Result<Option<String>, String> { Ok(None) }
+pub async fn desktop_get_app_icon(_app: tauri::AppHandle, _path: String) -> Result<Option<String>, String> { Ok(None) }
 
 /// 搜索桌面文件
 /// category_filter: 可选的分类过滤，如 "document", "image" 等
@@ -165,16 +185,16 @@ pub async fn desktop_list_folder(path: String) -> Result<FolderContents, String>
 /// 获取单个文件的图标
 #[cfg(windows)]
 #[tauri::command]
-pub fn desktop_get_icon(path: String) -> Result<Option<String>, String> {
-    let path = validated_desktop_entry(&path)?;
-    Ok(crate::desktop::icon::extract_file_icon(
-        &path.to_string_lossy(),
-    ))
+pub async fn desktop_get_icon(path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = validated_desktop_entry(&path)?;
+        extract_icon_on_worker(&path)
+    }).await.map_err(|error| format!("文件图标读取任务异常结束: {error}"))?
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn desktop_get_icon(_path: String) -> Result<Option<String>, String> {
+pub async fn desktop_get_icon(_path: String) -> Result<Option<String>, String> {
     Ok(None)
 }
 

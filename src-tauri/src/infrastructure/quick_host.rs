@@ -92,6 +92,7 @@ impl QuickHostManager {
     ) -> Result<WebviewWindow, String> {
         target.validate()?;
         let is_palette = target.kind == QuickHostKind::Palette;
+        let is_puzzle = target.tool_id.as_deref() == Some("clipboard-puzzle");
         let sequence = self.next_label.fetch_add(1, Ordering::Relaxed) + 1;
         let label = format!("{QUICK_HOST_LABEL_PREFIX}{sequence}");
         let window = WebviewWindowBuilder::new(
@@ -100,8 +101,9 @@ impl QuickHostManager {
             WebviewUrl::App(target.initial_url(&label).into()),
         )
         .title("DtKit 快捷窗口")
-        .inner_size(760.0, 580.0)
-        .min_inner_size(560.0, 400.0)
+        .disable_drag_drop_handler()
+        .inner_size(if is_puzzle { 680.0 } else { 760.0 }, if is_puzzle { 480.0 } else { 580.0 })
+        .min_inner_size(if is_puzzle { 480.0 } else { 560.0 }, if is_puzzle { 360.0 } else { 400.0 })
         .resizable(true)
         .decorations(false)
         .transparent(false)
@@ -321,6 +323,7 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
     matches!(
         value,
         "timestamp-converter"
+            | "clipboard-puzzle"
             | "json-formatter"
             | "base64-codec"
             | "hash-tool"

@@ -38,9 +38,26 @@ const APPLICATION_BUILTIN_CATEGORIES = new Map([
     ['其他', 'other']
 ]);
 const APPLICATION_BUILTIN_KEYS = new Set(APPLICATION_BUILTIN_CATEGORIES.values());
+const FILE_BUILTIN_CATEGORY_KEYS = new Set([
+    'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'
+]);
 
 function normalizedCategory(value) {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+export function isValidFileCategoryKey(key, customCategories = []) {
+    if (typeof key !== 'string' || !key || key.length > 240) return false;
+    if (FILE_BUILTIN_CATEGORY_KEYS.has(key)) return true;
+    if (key.startsWith('custom_')) return customCategories.some(category => category?.key === key);
+    if (!key.startsWith('app_category_')) return false;
+    const encodedName = key.slice('app_category_'.length);
+    try {
+        const name = decodeURIComponent(encodedName);
+        return !!name && name.trim() === name && encodeURIComponent(name) === encodedName;
+    } catch {
+        return false;
+    }
 }
 
 export function resolveApplicationCategoryKey(application, customCategories = []) {
@@ -59,7 +76,7 @@ export function resolveApplicationCategoryKey(application, customCategories = []
     return `app_category_${encodeURIComponent(category)}`;
 }
 
-export function collectApplicationCategoryGroups(applications = [], customCategories = []) {
+export function collectApplicationCategoryGroups(applications = [], customCategories = [], fileCategories = {}) {
     const groups = new Map();
     for (const application of applications) {
         const key = resolveApplicationCategoryKey(application, customCategories);
@@ -68,6 +85,17 @@ export function collectApplicationCategoryGroups(applications = [], customCatego
         if (!name) continue;
         const current = groups.get(key);
         groups.set(key, { key, name: current?.name || name, count: (current?.count || 0) + 1 });
+    }
+    // Ordinary desktop files can remain in an application category after its last
+    // application is moved elsewhere. Keep that category discoverable from assignments.
+    for (const key of Object.values(fileCategories || {})) {
+        if (!key?.startsWith?.('app_category_') || !isValidFileCategoryKey(key, customCategories)) continue;
+        const current = groups.get(key);
+        groups.set(key, {
+            key,
+            name: current?.name || decodeURIComponent(key.slice('app_category_'.length)),
+            count: (current?.count || 0) + 1
+        });
     }
     return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
 }
@@ -86,9 +114,13 @@ export function migrateFileCategory(assignments, oldPath, newPath) {
 
 export function reconcileFileCategories(assignments, files, validCategoryKeys) {
     if (!assignments || typeof assignments !== 'object') return {};
-    const validKeys = validCategoryKeys instanceof Set
+    const isValidKey = typeof validCategoryKeys === 'function'
         ? validCategoryKeys
-        : new Set(validCategoryKeys || []);
+        : (() => {
+            const validKeys = validCategoryKeys instanceof Set
+                ? validCategoryKeys : new Set(validCategoryKeys || []);
+            return key => validKeys.has(key);
+        })();
     const currentPaths = new Set(
         ASSIGNABLE_CATEGORY_KEYS
             .flatMap(key => Array.isArray(files?.[key]) ? files[key] : [])
@@ -96,7 +128,7 @@ export function reconcileFileCategories(assignments, files, validCategoryKeys) {
             .map(file => file.path)
     );
     const nextEntries = Object.entries(assignments)
-        .filter(([path, categoryKey]) => currentPaths.has(path) && validKeys.has(categoryKey))
+        .filter(([path, categoryKey]) => currentPaths.has(path) && isValidKey(categoryKey))
         .slice(0, 1000);
 
     if (nextEntries.length === Object.keys(assignments).length

@@ -2,6 +2,7 @@ import { createPageId } from './state.js';
 import { mountShortcutBinding } from './shortcutBindingControl.js';
 import { showToast } from './utils.js';
 import '../css/tool-pages.css';
+import { createToolLoading } from './toolLoading.js';
 
 const WORKSPACE_KEY = 'dtkit_tool_workspace_v1';
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
@@ -156,7 +157,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
     }
     function hide() {
         setPanelOpen(false, false); toggle.hidden = true;
-        for (const entry of frames.values()) { lifecycle(entry, true); entry.frame.hidden = true; }
+        for (const entry of frames.values()) { lifecycle(entry, true); entry.frame.hidden = true; entry.loading.element.hidden = true; }
         container.classList.remove('view--active');
         contentArea.classList.remove('content-area--tool-page');
         currentId = null;
@@ -174,6 +175,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
             const frame = document.createElement('iframe'); frame.className = 'tool-page-frame';
             frame.dataset.instanceId = tab.instanceId; frame.dataset.toolId = tab.toolId;
             frame.title = tab.title; frame.hidden = true;
+            frame.inert = true;
             const url = new URL('tool-page.html', location.href);
             url.searchParams.set('toolId', tab.toolId); url.searchParams.set('instanceId', tab.instanceId);
             frame.src = url.href;
@@ -181,8 +183,12 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
                 frame.contentDocument?.addEventListener('pointerdown', () => setPanelOpen(false, false));
                 frame.contentDocument?.addEventListener('keydown', dismissOnEscape);
             });
-            entry = { frame, toolId: tab.toolId, instanceId: tab.instanceId, suspended: true };
-            frames.set(tab.instanceId, entry); container.append(frame);
+            const loading = createToolLoading({ toolId: tool.id, name: tool.name, icon: tool.icon, retry: () => {
+                entry.ready = false; frame.inert = true; frame.src = url.href;
+                if (entry.instanceId === currentId) container.setAttribute('aria-busy', 'true');
+            } });
+            entry = { frame, loading, ready: false, toolId: tab.toolId, instanceId: tab.instanceId, suspended: true };
+            frames.set(tab.instanceId, entry); container.append(frame, loading.element);
         }
         currentId = tab.instanceId;
         toolbarTitle.textContent = `${tool.name} · 页面工具`;
@@ -198,9 +204,13 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
             if (other === entry) continue;
             lifecycle(other, true);
             other.frame.hidden = true;
+            other.loading.element.hidden = true;
         }
         // Restore scroll only after the host and the sole active frame have layout.
         entry.frame.hidden = false;
+        entry.loading.element.hidden = entry.ready;
+        entry.loading.element.dataset.paused = String(powerSuspended);
+        container.setAttribute('aria-busy', String(!entry.ready));
         lifecycle(entry, powerSuspended);
     }
     async function remove(id) {
@@ -209,6 +219,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
         try { await entry.frame.contentWindow?.__DTKIT_TOOL_PAGE__?.dispose(); }
         finally {
             entry.frame.remove();
+            entry.loading.dispose();
             persist().catch(error => console.error('工具页面记录保存失败', error));
         }
     }
@@ -237,7 +248,7 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
         let canRelease = true;
         for (const [id, entry] of frames) {
             const runtime = entry.frame.contentWindow?.__DTKIT_TOOL_PAGE__;
-            if (!runtime?.ready) { canRelease = false; continue; }
+            if (!entry.ready || !runtime?.ready) { canRelease = false; continue; }
             const value = prepareSleep ? await runtime.flush() : runtime.snapshot();
             snapshots.set(id, value); if (!value.canRelease) canRelease = false;
         }
@@ -247,16 +258,20 @@ export function createToolPageHost({ contentArea, getTool, appState, onNewPage, 
         return canRelease;
     }
     const receive = event => {
-        if (event.data?.type !== 'dtkit-tool-page-ready') return;
+        if (event.origin !== location.origin || !['dtkit-tool-page-ready', 'dtkit-tool-page-stage', 'dtkit-tool-page-failed'].includes(event.data?.type)) return;
         const entry = frames.get(event.data.instanceId);
         if (!entry || event.source !== entry.frame.contentWindow) return;
+        if (event.data.type === 'dtkit-tool-page-stage') { entry.loading.stage(event.data.stage); return; }
+        if (event.data.type === 'dtkit-tool-page-failed') { entry.loading.fail(event.data.message); if (entry.instanceId === currentId) container.setAttribute('aria-busy', 'false'); return; }
+        entry.ready = true; entry.frame.inert = false; entry.loading.finish();
+        if (entry.instanceId === currentId) container.setAttribute('aria-busy', 'false');
         lifecycle(entry, entry.suspended);
         if (entry.instanceId === currentId) renderToolSection();
     };
     window.addEventListener('message', receive);
     window.addEventListener('dtkit:power-state', event => {
         powerSuspended = Boolean(event.detail?.suspended);
-        for (const entry of frames.values()) lifecycle(entry, entry.instanceId !== currentId || powerSuspended);
+        for (const entry of frames.values()) { lifecycle(entry, entry.instanceId !== currentId || powerSuspended); entry.loading.element.dataset.paused = String(powerSuspended); }
     });
     window.addEventListener('dtkit:alarm-sync-status', event => {
         for (const entry of frames.values()) entry.frame.contentWindow?.postMessage({

@@ -1,8 +1,10 @@
 import { escapeHtml as e } from '../../core/html.js';
 import { COLORS, DAYS, EDUCATIONS, currentWeek, dateKey, formatWeeks } from './model.js';
 import { courseTime } from './view.js';
+import { COLOR_HEX } from './appearance.js';
+import { groupCourses } from './editor.js';
 
-export const COLOR_HEX = { blue: '#aac7ed', green: '#b5d5a9', purple: '#cbb5e5', orange: '#e9c69b', rose: '#e9b1c5', cyan: '#a6d7d2' };
+export { COLOR_HEX };
 const COLOR_NAMES = ['雾蓝', '青绿', '藤紫', '杏橙', '樱粉', '湖青'];
 const checked = value => value ? ' checked' : '';
 const selected = value => value ? ' selected' : '';
@@ -10,19 +12,31 @@ const field = (label, id, type, value, extra = '') => `<label class="tt-field">$
 const dayOptions = value => DAYS.map((name, index) => `<option value="${index + 1}"${selected(value === index + 1)}>${name}</option>`).join('');
 const periodOptions = (value, count) => Array.from({ length: count }, (_, index) => `<option value="${index + 1}"${selected(value === index + 1)}>第 ${index + 1} 节</option>`).join('');
 export const actions = (primary, extra = '') => `<footer class="tt-dialog-actions">${extra}<button class="tt-button" type="button" data-tt-action="close">取消</button><button class="tt-button tt-button--primary" type="submit">${primary}</button></footer>`;
-export function courseForm(state, course) {
+export function courseForm(state, course, group = false) {
+    const custom = /^#[a-f\d]{6}$/i.test(course?.color);
     return `<form id="ttCourseForm"><div class="tt-dialog-body"><div class="tt-form-grid">
-        <label class="tt-field tt-field--full">课程名称<input id="ttCourseName" maxlength="120" required value="${e(course?.name || '')}" placeholder="例如：高等数学" autofocus></label>
-        ${field('教室 / 地点', 'ttCourseRoom', 'text', course?.room || '', 'maxlength="120" placeholder="例如：教学楼 A-302"')}
+        ${group ? '<p class="tt-hint tt-field--full">名称统一修改；更改教师或颜色会应用到全部安排。各条安排的教室和周次分别保存。</p>' : ''}<label class="tt-field tt-field--full">课程名称<input id="ttCourseName" maxlength="120" required value="${e(course?.name || '')}" placeholder="例如：高等数学" autofocus></label>
+        ${field('教室 / 地点（本次安排）', 'ttCourseRoom', 'text', course?.room || '', 'maxlength="120" placeholder="例如：教学楼 A-302"')}
         ${field('授课教师', 'ttCourseTeacher', 'text', course?.teacher || '', 'maxlength="80"')}
         <label class="tt-field">星期<select id="ttCourseDay">${dayOptions(course?.day || 1)}</select></label>
         <label class="tt-field">周次规律<select id="ttCourseParity"><option value="all">每周 / 指定周</option><option value="odd">仅单周</option><option value="even">仅双周</option></select></label>
         <label class="tt-field">开始节次<select id="ttCourseStart">${periodOptions(course?.start || 1, state.semester.periods.length)}</select></label>
-        <label class="tt-field">结束节次<select id="ttCourseEnd">${periodOptions(course?.end || 2, state.semester.periods.length)}</select></label>
+        <label class="tt-field">结束节次<select id="ttCourseEnd">${periodOptions(course?.end || Math.min(2, state.semester.periods.length), state.semester.periods.length)}</select></label>
         <label class="tt-field tt-field--full">上课周次<input id="ttCourseWeeks" required value="${e(course ? formatWeeks(course.weeks) : `1-${state.semester.totalWeeks}`)}" placeholder="1-16 或 1-4,6,8-12"><small class="tt-hint">范围和单周可用逗号组合，单双周会进一步筛选。不同周的课程可共用节次。</small></label>
-        <div class="tt-field tt-field--full">课程颜色<div class="tt-color-choices">${COLORS.map((color, index) => `<label class="tt-color-choice"><input type="radio" name="ttCourseColor" value="${color}"${checked((course?.color || 'blue') === color)}><i data-swatch="${color}"></i>${COLOR_NAMES[index]}</label>`).join('')}</div></div>
+        <div class="tt-field tt-field--full"><div id="ttExtraArrangements"></div><button class="tt-button" type="button" data-tt-action="add-arrangement"><i class="ri-add-line"></i> 添加上课安排</button><small class="tt-hint">同一门课可在不同时间使用不同教室。每条安排单独设置星期、节次、周次和地点。</small></div>
+        <div class="tt-field tt-field--full">课程颜色<div class="tt-color-choices">${COLORS.map((color, index) => `<label class="tt-color-choice"><input type="radio" name="ttCourseColor" value="${color}"${checked((course?.color || 'blue') === color)}><i data-swatch="${color}"></i>${COLOR_NAMES[index]}</label>`).join('')}</div><div class="tt-color-custom"><label class="tt-color-choice"><input type="radio" name="ttCourseColor" value="custom"${checked(custom)}>自选颜色</label><input id="ttCourseCustomColor" type="color" value="${custom ? e(course.color) : COLOR_HEX.blue}" aria-label="自选课程颜色"></div></div>
         <label class="tt-field tt-field--full">备注<textarea id="ttCourseNotes" maxlength="1000" rows="2" placeholder="教材、上课要求等（选填）">${e(course?.notes || '')}</textarea></label>
-    </div><p id="ttPanelNotice" class="tt-notice" role="alert"></p></div>${actions('保存课程', course?.id ? '<button class="tt-button tt-button--danger" type="button" data-tt-action="delete-course">删除课程</button>' : '')}</form>`;
+    </div><p id="ttPanelNotice" class="tt-notice" role="alert"></p></div>${actions('保存课程', course?.id ? `<button class="tt-button tt-button--danger" type="button" data-tt-action="${group ? 'delete-group' : 'delete-course'}">${group ? '删除整门课程' : '删除课程'}</button>` : '')}</form>`;
+}
+export function additionalArrangement(state, schedule) {
+    return `<section class="tt-extra-arrangement"${schedule.id ? ` data-course-id="${e(schedule.id)}"` : ''}><header><strong>另一次上课安排</strong><button class="tt-button" type="button" data-tt-action="remove-arrangement" aria-label="移除此上课安排">移除</button></header><div class="tt-form-grid">
+        <label class="tt-field">星期<select data-schedule="day">${dayOptions(Number(schedule.day))}</select></label>
+        <label class="tt-field">周次规律<select data-schedule="parity"><option value="all"${selected(schedule.parity === 'all')}>每周 / 指定周</option><option value="odd"${selected(schedule.parity === 'odd')}>仅单周</option><option value="even"${selected(schedule.parity === 'even')}>仅双周</option></select></label>
+        <label class="tt-field">开始节次<select data-schedule="start">${periodOptions(Number(schedule.start), state.semester.periods.length)}</select></label>
+        <label class="tt-field">结束节次<select data-schedule="end">${periodOptions(Number(schedule.end), state.semester.periods.length)}</select></label>
+        <label class="tt-field tt-field--full">上课周次<input data-schedule="weeks" required value="${e(schedule.weeks)}" placeholder="1-16 或 1-4,6,8-12"></label>
+        <label class="tt-field tt-field--full">教室 / 地点<input data-schedule="room" maxlength="120" value="${e(schedule.room)}" placeholder="例如：实验楼 B-305"></label>
+    </div></section>`;
 }
 export function periodRows(periods) {
     return periods.map((period, index) => `<label class="tt-period-edit"><span>第 ${index + 1} 节</span><input type="time" required data-period-start aria-label="第 ${index + 1} 节开始时间" value="${e(period.start)}"><span>—</span><input type="time" required data-period-end aria-label="第 ${index + 1} 节结束时间" value="${e(period.end)}"></label>`).join('');
@@ -49,8 +63,11 @@ export function settingsForm(state) {
         <button class="tt-button" type="button" data-tt-action="generate-periods">生成节次时间</button><div id="ttPeriodRows" class="tt-period-table">${periodRows(t.periods)}</div></section>
         <section id="ttSection-features" class="tt-settings-section" role="tabpanel" aria-labelledby="ttTab-features" hidden><h4>课表背景</h4><div class="tt-form-grid">
             <label class="tt-field">背景样式<select id="ttBackground"><option value="paper"${selected(s.background.preset === 'paper')}>素纸</option><option value="mint"${selected(s.background.preset === 'mint')}>薄荷</option><option value="sky"${selected(s.background.preset === 'sky')}>晴空</option><option value="lavender"${selected(s.background.preset === 'lavender')}>浅紫</option><option value="image"${selected(s.background.preset === 'image')}>自定义图片</option></select></label>
-            ${field('图片遮罩（40–100%，越高越清晰）', 'ttBackgroundDim', 'number', s.background.dim, 'min="40" max="100" required')}
-            <label class="tt-field tt-field--full">选择本地背景图片<input id="ttBackgroundFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <label class="tt-field">背景淡化 <output id="ttBackgroundDimValue" for="ttBackgroundDim">${s.background.dim}%</output><input id="ttBackgroundDim" type="range" value="${s.background.dim}" min="40" max="100" step="1" aria-label="背景淡化程度"><small class="tt-hint">越高背景越淡，文字越清晰。</small></label>
+            <label class="tt-field tt-field--full">图片显示方式<select id="ttBackgroundFit"><option value="contain"${selected(s.background.fit !== 'cover')}>完整显示（保留全部图片）</option><option value="cover"${selected(s.background.fit === 'cover')}>铺满课表（可能裁剪边缘）</option></select></label>
+            <div class="tt-field tt-field--full"><span>本地背景图片</span><div class="tt-background-picker"><button class="tt-button" type="button" data-tt-action="choose-background">选择 / 更换图片</button><span id="ttBackgroundName" class="tt-background-name" role="status">${s.background.image ? e(s.background.imageName || '已保存的背景图片') : '尚未设置背景图片'}</span></div><input id="ttBackgroundFile" type="file" accept="image/png,image/jpeg,image/webp" hidden></div>
+            <div class="tt-field tt-field--full"><span>效果预览 · 保存后应用</span><div id="ttAppearancePreview" class="tt-board tt-appearance-preview"><img id="ttBackgroundPreview" class="tt-background-preview" alt="当前背景图片预览"${s.background.image ? ` src="${e(s.background.image)}"` : ' hidden'}><div class="tt-preview-sample"><strong>高等数学</strong><span>教学楼 A-302</span><small>1–2 节</small></div></div></div>
+            <label class="tt-field tt-field--full">显示密度<select id="ttDensity"><option value="compact"${selected(s.density !== 'comfortable')}>紧凑 · 同屏显示更多课程</option><option value="comfortable"${selected(s.density === 'comfortable')}>舒适 · 更大的文字和间距</option></select></label>
         </div><p id="ttBackgroundInfo" class="tt-hint">${s.background.image ? '已保存自定义图片，可重新选择或移除。' : '静态图片自动缩小到 1280 像素以内，保存在本机。'}</p><button class="tt-button" type="button" data-tt-action="remove-background">移除自定义图片</button>
         <h4>桌面小部件</h4><div class="tt-form-grid"><label class="tt-field">显示内容<select id="ttWidgetMode"><option value="today"${selected(s.widgetMode === 'today')}>今日课程</option><option value="week"${selected(s.widgetMode === 'week')}>本周课表</option></select></label><label class="tt-field">窗口位置<select id="ttWidgetPinned"><option value="false"${selected(!s.widgetPinned)}>普通桌面浮窗</option><option value="true"${selected(s.widgetPinned)}>始终置顶</option></select></label></div>
         <p class="tt-hint">只在添加时创建一个小窗，关闭即释放。数据变化、上下课和跨日时更新，隐藏时暂停计时；没有每秒刷新，也不会随启动自动打开。</p><div class="tt-actions"><button class="tt-button" type="button" data-tt-action="widget-open">添加 / 显示小部件</button><button class="tt-button" type="button" data-tt-action="widget-close">收起小部件</button></div><p class="tt-hint">添加时会保存当前设置；桌面小部件需在 DtKit 桌面版中使用。</p></section>
@@ -62,9 +79,8 @@ export function settingsForm(state) {
         <p id="ttPanelNotice" class="tt-notice" role="alert"></p></div>${actions('保存设置')}</form>`;
 }
 export function courseList(state, query = '') {
-    const courses = state.semester.courses.filter(course => `${course.name} ${course.room} ${course.teacher}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
-        .sort((a, b) => a.day - b.day || a.start - b.start);
-    return courses.length ? courses.map(course => `<article class="tt-course-row"><div><strong>${e(course.name)}</strong><p>${DAYS[course.day - 1]} · ${course.start}–${course.end} 节 · ${courseTime(course, state.semester)} · 第 ${formatWeeks(course.weeks)} 周</p><p>${e([course.room, course.teacher].filter(Boolean).join(' · ') || '未填写教室 / 教师')}</p></div><div class="tt-actions"><button class="tt-button" type="button" data-tt-action="edit" data-id="${e(course.id)}">编辑</button><button class="tt-button" type="button" data-tt-action="duplicate" data-id="${e(course.id)}">复制安排</button></div></article>`).join('') : '<p class="tt-hint">没有匹配的课程。可以添加课程或导入 CSV。</p>';
+    const groups = groupCourses(state.semester.courses, query);
+    return groups.length ? groups.map(courses => `<details class="tt-course-group"${query ? ' open' : ''}><summary><strong>${e(courses[0].name)}</strong><span>${courses.length} 条安排</span></summary><div class="tt-group-toolbar"><button class="tt-button" type="button" data-tt-action="edit-group" data-id="${e(courses[0].id)}">统一编辑课程</button></div>${courses.map(course => `<article class="tt-course-row"><div><p>${DAYS[course.day - 1]} · ${course.start}–${course.end} 节 · ${courseTime(course, state.semester)} · 第 ${formatWeeks(course.weeks)} 周</p><p>${e([course.room, course.teacher].filter(Boolean).join(' · ') || '未填写教室 / 教师')}</p></div><div class="tt-actions"><button class="tt-button" type="button" data-tt-action="edit" data-id="${e(course.id)}">编辑安排</button><button class="tt-button" type="button" data-tt-action="duplicate" data-id="${e(course.id)}">复制安排</button></div></article>`).join('')}</details>`).join('') : '<p class="tt-hint">没有匹配的课程。可以添加课程或导入 CSV。</p>';
 }
 export function semesterForm(state) {
     return `<form id="ttNewSemesterForm"><div class="tt-dialog-body"><p class="tt-hint">「${e(state.semester.name)}」的 ${state.semester.courses.length} 条课程安排会完整归档，可随时切换回来。</p><div class="tt-form-grid">${field('新学期名称', 'ttNewSemesterName', 'text', '', 'maxlength="80" required placeholder="例如：2026–2027 学年第二学期" autofocus')}${field('总周数', 'ttNewSemesterWeeks', 'number', state.semester.totalWeeks, 'min="1" max="60" required')}${field('第一周上课日期', 'ttNewSemesterDate', 'date', dateKey(), 'required')}</div><p id="ttPanelNotice" class="tt-notice" role="alert"></p></div>${actions('归档并开始新学期')}</form>`;

@@ -93,7 +93,7 @@ function renderSnapshot(snapshot) {
         metric('ri-battery-charge-line', '电源与并发', power[0], `${power[1]} · 上限 ${snapshot.effectiveWorkerLimit}`),
         metric('ri-loader-4-line', '后台任务', String(snapshot.activeJobs), `保留 ${snapshot.recordedJobs} 条任务记录`),
         metric('ri-command-line', '全局快捷键', String(snapshot.registeredShortcuts), '仅注册用户主动绑定的项目'),
-        metric('ri-leaf-line', '当前模式', mode, snapshot.toolOnly ? '仅启动工具，主界面未加载' : snapshot.lanShareActive ? '局域网分享正在运行' : '无局域网分享')
+        metric('ri-leaf-line', '当前模式', mode, [snapshot.toolOnly ? '仅启动工具，主界面未加载' : '', snapshot.clipboardCollectionActive ? '剪贴板收集正在运行' : '', snapshot.lanShareActive ? '局域网分享正在运行' : ''].filter(Boolean).join(' · ') || '后台收集与局域网分享已停止')
     );
     byId('resourceCapturedAt').textContent = `采集于 ${new Date(snapshot.capturedAt).toLocaleTimeString()}`;
     renderStorage(snapshot.storage);

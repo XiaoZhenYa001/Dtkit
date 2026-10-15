@@ -9,7 +9,10 @@ window.showToast = (...args) => typeof window.parent.showToast === 'function' ? 
 const status = document.getElementById('toolPageStatus');
 
 async function initialize() {
+    const stage = message => window.parent.postMessage({ type: 'dtkit-tool-page-stage', instanceId, stage: message }, location.origin);
     try {
+        if (window.parent !== window) status.hidden = true;
+        stage('正在加载工具');
         runtime = installToolPageRuntime({ instanceId, toolId, embedded: true });
         const registry = await import('../tools/index.js');
         if (runtime.disposed) return;
@@ -19,6 +22,7 @@ async function initialize() {
         const tool = await registry.loadTool(toolId);
         if (runtime.disposed) return;
         if (typeof tool.template !== 'function') throw new Error('工具没有可打开的页面');
+        stage('正在准备界面');
         document.getElementById('dynamicToolContainer').innerHTML = tool.template();
         runtime.attachTool(tool);
         await tool.init();
@@ -29,6 +33,7 @@ async function initialize() {
             if (runtime.disposed) return;
         }
         const snapshot = window.parent.__DTKIT_TOOL_WORKSPACE__?.snapshotFor(instanceId);
+        if (snapshot) stage('正在恢复上次的工作区');
         // Restore against the final layout. Removing the loading row afterwards
         // makes Chromium's scroll anchoring shift the restored offset by its height.
         status.hidden = true;
@@ -39,6 +44,7 @@ async function initialize() {
     } catch (error) {
         status.hidden = false;
         status.textContent = `工具加载失败：${String(error?.message || error)}`;
+        window.parent.postMessage({ type: 'dtkit-tool-page-failed', instanceId, message: String(error?.message || error) }, location.origin);
     }
 }
 initialize();

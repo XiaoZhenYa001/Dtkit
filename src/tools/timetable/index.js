@@ -2,21 +2,25 @@ import '../../css/tools/timetable.css';
 import { registerTool } from '../toolRegistry.js';
 import { escapeHtml as e } from '../../core/html.js';
 import { showToast } from '../../core/utils.js';
-import { dateKey, newId, currentWeek, weekStart, addDays, weekDays, generatePeriods, parseWeeks, validateCourse, validateState, startSemester, nextBoundary } from './model.js';
+import { dateKey, currentWeek, weekStart, addDays, weekDays, generatePeriods, validateState, startSemester, nextBoundary } from './model.js';
 import { STORAGE_KEY, CHANGED_EVENT, readState, updateState } from './store.js';
 import { summary, renderGrid, applyBackground } from './view.js';
-import { COLOR_HEX, courseForm, settingsForm, semesterForm, courseList, periodRows, actions } from './panels.js';
+import { COLOR_HEX, courseForm, additionalArrangement, settingsForm, semesterForm, courseList, periodRows, actions } from './panels.js';
 import { exportCsv, importCsv, importJson, exportIcs, download } from './transfer.js';
+import { linkedEnd, prepareCourseEdits, replaceArrangements } from './editor.js';
+import { attachCourseDetails } from './details.js';
 
 const byId = id => document.getElementById(id);
 const invoke = (command, args = {}) => window.__TAURI__.core.invoke(command, args);
 let state, controller, timer, suspended = false, selectedWeek = 1, followCurrent = true, panelRevision, editId, draftImage = '', imported, busy = false, generation = 0, importRequest = 0, imageRequest = 0;
+let draftImageName = '', imageLoading = false;
+let editIds = [], hideDetails = null;
 
 function template() {
     return `<div class="tt-shell"><header class="tt-header tt-header--compact"><div class="tt-week-control"><button id="ttPrevious" class="tt-button" type="button" data-tt-action="previous" aria-label="上一周"><i class="ri-arrow-left-s-line"></i></button><select id="ttWeek" aria-label="查看周次"></select><button id="ttNext" class="tt-button" type="button" data-tt-action="next" aria-label="下一周"><i class="ri-arrow-right-s-line"></i></button><button class="tt-button tt-current-week" type="button" data-tt-action="today">本周</button></div><span id="ttDateRange" class="tt-range"></span><div class="tt-actions"><button class="tt-button tt-button--primary" type="button" data-tt-action="add"><i class="ri-add-line"></i> 添加课程</button><button id="ttToolsToggle" class="tt-button tt-local-panel-toggle" type="button" data-tt-action="toggle-tools" aria-label="打开课表工具" aria-expanded="false" aria-controls="ttLocalPanel"><i class="ri-more-line"></i></button></div></header>
-        <p id="ttNotice" class="tt-notice" role="status" aria-live="polite"></p><section id="ttBoard" class="tt-board" aria-label="每周课表"><div class="tt-board-scroll"><div id="ttGrid" class="tt-grid"></div></div></section><footer class="tt-footer"><span>点击课程编辑 · 点击空白格添加</span><span id="ttWeekCount"></span><span>保存在本机</span></footer>
+        <p id="ttNotice" class="tt-notice" role="status" aria-live="polite"></p><section id="ttBoard" class="tt-board" aria-label="每周课表"><div class="tt-board-scroll" tabindex="0" aria-label="滚动查看课表日期与节次"><div id="ttGrid" class="tt-grid"></div></div></section><footer class="tt-footer"><span>点击课程编辑 · 点击空白格添加</span><span id="ttScrollHint" class="tt-scroll-hint" hidden>左右滚动查看其他日期</span><span id="ttWeekCount"></span><span>保存在本机</span></footer>
         <aside id="ttLocalPanel" class="tt-local-panel" aria-label="课表工具" hidden><header class="tt-local-panel-header"><strong>课表工具</strong><button class="tt-button" type="button" data-tt-action="toggle-tools" aria-label="关闭课表工具"><i class="ri-close-line"></i></button></header><p id="ttSemesterLabel" class="tt-panel-summary"></p><div class="tt-today"><span>今天</span><p id="ttTodaySummary"></p></div><div id="ttEmpty" class="tt-empty" hidden></div><div class="tt-panel-actions"><button class="tt-button" type="button" data-tt-action="import"><i class="ri-upload-2-line"></i> 导入课表</button><button class="tt-button" type="button" data-tt-action="manage"><i class="ri-calendar-line"></i> 管理课程</button><button class="tt-button" type="button" data-tt-action="settings"><i class="ri-settings-3-line"></i> 课表设置</button><button class="tt-button" type="button" data-tt-action="transfer"><i class="ri-download-2-line"></i> 导入与导出</button></div></aside>
-        <input id="ttImportFile" type="file" accept=".json,.csv,application/json,text/csv" hidden><dialog id="ttDialog" class="tt-dialog" aria-labelledby="ttDialogTitle"><header class="tt-dialog-header"><h3 id="ttDialogTitle"></h3><button class="tt-button" type="button" data-tt-action="close" aria-label="关闭面板">✕</button></header><div id="ttDialogContent"></div></dialog></div>`;
+        <aside id="ttCourseDetail" class="tt-course-detail" role="tooltip" hidden></aside><input id="ttImportFile" type="file" accept=".json,.csv,application/json,text/csv" hidden><dialog id="ttDialog" class="tt-dialog" aria-labelledby="ttDialogTitle"><header class="tt-dialog-header"><h3 id="ttDialogTitle"></h3><button class="tt-button" type="button" data-tt-action="close" aria-label="关闭面板">✕</button></header><div id="ttDialogContent"></div></dialog></div>`;
 }
 function notice(message = '', error = false, panel = false) {
     const node = byId(panel ? 'ttPanelNotice' : 'ttNotice');
@@ -26,6 +30,7 @@ function notice(message = '', error = false, panel = false) {
 function clampWeek(week) { return Math.max(1, Math.min(state.semester.totalWeeks, week)); }
 function render() {
     if (!state || !byId('ttGrid')) return;
+    hideDetails?.();
     selectedWeek = clampWeek(followCurrent ? currentWeek(state) : selectedWeek);
     const actual = currentWeek(state), days = weekDays(state, selectedWeek);
     byId('ttSemesterLabel').textContent = `${state.semester.name} · ${state.settings.education} · ${actual < 1 ? '尚未开学' : actual > state.semester.totalWeeks ? '学期已结束' : `当前第 ${actual} 周`}`;
@@ -54,20 +59,55 @@ function refresh() {
     catch (error) { notice(error.message, true); }
 }
 function openPanel(title, html, revision = state.revision) {
+    hideDetails?.();
     panelRevision = revision;
     const dialog = byId('ttDialog');
     byId('ttDialogTitle').textContent = title; byId('ttDialogContent').innerHTML = html;
     byId('ttDialogContent').querySelectorAll('form').forEach(form => { form.noValidate = true; });
     byId('ttDialogContent').querySelectorAll('[data-swatch]').forEach(node => node.style.setProperty('--swatch', COLOR_HEX[node.dataset.swatch]));
+    initializeScheduleLinks(byId('ttDialogContent'));
     if (!dialog.open) dialog.showModal();
     (dialog.querySelector('[autofocus]') || dialog.querySelector('input,select,button'))?.focus();
 }
 function closePanel() { if (!busy) { byId('ttDialog').close(); refresh(); } }
 function editCourse(course, copy = false) {
     editId = copy ? null : course?.id || null;
+    editIds = editId ? [editId] : [];
     openPanel(editId ? '编辑课程' : copy ? '复制课程安排' : '添加课程', courseForm(state, copy ? { ...course, id: null } : course));
 }
-function settings() { draftImage = state.settings.background.image; openPanel('课表设置', settingsForm(state)); }
+function editGroup(id) {
+    const first = state.semester.courses.find(course => course.id === id);
+    const courses = state.semester.courses.filter(course => course.name === first.name).sort((a, b) => a.day - b.day || a.start - b.start);
+    editId = courses[0].id; editIds = courses.map(course => course.id);
+    openPanel(`编辑课程 · ${courses.length} 条安排`, courseForm(state, courses[0], true));
+    for (const course of courses.slice(1)) byId('ttExtraArrangements').insertAdjacentHTML('beforeend', additionalArrangement(state, { ...course, weeks: course.weeks.join(','), parity: 'all' }));
+    initializeScheduleLinks(byId('ttExtraArrangements'));
+}
+function settings() {
+    imageRequest++; imageLoading = false; draftImage = state.settings.background.image; draftImageName = state.settings.background.imageName || '';
+    openPanel('课表设置', settingsForm(state)); previewAppearance();
+}
+function previewAppearance() {
+    const preview = byId('ttAppearancePreview'); if (!preview) return;
+    const preset = byId('ttBackground').value, dim = Number(byId('ttBackgroundDim').value), fit = byId('ttBackgroundFit').value;
+    applyBackground(preview, { preset, image: draftImage, dim, fit });
+    byId('ttBackgroundPreview').hidden = preset !== 'image' || !draftImage;
+    byId('ttBackgroundDimValue').value = `${dim}%`;
+    preview.dataset.density = byId('ttDensity').value;
+}
+function initializeScheduleLinks(container) {
+    container.querySelectorAll('#ttCourseStart, [data-schedule="start"]').forEach(input => { input.dataset.previousStart = input.value; });
+}
+function linkSchedule(target) {
+    const primary = target.id === 'ttCourseStart' || target.id === 'ttCourseEnd';
+    if (!primary && !target.matches('[data-schedule="start"], [data-schedule="end"]')) return;
+    const row = target.closest('.tt-extra-arrangement');
+    const start = primary ? byId('ttCourseStart') : row.querySelector('[data-schedule="start"]');
+    const end = primary ? byId('ttCourseEnd') : row.querySelector('[data-schedule="end"]');
+    if (target === start) end.value = String(linkedEnd(Number(start.dataset.previousStart), Number(end.value), Number(start.value), state.semester.periods.length));
+    else if (Number(end.value) < Number(start.value)) start.value = end.value;
+    start.dataset.previousStart = start.value;
+}
 function showTab(tab) {
     byId('ttDialogContent').querySelectorAll('[data-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.tab === tab)));
     byId('ttDialogContent').querySelectorAll('.tt-settings-section').forEach(section => { section.hidden = section.id !== `ttSection-${tab}`; });
@@ -87,7 +127,9 @@ function readSettings() {
     if (t.periods.length !== Number(byId('ttPeriodCount').value)) throw new Error('节数已修改，请先点击「生成节次时间」');
     if (t.periods[0].start !== byId('ttFirstTime').value) throw new Error('第一节开始时间已修改，请生成节次时间或同步修改第 1 节');
     s.showWeekend = byId('ttShowWeekend').checked; s.showOtherWeeks = byId('ttShowOther').checked; s.weekStartsOn = Number(byId('ttWeekStart').value); s.education = byId('ttEducation').value;
-    s.background = { preset: byId('ttBackground').value, image: draftImage, dim: Number(byId('ttBackgroundDim').value) };
+    s.density = byId('ttDensity').value;
+    if (imageLoading) throw new Error('背景图片正在处理，请稍后保存');
+    s.background = { preset: byId('ttBackground').value, image: draftImage, imageName: draftImageName, fit: byId('ttBackgroundFit').value, dim: Number(byId('ttBackgroundDim').value) };
     s.widgetMode = byId('ttWidgetMode').value; s.widgetPinned = byId('ttWidgetPinned').value === 'true';
     return validateState(draft);
 }
@@ -110,8 +152,14 @@ async function submit(event) {
     if (busy || !validForm(event.target)) return;
     try {
         if (event.target.id === 'ttCourseForm') {
-            const course = validateCourse({ id: editId || newId(), name: byId('ttCourseName').value.trim(), room: byId('ttCourseRoom').value.trim(), teacher: byId('ttCourseTeacher').value.trim(), day: Number(byId('ttCourseDay').value), start: Number(byId('ttCourseStart').value), end: Number(byId('ttCourseEnd').value), weeks: parseWeeks(byId('ttCourseWeeks').value, state.semester.totalWeeks, byId('ttCourseParity').value), color: event.target.querySelector('[name="ttCourseColor"]:checked').value, notes: byId('ttCourseNotes').value.trim() }, state.semester);
-            await commit(data => { const index = data.semester.courses.findIndex(item => item.id === course.id); if (editId && index < 0) throw new Error('课程已被删除，请重新打开课表'); if (index < 0) data.semester.courses.push(course); else data.semester.courses[index] = course; });
+            const selectedColor = event.target.querySelector('[name="ttCourseColor"]:checked').value;
+            const common = { name: byId('ttCourseName').value.trim(), teacher: byId('ttCourseTeacher').value.trim(), color: selectedColor === 'custom' ? byId('ttCourseCustomColor').value : selectedColor, notes: byId('ttCourseNotes').value.trim() };
+            const first = { id: editId, room: byId('ttCourseRoom').value, day: byId('ttCourseDay').value, start: byId('ttCourseStart').value, end: byId('ttCourseEnd').value, weeks: byId('ttCourseWeeks').value, parity: byId('ttCourseParity').value };
+            const schedules = [first, ...[...byId('ttExtraArrangements').children].map(row => ({ id: row.dataset.courseId, ...Object.fromEntries([...row.querySelectorAll('[data-schedule]')].map(input => [input.dataset.schedule, input.value])) }))];
+            const originals = editIds.map(id => state.semester.courses.find(course => course.id === id));
+            if (originals.some(course => !course)) throw new Error('课程已被删除，请重新打开课表');
+            const courses = prepareCourseEdits(common, schedules, originals, state.semester);
+            await commit(data => replaceArrangements(data, editIds, courses));
         } else if (event.target.id === 'ttSettingsForm') {
             const draft = readSettings();
             await commit(data => { data.settings = draft.settings; data.semester = draft.semester; });
@@ -148,7 +196,9 @@ async function selectImport(event) {
 }
 async function backgroundFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
+    event.target.value = '';
     const ticket = generation, request = ++imageRequest, form = byId('ttSettingsForm');
+    imageLoading = true;
     try {
         if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 15000000) throw new Error('请选择 15 MB 以内的 PNG、JPEG 或 WebP 静态图片');
         const bitmap = await createImageBitmap(file);
@@ -160,9 +210,14 @@ async function backgroundFile(event) {
             const image = canvas.toDataURL('image/jpeg', .78);
             if (image.length > 600000) throw new Error('图片压缩后仍过大，请选择内容更简单的图片');
             if (ticket !== generation || request !== imageRequest || form !== byId('ttSettingsForm')) return;
-            draftImage = image; byId('ttBackground').value = 'image'; byId('ttBackgroundInfo').textContent = `图片已压缩至 ${canvas.width} × ${canvas.height}，约 ${Math.round(image.length * .75 / 1024)} KB，保存设置后生效。`;
+            draftImage = image; draftImageName = file.name; byId('ttBackground').value = 'image';
+            byId('ttBackgroundName').textContent = file.name;
+            byId('ttBackgroundPreview').src = image; byId('ttBackgroundPreview').hidden = false;
+            previewAppearance();
+            byId('ttBackgroundInfo').textContent = `图片已压缩至 ${canvas.width} × ${canvas.height}，约 ${Math.round(image.length * .75 / 1024)} KB，保存设置后生效。`;
         } finally { bitmap.close(); }
-    } catch (error) { if (ticket === generation) notice(error.message, true, true); }
+    } catch (error) { if (ticket === generation && request === imageRequest && form === byId('ttSettingsForm')) notice(error.message, true, true); }
+    finally { if (ticket === generation && request === imageRequest) imageLoading = false; }
 }
 function syncDate(event) {
     if (event.target.id === 'ttCurrentWeek') {
@@ -198,15 +253,30 @@ async function performAction(action, button = { dataset: {} }) {
         else if (action === 'transfer') { settings(); showTab('transfer'); }
         else if (action === 'settings-tab') showTab(button.dataset.tab);
         else if (action === 'add') editCourse();
+        else if (action === 'add-arrangement') {
+            const schedule = Object.fromEntries(['room', 'day', 'start', 'end', 'weeks', 'parity'].map(key => [key, byId(`ttCourse${key[0].toUpperCase()}${key.slice(1)}`).value]));
+            byId('ttExtraArrangements').insertAdjacentHTML('beforeend', additionalArrangement(state, schedule));
+            initializeScheduleLinks(byId('ttExtraArrangements').lastElementChild);
+            byId('ttExtraArrangements').lastElementChild.querySelector('select').focus();
+        } else if (action === 'remove-arrangement') button.closest('.tt-extra-arrangement')?.remove();
         else if (action === 'add-cell') editCourse({ day: Number(button.dataset.day), start: Number(button.dataset.period), end: Number(button.dataset.period), weeks: Array.from({ length: state.semester.totalWeeks }, (_, index) => index + 1) });
         else if (action === 'edit' || action === 'duplicate') editCourse(state.semester.courses.find(course => course.id === id), action === 'duplicate');
+        else if (action === 'edit-group') editGroup(id);
         else if (action === 'manage') openPanel('管理课程', `<div class="tt-dialog-body"><input id="ttCourseSearch" class="tt-search" type="search" aria-label="搜索课程" placeholder="搜索课程名、教室或教师"><div id="ttCourseList" class="tt-course-list">${courseList(state)}</div><p id="ttPanelNotice" class="tt-notice" role="alert"></p></div><footer class="tt-dialog-actions"><button class="tt-button tt-button--primary" type="button" data-tt-action="add">添加课程</button></footer>`);
         else if (['previous', 'next', 'today'].includes(action)) { followCurrent = action === 'today'; selectedWeek = followCurrent ? clampWeek(currentWeek(state)) : clampWeek(selectedWeek + (action === 'next' ? 1 : -1)); render(); }
         else if (action === 'generate-periods') {
             byId('ttPeriodRows').innerHTML = periodRows(generatePeriods(Number(byId('ttPeriodCount').value), byId('ttFirstTime').value, Number(byId('ttDuration').value), Number(byId('ttRest').value))); notice('已生成，可继续逐节调整。', false, true);
-        } else if (action === 'remove-background') { draftImage = ''; byId('ttBackground').value = 'paper'; byId('ttBackgroundFile').value = ''; byId('ttBackgroundInfo').textContent = '自定义图片已移除，保存设置后生效。'; }
+        } else if (action === 'choose-background') byId('ttBackgroundFile').click();
+        else if (action === 'remove-background') {
+            imageRequest++; imageLoading = false; draftImage = ''; draftImageName = ''; byId('ttBackground').value = 'paper'; byId('ttBackgroundFile').value = '';
+            byId('ttBackgroundPreview').hidden = true; byId('ttBackgroundPreview').removeAttribute('src'); byId('ttBackgroundName').textContent = '尚未设置背景图片';
+            previewAppearance();
+            byId('ttBackgroundInfo').textContent = '自定义图片已移除，保存设置后生效。';
+        }
         else if (action === 'new-semester') openPanel('开始新学期', semesterForm(state));
         else if (action === 'delete-course') confirmPanel('删除课程', `删除「${state.semester.courses.find(course => course.id === editId)?.name}」的这条安排？其他安排会保留。`, 'confirm-delete-course', editId);
+        else if (action === 'delete-group') confirmPanel('删除整门课程', `删除「${state.semester.courses.find(course => course.id === editId)?.name}」及其 ${editIds.length} 条安排？`, 'confirm-delete-group', editId);
+        else if (action === 'confirm-delete-group') await commit(data => replaceArrangements(data, editIds, []));
         else if (action === 'confirm-delete-course') await commit(data => { data.semester.courses = data.semester.courses.filter(course => course.id !== id); });
         else if (action === 'restore-archive') confirmPanel('切换学期', `切换到「${state.archives.find(item => item.id === id)?.name}」？当前学期会保留在历史学期中。`, 'confirm-restore', id);
         else if (action === 'confirm-restore') {
@@ -230,6 +300,9 @@ async function performAction(action, button = { dataset: {} }) {
 function init() {
     destroy(); controller = new AbortController(); const { signal } = controller;
     const root = document.querySelector('.tt-shell');
+    const boardScroll = root.querySelector('.tt-board-scroll');
+    const resizeObserver = new ResizeObserver(() => { byId('ttScrollHint').hidden = boardScroll.scrollWidth <= boardScroll.clientWidth + 1; });
+    resizeObserver.observe(boardScroll); signal.addEventListener('abort', () => resizeObserver.disconnect(), { once: true });
     root.dataset.embedded = String(Boolean(window.__DTKIT_TOOL_PAGE__?.embedded));
     document.addEventListener('pointerdown', event => {
         if (!byId('ttLocalPanel').hidden && !event.target.closest('.tt-local-panel, .tt-local-panel-toggle')) setLocalPanelOpen(false, false);
@@ -238,12 +311,17 @@ function init() {
         if (event.key === 'Escape' && !byId('ttLocalPanel').hidden) { event.preventDefault(); setLocalPanelOpen(false); }
     }, { signal });
     root.addEventListener('click', perform, { signal }); root.addEventListener('submit', submit, { signal });
-    root.addEventListener('input', event => { if (event.target.id === 'ttCourseSearch') byId('ttCourseList').innerHTML = courseList(state, event.target.value); }, { signal });
+    hideDetails = attachCourseDetails(root, () => state, signal);
+    root.addEventListener('input', event => {
+        if (event.target.id === 'ttCourseSearch') byId('ttCourseList').innerHTML = courseList(state, event.target.value);
+        else if (event.target.id === 'ttCourseCustomColor') root.querySelector('[name="ttCourseColor"][value="custom"]').checked = true;
+        else if (['ttBackgroundDim', 'ttBackgroundFit', 'ttBackground', 'ttDensity'].includes(event.target.id)) previewAppearance();
+    }, { signal });
     root.addEventListener('change', event => {
         if (event.target.id === 'ttWeek') { selectedWeek = Number(event.target.value); followCurrent = false; render(); }
         else if (event.target.id === 'ttImportFile') selectImport(event);
         else if (event.target.id === 'ttBackgroundFile') backgroundFile(event);
-        else syncDate(event);
+        else { syncDate(event); linkSchedule(event.target); if (['ttBackgroundFit', 'ttBackground', 'ttDensity'].includes(event.target.id)) previewAppearance(); }
     }, { signal });
     root.addEventListener('keydown', event => {
         const tab = event.target.closest('[role="tab"]'); if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
