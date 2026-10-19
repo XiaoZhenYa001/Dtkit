@@ -231,6 +231,16 @@ export const toolManifests = Object.freeze([
         loader: () => import('./startup-manager/index.js')
     },
     {
+        id: 'software-analysis',
+        name: '软件分析',
+        icon: 'ri-apps-2-line',
+        colorClass: 'tool-card__icon--orange',
+        category: 'utility',
+        status: 'ready',
+        description: '查看软件安装位置、登记大小，按需分析目录空间与关联自启动。',
+        loader: () => import('./software-analysis/index.js')
+    },
+    {
         id: 'context-menu',
         name: '右键菜单管理',
         icon: 'ri-menu-2-line',

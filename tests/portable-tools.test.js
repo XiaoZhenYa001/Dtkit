@@ -8,6 +8,7 @@ const snippetUi = fs.readFileSync(new URL('../src/tools/text-snippets/index.js',
 const screenshot = fs.readFileSync(new URL('../src-tauri/src/infrastructure/screenshot.rs', import.meta.url), 'utf8');
 const screenshotUi = fs.readFileSync(new URL('../src/tools/screenshot-annotator/index.js', import.meta.url), 'utf8');
 const qr = fs.readFileSync(new URL('../src/tools/qr-generator/index.js', import.meta.url), 'utf8');
+const qrCore = fs.readFileSync(new URL('../src/tools/qr-generator/core.js', import.meta.url), 'utf8');
 
 test('tool modules stay lazy and disabled modules cannot load', () => {
     assert.match(registry, /if \(!tool\.enabled\) throw new Error/);
@@ -66,5 +67,5 @@ test('temporary QR reuses transfer station commands', () => {
     assert.doesNotMatch(qr, /setInterval/);
     assert.match(qr, /qrGeneration \+= 1/);
     assert.match(qr, /aria-selected/);
-    assert.match(qr, /relativeLuminance/);
+    assert.match(qrCore, /relativeLuminance/);
 });

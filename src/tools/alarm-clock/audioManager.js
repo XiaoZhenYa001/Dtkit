@@ -78,9 +78,11 @@ export class AlarmAudioManager {
         try {
             await audio.play();
         } catch (error) {
-            if (generation === this.previewGeneration) this.stopPreview();
+            if (generation !== this.previewGeneration) return;
+            this.stopPreview();
             throw error;
         }
+        if (generation !== this.previewGeneration) return;
         this.previewTimeout = setTimeout(() => {
             if (generation === this.previewGeneration) this.stopPreview();
         }, PREVIEW_DURATION_MS);
@@ -128,6 +130,7 @@ export class AlarmAudioManager {
     async startTaskAudio(task) {
         const audioPath = task.config?.audioPath;
         if (!audioPath) return false;
+        this.stopPreview();
 
         const controller = {
             taskId: task.id,
@@ -136,6 +139,7 @@ export class AlarmAudioManager {
             blobUrl: null,
             timeoutId: null,
             timers: backgroundTimers(),
+            loadAbortController: new AbortController(),
             onError: null,
             stop: false,
             cleaned: false
@@ -172,7 +176,7 @@ export class AlarmAudioManager {
                 () => !controller.stop
             ).catch(error => console.error('[AlarmClock] 显示闹钟通知失败', error));
 
-            await this.waitUntilPlayable(audio);
+            await this.waitUntilPlayable(audio, { signal: controller.loadAbortController.signal });
             if (!controller.stop) await audio.play();
             return !controller.stop;
         } catch (error) {
@@ -182,7 +186,8 @@ export class AlarmAudioManager {
         }
     }
 
-    waitUntilPlayable(audio) {
+    waitUntilPlayable(audio, { signal } = {}) {
+        if (signal?.aborted) return Promise.reject(new DOMException('音频加载已取消', 'AbortError'));
         if (audio.readyState >= 2) return Promise.resolve();
         const timers = backgroundTimers();
         return new Promise((resolve, reject) => {
@@ -191,6 +196,7 @@ export class AlarmAudioManager {
                 timers.clearTimeout(timeoutId);
                 audio.removeEventListener('canplay', onCanPlay);
                 audio.removeEventListener('error', onError);
+                signal?.removeEventListener('abort', onAbort);
             };
             const onCanPlay = () => {
                 cleanup();
@@ -200,8 +206,13 @@ export class AlarmAudioManager {
                 cleanup();
                 reject(error);
             };
+            const onAbort = () => {
+                cleanup();
+                reject(new DOMException('音频加载已取消', 'AbortError'));
+            };
             audio.addEventListener('canplay', onCanPlay);
             audio.addEventListener('error', onError);
+            signal?.addEventListener('abort', onAbort, { once: true });
             timeoutId = timers.setTimeout(() => {
                 cleanup();
                 reject(new Error('音频加载超时'));
@@ -230,6 +241,7 @@ export class AlarmAudioManager {
         if (!controller || controller.cleaned) return;
         controller.cleaned = true;
         controller.stop = true;
+        controller.loadAbortController?.abort();
         if (controller.timeoutId) controller.timers.clearTimeout(controller.timeoutId);
         controller.timeoutId = null;
         if (controller.audio) {

@@ -1,3 +1,11 @@
+import { renderBoardImage } from './export.js';
+import { renderFormulaMarkup } from './formula.js';
+import { createObjectDialog } from './dialog.js';
+import { getTemplate } from './template.js';
+import { getElementBounds, hitTestElement, translateElement, constrainShape, fitCamera, zoomCamera } from './geometry.js';
+import { drawStroke, paintStrokeIncrement } from './ink.js';
+import { normalizeDocumentV2, historyWeight, MAX_ELEMENTS, MAX_POINTS, MAX_STROKE_POINTS } from './document.js';
+import { mountSegmentedControl, prefersReducedMotion } from '../../core/toolMotion.js';
 import { registerTool } from '../toolRegistry.js';
 import '../../css/tools/whiteboard.css';
 
@@ -7,26 +15,36 @@ const invoke = (command, args = {}) => globalThis.window?.__TAURI__?.core?.invok
 });
 const DRAFT_DELAY_MS = 60_000;
 const MAX_HISTORY = 40;
-const MAX_ELEMENTS = 2_000;
-const MAX_POINTS = 100_000;
-const MAX_STROKE_POINTS = 20_000;
 const DEFAULT_COLOR = '#242937';
 const LEGACY_KEY = 'dtkit_whiteboard_v1';
 const PREFS_KEY = 'dtkit_whiteboard_preferences_v2';
 
-const state = {
+function createState() { return {
     canvas: null, context: null, committedCanvas: null, committedContext: null, surface: null, formulaLayer: null,
     elements: [], undo: [], redo: [], active: null, pointerId: null,
     mode: 'pen', color: DEFAULT_COLOR, width: 4, background: 'dots',
     camera: { x: 0, y: 0, zoom: 1 }, boardId: null, boardName: '未命名白板',
     isFormal: false, dirty: false, readOnly: false, logicalWidth: 1, logicalHeight: 1, pixelRatio: 1,
     abortController: null, resizeObserver: null, resizeFrame: null, drawFrame: null, draftTimer: null,
-    formulaRuntime: null, formulaLoading: null, historyObserver: null, histories: [],
-    sequence: 0, spacePressed: false, totalPoints: 0, editRevokedUnlisten: null,
-    draftRevision: 0, savedDraftRevision: -1
-};
+    formulaRuntime: null, historyObserver: null, histories: [],
+    spacePressed: false, totalPoints: 0, editRevokedUnlisten: null,
+    draftRevision: 0, savedDraftRevision: -1,
+    root: null, selectionId: null, pointers: new Map(), pinch: null, boardGeneration: 0, storeTail: Promise.resolve(), pendingDraft: null,
+    boardBusy: false, saveBusy: false, historyVersion: 0, renderVersion: 0,
+    cameraFrame: null, cameraTarget: null, popovers: new Map(),
+    legacyPending: false,
+    inkLayer: null, tail: null, tailPath: null, cursor: null, dialog: null, exportBusy: false, closing: null, recovery: null, recoveryJob: null
+}; }
 
+let state = createState();
 let boundsCache = new WeakMap();
+let formulaModulePromise;
+const live = view => view === state && !!view.abortController && !view.abortController.signal.aborted;
+const hasNativeStore = () => typeof window.__TAURI__?.core?.invoke === 'function';
+const editable = () => live(state) && !state.readOnly && !state.boardBusy;
+const sameBoard = (view, generation, id) => live(view) && view.boardGeneration === generation && view.boardId === id;
+const BROWSER_INDEX = 'dtkit_whiteboards_v2';
+const browserBoardKey = id => 'dtkit_whiteboard_board_' + id;
 const cloneElements = () => structuredClone(state.elements);
 const newId = () => {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -38,195 +56,52 @@ const newId = () => {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 
-function getTemplate() {
-    return `
-        <div class="whiteboard-tool">
-            <aside class="whiteboard-history" id="whiteboardHistory" aria-label="历史白板" aria-hidden="true">
-                <header><div><span>WHITEBOARDS</span><strong>历史白板</strong></div><button id="whiteboardNew" type="button" title="新建白板"><i class="ri-add-line"></i></button></header>
-                <div class="whiteboard-history-list" id="whiteboardHistoryList"></div>
-            </aside>
-            <button class="whiteboard-history-rail" id="whiteboardHistoryRail" type="button" aria-label="展开历史白板" aria-expanded="false">
-                <i class="ri-history-line"></i><span>历史</span><i class="ri-arrow-right-s-line whiteboard-history-rail__arrow"></i>
-            </button>
-
-            <header class="whiteboard-hero">
-                <div><span class="whiteboard-kicker">INFINITE LOCAL CANVAS</span><h2>无限白板</h2><p>教学、推演与随手记录。正式白板保存在 DtKit 文件管理目录。</p></div>
-                <span class="whiteboard-local-badge"><i class="ri-shield-check-line"></i> 60 秒恢复草稿</span>
-            </header>
-
-            <div class="whiteboard-toolbar" role="toolbar" aria-label="白板工具栏">
-                <input class="whiteboard-name" id="whiteboardName" maxlength="60" value="未命名白板" aria-label="白板名称">
-                <div class="whiteboard-cluster" data-board-cluster="draw">
-                    <button class="whiteboard-cluster-trigger" type="button" data-board-panel="draw" data-panel-modes="pen,highlighter,eraser" aria-expanded="false">
-                        <i class="ri-brush-2-line"></i><span>绘制</span><i class="ri-arrow-down-s-line"></i>
-                    </button>
-                    <div class="whiteboard-cluster-panel whiteboard-cluster-panel--draw" data-board-panel-content="draw" hidden>
-                        <div class="whiteboard-tool-group" aria-label="绘制工具">
-                            <button type="button" data-board-mode="pen" aria-pressed="true" title="画笔 (B)"><i class="ri-brush-2-line"></i><span>画笔</span></button>
-                            <button type="button" data-board-mode="highlighter" title="荧光笔 (H)"><i class="ri-mark-pen-line"></i><span>标记</span></button>
-                            <button type="button" data-board-mode="eraser" title="橡皮擦 (E)"><i class="ri-eraser-line"></i><span>橡皮</span></button>
-                        </div>
-                        <div class="whiteboard-tool-group whiteboard-colors" aria-label="颜色">
-                            <button class="whiteboard-color whiteboard-color--ink" type="button" data-board-color="#242937" aria-label="墨黑"></button>
-                            <button class="whiteboard-color whiteboard-color--orange" type="button" data-board-color="#d96f3d" aria-label="暖橙"></button>
-                            <button class="whiteboard-color whiteboard-color--blue" type="button" data-board-color="#3f6d74" aria-label="深蓝"></button>
-                            <button class="whiteboard-color whiteboard-color--green" type="button" data-board-color="#3f8061" aria-label="墨绿"></button>
-                            <label class="whiteboard-color-picker" title="自定义颜色"><i class="ri-palette-line"></i><input id="whiteboardColorInput" type="color" value="#242937"></label>
-                        </div>
-                        <label class="whiteboard-size-control" for="whiteboardSize"><span>笔宽</span><input id="whiteboardSize" type="range" min="1" max="24" value="4"><output id="whiteboardSizeValue">4 px</output></label>
-                    </div>
-                </div>
-                <div class="whiteboard-cluster" data-board-cluster="shape">
-                    <button class="whiteboard-cluster-trigger" type="button" data-board-panel="shape" data-panel-modes="line,arrow,rect,ellipse" aria-expanded="false">
-                        <i class="ri-shape-line"></i><span>图形</span><i class="ri-arrow-down-s-line"></i>
-                    </button>
-                    <div class="whiteboard-cluster-panel" data-board-panel-content="shape" hidden>
-                        <div class="whiteboard-tool-group whiteboard-shape-group" aria-label="图形工具">
-                            <button type="button" data-board-mode="line" title="直线"><i class="ri-subtract-line"></i><span>直线</span></button>
-                            <button type="button" data-board-mode="arrow" title="箭头"><i class="ri-arrow-right-line"></i><span>箭头</span></button>
-                            <button type="button" data-board-mode="rect" title="矩形"><i class="ri-checkbox-blank-line"></i><span>矩形</span></button>
-                            <button type="button" data-board-mode="ellipse" title="椭圆"><i class="ri-checkbox-blank-circle-line"></i><span>椭圆</span></button>
-                        </div>
-                    </div>
-                </div>
-                <div class="whiteboard-cluster" data-board-cluster="content">
-                    <button class="whiteboard-cluster-trigger" type="button" data-board-panel="content" data-panel-modes="text,note,formula" aria-expanded="false">
-                        <i class="ri-text"></i><span>内容</span><i class="ri-arrow-down-s-line"></i>
-                    </button>
-                    <div class="whiteboard-cluster-panel" data-board-panel-content="content" hidden>
-                        <div class="whiteboard-tool-group" aria-label="内容工具">
-                            <button type="button" data-board-mode="text" title="文字"><i class="ri-text"></i><span>文字</span></button>
-                            <button type="button" data-board-mode="note" title="便签"><i class="ri-sticky-note-line"></i><span>便签</span></button>
-                            <button type="button" data-board-mode="formula" title="数学表达式"><i class="ri-function-line"></i><span>公式</span></button>
-                        </div>
-                    </div>
-                </div>
-                <div class="whiteboard-cluster" data-board-cluster="canvas">
-                    <button class="whiteboard-cluster-trigger" type="button" data-board-panel="canvas" data-panel-modes="select,pan" aria-expanded="false">
-                        <i class="ri-drag-move-2-line"></i><span>画布</span><i class="ri-arrow-down-s-line"></i>
-                    </button>
-                    <div class="whiteboard-cluster-panel" data-board-panel-content="canvas" hidden>
-                        <div class="whiteboard-tool-group" aria-label="画布工具">
-                            <button type="button" data-board-mode="select" title="选择 (V)"><i class="ri-cursor-line"></i><span>选择</span></button>
-                            <button type="button" data-board-mode="pan" title="平移 (空格)"><i class="ri-drag-move-2-line"></i><span>平移</span></button>
-                            <button id="whiteboardBackground" type="button" title="更换纸张样式"><i class="ri-layout-grid-line"></i><span>纸张</span></button>
-                            <button id="whiteboardFit" type="button" title="适应内容"><i class="ri-focus-3-line"></i><span>适应</span></button>
-                        </div>
-                    </div>
-                </div>
-                <div class="whiteboard-tool-group whiteboard-history-group">
-                    <button id="whiteboardUndo" type="button" title="撤销 (Ctrl+Z)" disabled><i class="ri-arrow-go-back-line"></i></button>
-                    <button id="whiteboardRedo" type="button" title="重做 (Ctrl+Y)" disabled><i class="ri-arrow-go-forward-line"></i></button>
-                </div>
-                <div class="whiteboard-cluster whiteboard-action-group" data-board-cluster="file">
-                    <button class="whiteboard-cluster-trigger" type="button" data-board-panel="file" aria-expanded="false">
-                        <i class="ri-save-3-line"></i><span>文件</span><i class="ri-arrow-down-s-line"></i>
-                    </button>
-                    <div class="whiteboard-cluster-panel whiteboard-cluster-panel--end" data-board-panel-content="file" hidden>
-                        <div class="whiteboard-tool-group">
-                            <button id="whiteboardSave" type="button" title="保存 (Ctrl+S)"><i class="ri-save-3-line"></i><span>保存</span></button>
-                            <button id="whiteboardSaveAs" type="button" title="另存为"><i class="ri-file-copy-line"></i><span>另存</span></button>
-                            <button id="whiteboardExport" type="button" title="导出 PNG"><i class="ri-download-2-line"></i><span>导出</span></button>
-                            <button id="whiteboardClear" class="whiteboard-danger-action" type="button" title="清空"><i class="ri-delete-bin-6-line"></i><span>清空</span></button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="whiteboard-background-menu" id="whiteboardBackgroundMenu" hidden>
-                <button data-board-background="blank">纯白</button><button data-board-background="dots">点阵</button>
-                <button data-board-background="grid">方格纸</button><button data-board-background="math">数学作业本</button>
-                <button data-board-background="ruled">横线纸</button><button data-board-background="english">英语四线三格</button>
-            </div>
-
-            <section class="whiteboard-stage" aria-label="无限白板画布">
-                <div class="whiteboard-readonly" id="whiteboardReadOnly" hidden>
-                    <i class="ri-lock-2-line"></i><span>此白板正在另一窗口编辑</span><button id="whiteboardTakeOver" type="button">接管编辑</button>
-                </div>
-                <div class="whiteboard-surface is-empty" id="whiteboardSurface">
-                    <canvas id="whiteboardCommittedCanvas" aria-hidden="true"></canvas>
-                    <canvas id="whiteboardCanvas" aria-label="可无限平移缩放的白板"></canvas>
-                    <div class="whiteboard-formula-layer" id="whiteboardFormulaLayer" aria-hidden="true"></div>
-                    <div class="whiteboard-empty-hint"><i class="ri-edit-line"></i><strong>从这里开始</strong><span>滚轮缩放 · 空格拖动画布</span></div>
-                </div>
-                <footer class="whiteboard-statusbar"><span id="whiteboardStatus"><i></i> 新白板</span><span id="whiteboardObjectCount">0 个对象</span><span id="whiteboardZoom">100%</span><span class="whiteboard-statusbar__hint">滚轮缩放 · 空格拖动画布</span></footer>
-            </section>
-
-            <div class="whiteboard-object-dialog" id="whiteboardObjectDialog" hidden>
-                <div class="whiteboard-object-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="whiteboardDialogTitle">
-                    <header><strong id="whiteboardDialogTitle">插入内容</strong><button id="whiteboardDialogClose" type="button">×</button></header>
-                    <div class="whiteboard-formula-symbols" id="whiteboardFormulaSymbols" hidden>
-                        <button data-formula="\\frac{}{}">分数</button><button data-formula="\\sqrt{}">根号</button><button data-formula="x^{}">上标</button>
-                        <button data-formula="\\sum_{}^{}">求和</button><button data-formula="\\int_{}^{}">积分</button><button data-formula="\\lim_{}">极限</button>
-                        <button data-formula="\\begin{bmatrix}a&b\\\\c&d\\end{bmatrix}">矩阵</button>
-                    </div>
-                    <textarea id="whiteboardObjectInput" rows="4" placeholder="输入文字"></textarea>
-                    <div class="whiteboard-formula-preview" id="whiteboardFormulaPreview" hidden></div>
-                    <footer><button id="whiteboardDialogCancel" type="button">取消</button><button id="whiteboardDialogConfirm" type="button">插入</button></footer>
-                </div>
-            </div>
-        </div>`;
-}
 
 function setStatus(message, tone = 'saved') {
-    const element = document.getElementById('whiteboardStatus');
-    if (!element) return;
-    element.className = `whiteboard-status whiteboard-status--${tone}`;
-    element.innerHTML = `<i></i> ${message}`;
+    const target = document.getElementById('whiteboardStatus'); if (!target) return;
+    target.className = 'whiteboard-status whiteboard-status--' + tone;
+    const dot = document.createElement('i'); dot.setAttribute('aria-hidden', 'true');
+    target.replaceChildren(dot, document.createTextNode(' ' + String(message)));
 }
 
 function readPrefs() {
     try {
         const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
-        if (typeof prefs.color === 'string') state.color = prefs.color;
-        if (Number.isFinite(prefs.width)) state.width = prefs.width;
-        if (typeof prefs.background === 'string') state.background = prefs.background;
-    } catch { /* preferences are optional */ }
+        if (/^#[0-9a-f]{6}$/i.test(prefs.color || '')) state.color = prefs.color;
+        if (Number.isFinite(prefs.width)) state.width = Math.max(1, Math.min(24, prefs.width));
+        if (['blank','dots','grid','math','ruled','english'].includes(prefs.background)) state.background = prefs.background;
+    } catch { /* Preferences are optional. */ }
 }
 
 function savePrefs() {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify({ color: state.color, width: state.width, background: state.background })); } catch { /* optional */ }
 }
 
-function documentValue() {
-    return { version: 2, infinite: true, background: state.background, camera: state.camera, elements: state.elements };
+function documentValue(view = state) {
+    return { version: 2, infinite: true, background: view.background, camera: { ...view.camera }, elements: structuredClone(view.elements) };
 }
 
 function applyDocument(document, fallbackName = state.boardName) {
-    const value = document?.document || document;
-    state.elements = Array.isArray(value?.elements) ? value.elements.slice(0, MAX_ELEMENTS) : [];
-    state.background = typeof value?.background === 'string' ? value.background : 'dots';
-    state.camera = value?.camera && Number.isFinite(value.camera.zoom)
-        ? { x: Number(value.camera.x) || 0, y: Number(value.camera.y) || 0, zoom: Math.min(8, Math.max(0.1, value.camera.zoom)) }
-        : { x: 0, y: 0, zoom: 1 };
-    state.boardName = document?.name || fallbackName;
-    state.undo = [];
-    state.redo = [];
-    state.totalPoints = countStrokePoints(state.elements);
-    boundsCache = new WeakMap();
-    state.dirty = Boolean(document?.savedAt);
-    state.draftRevision = 0;
-    state.savedDraftRevision = document?.savedAt ? 0 : -1;
-    redraw();
-    updateControls();
+    const value = normalizeDocumentV2(document?.document || document);
+    replaceElements(value.elements); state.background = value.background; state.camera = value.camera;
+    state.boardName = typeof document?.name === 'string' ? document.name.slice(0, 60) : fallbackName;
+    cancelCameraAnimation(); state.undo = []; state.redo = []; state.active = null; state.selectionId = null; state.dirty = false;
+    state.draftRevision = 0; state.savedDraftRevision = -1; state.renderVersion++;
+    redraw(); updateControls();
 }
 
 function importLegacyBoard() {
     try {
         const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
         if (!legacy?.strokes?.length) return;
-        state.elements = legacy.strokes.map(stroke => ({
-            ...stroke, type: 'stroke', id: stroke.id || newId(),
-            points: stroke.points.map(point => [(point[0] - 0.5) * 1000, (point[1] - 0.5) * 700, point[2]])
+        const elements = legacy.strokes.map(stroke => ({
+            ...stroke, type: 'stroke', id: String(stroke.id || newId()),
+            points: stroke.points.map(point => [(point[0] - .5) * 1000, (point[1] - .5) * 700, point[2] ?? .5])
         }));
-        state.totalPoints = countStrokePoints(state.elements);
-        boundsCache = new WeakMap();
-        state.background = legacy.gridEnabled === false ? 'blank' : 'dots';
-        state.dirty = true;
-        localStorage.removeItem(LEGACY_KEY);
-        setStatus('旧白板已转为恢复草稿', 'warning');
-        scheduleDraft();
-    } catch { /* malformed legacy board is ignored */ }
+        const document = normalizeDocumentV2({ version: 2, infinite: true, elements, background: legacy.gridEnabled === false ? 'blank' : 'dots', camera: { x: 0, y: 0, zoom: 1 } });
+        applyDocument(document); state.legacyPending = true; markDirty(); setStatus('旧白板已恢复，正在保存恢复草稿…', 'saving');
+        void saveDraftNow();
+    } catch (error) { setStatus('旧白板尚未导入：' + error.message + '；原数据已保留', 'warning'); }
 }
 
 function screenPoint(world) {
@@ -250,11 +125,11 @@ function worldTransform(context) {
     context.scale(state.camera.zoom, state.camera.zoom);
 }
 
-function drawBackground(context, width, height, camera = state.camera) {
+function drawBackground(context, width, height, camera = state.camera, background = state.background) {
     context.save();
     context.fillStyle = '#fffdf9';
     context.fillRect(0, 0, width, height);
-    if (state.background === 'blank') return context.restore();
+    if (background === 'blank') return context.restore();
     const zoom = camera.zoom;
     const originX = width / 2 - camera.x * zoom;
     const originY = height / 2 - camera.y * zoom;
@@ -266,29 +141,32 @@ function drawBackground(context, width, height, camera = state.camera) {
         for (let y = ((originY + offset * zoom) % step + step) % step; y < height; y += step) { context.moveTo(0, y); context.lineTo(width, y); }
         context.stroke();
     };
-    if (state.background === 'dots') {
+    if (background === 'dots') {
         const step = 24 * zoom;
         if (step >= 6) {
             context.fillStyle = 'rgba(115,121,137,.2)';
             for (let x = ((originX % step) + step) % step; x < width; x += step) for (let y = ((originY % step) + step) % step; y < height; y += step) context.fillRect(x, y, 1.2, 1.2);
         }
-    } else if (state.background === 'grid') line(32, 0, 'rgba(90,120,140,.15)');
-    else if (state.background === 'math') { line(24, 0, 'rgba(91,137,151,.14)'); line(120, 0, 'rgba(72,111,125,.22)', 1.2); }
-    else if (state.background === 'ruled') {
-        const step = 34 * zoom; context.strokeStyle = 'rgba(91,137,151,.18)'; context.beginPath();
+    } else if (background === 'grid') line(32, 0, 'rgba(90,120,140,.15)');
+    else if (background === 'math') { line(24, 0, 'rgba(91,137,151,.14)'); line(120, 0, 'rgba(72,111,125,.22)', 1.2); }
+    else if (background === 'ruled') {
+        const step = 34 * zoom; if(step<5)return context.restore(); context.strokeStyle = 'rgba(91,137,151,.18)'; context.beginPath();
         for (let y = ((originY % step) + step) % step; y < height; y += step) { context.moveTo(0, y); context.lineTo(width, y); } context.stroke();
-    } else if (state.background === 'english') {
-        const group = 72 * zoom; context.strokeStyle = 'rgba(91,137,151,.2)'; context.beginPath();
-        for (let base = ((originY % group) + group) % group; base < height; base += group) for (let index = 0; index < 4; index += 1) { const y = base + index * 12 * zoom; context.moveTo(0, y); context.lineTo(width, y); }
-        context.stroke();
+    } else if (background === 'english') {
+        const group = 72 * zoom; if(group<6)return context.restore();
+        const opacity=Math.min(1,(group-6)/12),detail=Math.max(0,Math.min(1,(12*zoom-4)/4));
+        // Fade secondary guides at distant zooms so the paper stays quiet while the camera moves.
+        for(let index=0;index<4;index++){
+            const alpha=.2*opacity*(index===3?1:detail);if(alpha<=0)continue;
+            context.strokeStyle='rgba(91,137,151,'+alpha+')';context.beginPath();
+            for(let base=((originY%group)+group)%group-group;base<height;base+=group){const y=base+index*12*zoom;context.moveTo(0,y);context.lineTo(width,y);}
+            context.stroke();
+        }
     }
     context.restore();
 }
 
-function strokeStyle(context, element) {
-    context.lineCap = 'round'; context.lineJoin = 'round'; context.strokeStyle = element.color;
-    context.fillStyle = element.color; context.globalAlpha = element.tool === 'highlighter' ? 0.28 : 1;
-}
+
 
 function drawArrowHead(context, fromX, fromY, toX, toY, size) {
     const angle = Math.atan2(toY - fromY, toX - fromX);
@@ -298,63 +176,52 @@ function drawArrowHead(context, fromX, fromY, toX, toY, size) {
     context.lineTo(toX - Math.cos(angle + Math.PI / 6) * size, toY - Math.sin(angle + Math.PI / 6) * size); context.stroke();
 }
 
-function drawElement(context, element, selected = false) {
-    context.save();
-    if (element.type === 'stroke') {
-        strokeStyle(context, element); context.lineWidth = element.width;
-        if (element.points.length === 1) { context.beginPath(); context.arc(element.points[0][0], element.points[0][1], element.width / 2, 0, Math.PI * 2); context.fill(); }
-        else {
-            context.beginPath(); context.moveTo(element.points[0][0], element.points[0][1]);
-            for (let index = 1; index < element.points.length - 1; index += 1) {
-                const point = element.points[index]; const next = element.points[index + 1];
-                context.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);
-            }
-            const last = element.points.at(-1); context.lineTo(last[0], last[1]); context.stroke();
+
+function wrapNoteText(context,text,width) {
+    const lines=[];
+    for(const paragraph of String(text).split('\n')){
+        let line='';
+        for(const character of paragraph){
+            if(line&&context.measureText(line+character).width>width-28){lines.push(line);line='';}
+            line+=character;
         }
-    } else if (['line', 'arrow', 'rect', 'ellipse'].includes(element.type)) {
-        context.strokeStyle = element.color; context.lineWidth = element.width; context.globalAlpha = 1;
-        if (element.type === 'line' || element.type === 'arrow') { context.beginPath(); context.moveTo(element.x1, element.y1); context.lineTo(element.x2, element.y2); context.stroke(); if (element.type === 'arrow') drawArrowHead(context, element.x1, element.y1, element.x2, element.y2, 14); }
-        if (element.type === 'rect') context.strokeRect(element.x1, element.y1, element.x2 - element.x1, element.y2 - element.y1);
-        if (element.type === 'ellipse') { context.beginPath(); context.ellipse((element.x1 + element.x2) / 2, (element.y1 + element.y2) / 2, Math.abs(element.x2 - element.x1) / 2, Math.abs(element.y2 - element.y1) / 2, 0, 0, Math.PI * 2); context.stroke(); }
+        lines.push(line);
+    }
+    return lines;
+}
+
+function noteHeight(text,width) {
+    const context=state.context||document.createElement('canvas').getContext('2d');
+    context.save();context.font='20px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const height=Math.max(150,wrapNoteText(context,text,width).length*27+28);context.restore();return height;
+}
+
+function drawElement(context, element, selected = false, formulaDrawings = null) {
+    context.save();
+    if (element.type === 'stroke') drawStroke(context, element);
+    else if (['line','arrow','rect','ellipse'].includes(element.type)) {
+        context.strokeStyle = element.color; context.lineWidth = element.width; context.lineCap = 'round'; context.lineJoin = 'round';
+        if (['line','arrow'].includes(element.type)) { context.beginPath(); context.moveTo(element.x1, element.y1); context.lineTo(element.x2, element.y2); context.stroke(); if (element.type === 'arrow') drawArrowHead(context, element.x1, element.y1, element.x2, element.y2, 14); }
+        else if (element.type === 'rect') { context.beginPath(); context.roundRect(element.x1, element.y1, element.x2 - element.x1, element.y2 - element.y1, 0); context.stroke(); }
+        else { context.beginPath(); context.ellipse((element.x1 + element.x2) / 2, (element.y1 + element.y2) / 2, Math.abs(element.x2 - element.x1) / 2, Math.abs(element.y2 - element.y1) / 2, 0, 0, Math.PI * 2); context.stroke(); }
     } else if (element.type === 'text') {
-        context.fillStyle = element.color; context.font = `${element.size || 24}px "Segoe UI", sans-serif`; context.textBaseline = 'top';
-        String(element.text).split('\n').forEach((line, index) => context.fillText(line, element.x, element.y + index * (element.size || 24) * 1.25));
+        context.fillStyle = element.color; context.font = (element.size || 24) + 'px "Segoe UI", "Microsoft YaHei", sans-serif'; context.textBaseline = 'top';
+        String(element.text).split('\n').forEach((line,index) => context.fillText(line, element.x, element.y + index * (element.size || 24) * 1.25));
     } else if (element.type === 'note') {
-        context.fillStyle = 'rgba(255,231,153,.94)'; context.strokeStyle = 'rgba(158,123,42,.2)'; context.lineWidth = 1;
-        context.fillRect(element.x, element.y, element.width || 220, element.height || 150); context.strokeRect(element.x, element.y, element.width || 220, element.height || 150);
-        context.fillStyle = '#54472f'; context.font = '20px "Segoe UI", sans-serif'; context.textBaseline = 'top'; context.fillText(element.text, element.x + 14, element.y + 14, (element.width || 220) - 28);
-    } else if (element.type === 'formula') {
-        context.fillStyle = element.color; context.font = '22px serif'; context.textBaseline = 'top'; context.fillText(element.latex, element.x, element.y);
-    }
-    if (selected) {
-        const box = elementBounds(element); context.globalAlpha = 1; context.strokeStyle = '#d96f3d'; context.lineWidth = 1 / state.camera.zoom; context.setLineDash([5 / state.camera.zoom, 4 / state.camera.zoom]);
-        context.strokeRect(box.x - 5, box.y - 5, box.width + 10, box.height + 10);
-    }
+        const width = element.width || 220, height = element.height || 150;
+        context.fillStyle = '#fff0b4'; context.strokeStyle = '#dbc984'; context.lineWidth = 1;
+        context.beginPath(); context.roundRect(element.x, element.y, width, height, 10); context.fill(); context.stroke();
+        context.fillStyle = element.color; context.font = '20px "Segoe UI", "Microsoft YaHei", sans-serif'; context.textBaseline = 'top';
+        const lines = wrapNoteText(context,element.text,width);
+        context.save(); context.beginPath(); context.rect(element.x + 10, element.y + 10, width - 20, height - 20); context.clip();
+        lines.forEach((line,index) => context.fillText(line, element.x + 14, element.y + 14 + index * 27)); context.restore();
+    } else if (element.type === 'formula') formulaDrawings?.get(element.id)?.draw(context, element.x, element.y);
     context.restore();
 }
 
 function elementBounds(element) {
-    const cached = boundsCache.get(element);
-    if (cached) return cached;
-    let bounds;
-    if (element.type === 'stroke') {
-        let left = Infinity; let top = Infinity; let right = -Infinity; let bottom = -Infinity;
-        for (const point of element.points) {
-            left = Math.min(left, point[0]); top = Math.min(top, point[1]);
-            right = Math.max(right, point[0]); bottom = Math.max(bottom, point[1]);
-        }
-        bounds = { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
-    } else if (['line', 'arrow', 'rect', 'ellipse'].includes(element.type)) {
-        bounds = { x: Math.min(element.x1, element.x2), y: Math.min(element.y1, element.y2), width: Math.abs(element.x2 - element.x1), height: Math.abs(element.y2 - element.y1) };
-    } else if (element.type === 'note') {
-        bounds = { x: element.x, y: element.y, width: element.width || 220, height: element.height || 150 };
-    } else if (element.type === 'formula') {
-        bounds = { x: element.x, y: element.y, width: element.width || 220, height: element.height || 60 };
-    } else {
-        bounds = { x: element.x, y: element.y, width: Math.max(80, String(element.text || '').length * (element.size || 24) * .6), height: (element.size || 24) * 1.4 };
-    }
-    boundsCache.set(element, bounds);
-    return bounds;
+    const cached = boundsCache.get(element); if (cached) return cached;
+    const box = getElementBounds(element); boundsCache.set(element, box); return box;
 }
 
 function visible(element) {
@@ -364,18 +231,24 @@ function visible(element) {
 
 function clearOverlay() {
     if (!state.context) return;
-    state.context.setTransform(state.pixelRatio, 0, 0, state.pixelRatio, 0, 0);
-    state.context.clearRect(0, 0, state.logicalWidth, state.logicalHeight);
+    state.context.setTransform(state.pixelRatio, 0, 0, state.pixelRatio, 0, 0); state.context.clearRect(0, 0, state.logicalWidth, state.logicalHeight);
+    if (state.tailPath) state.tailPath.setAttribute('d', '');
+    if (state.inkLayer) state.inkLayer.style.opacity = '1';
 }
 
 function redrawOverlay() {
-    if (!state.context) return;
-    clearOverlay();
-    const selected = state.active?.selectedId ? state.elements.find(element => element.id === state.active.selectedId) : null;
+    if (!state.context) return; clearOverlay();
+    const selected = state.elements.find(element => element.id === state.selectionId);
     state.context.save(); worldTransform(state.context);
-    if (selected) drawElement(state.context, selected, true);
-    if (state.active?.preview) drawElement(state.context, state.active.preview);
+    if (selected) {
+        const box = elementBounds(selected), padding = 5 / state.camera.zoom;
+        state.context.strokeStyle = '#007aff'; state.context.lineWidth = 1.5 / state.camera.zoom;
+        state.context.setLineDash([]); state.context.beginPath(); state.context.roundRect(box.x-padding,box.y-padding,box.width+padding*2,box.height+padding*2,4/state.camera.zoom); state.context.stroke();
+    }
+    if (state.active?.preview && state.active.type !== 'stroke') drawElement(state.context, state.active.preview);
     state.context.restore();
+    if(state.active?.type==='stroke'){state.active.nextIndex=1;state.active.initialized=false;paintActiveStroke();}
+    updateSelectionControls();
 }
 
 function redraw() {
@@ -393,20 +266,20 @@ function redraw() {
 }
 
 function paintActiveStroke() {
-    const stroke = state.active?.type === 'stroke' ? state.active.preview : null;
-    if (!stroke || !state.context || !stroke.points.length) return;
-    const start = Math.max(0, state.active.renderedPointIndex || 0);
-    const points = stroke.points;
-    state.context.save(); worldTransform(state.context); strokeStyle(state.context, stroke); state.context.lineWidth = stroke.width;
-    if (points.length === 1 && start === 0) {
-        state.context.beginPath(); state.context.arc(points[0][0], points[0][1], stroke.width / 2, 0, Math.PI * 2); state.context.fill();
-    } else if (start < points.length - 1) {
-        state.context.beginPath(); state.context.moveTo(points[start][0], points[start][1]);
-        for (let index = start + 1; index < points.length; index += 1) state.context.lineTo(points[index][0], points[index][1]);
-        state.context.stroke();
+    const active = state.active, stroke = active?.type === 'stroke' ? active.preview : null;
+    if (!stroke || !state.context) return;
+    if (state.inkLayer) state.inkLayer.style.opacity = stroke.tool === 'highlighter' ? '.28' : '1';
+    state.context.save(); worldTransform(state.context);
+    const result = paintStrokeIncrement(state.context, stroke, active.nextIndex || 1, !!active.initialized);
+    state.context.restore(); active.nextIndex = result.nextIndex; active.initialized = result.initialized;
+    if (state.tail && state.tailPath) {
+        state.tail.setAttribute('viewBox', '0 0 ' + state.logicalWidth + ' ' + state.logicalHeight);
+        if (result.tail) {
+            const from = screenPoint({x:result.tail.from[0],y:result.tail.from[1]}), to = screenPoint({x:result.tail.to[0],y:result.tail.to[1]});
+            state.tailPath.setAttribute('d', 'M ' + from.x + ' ' + from.y + ' L ' + to.x + ' ' + to.y);
+            state.tailPath.setAttribute('stroke', stroke.color); state.tailPath.setAttribute('stroke-width', String(stroke.width * state.camera.zoom));
+        } else state.tailPath.setAttribute('d','');
     }
-    state.context.restore();
-    state.active.renderedPointIndex = Math.max(0, points.length - 1);
 }
 
 function schedulePointerRender(mode) {
@@ -428,40 +301,41 @@ function cancelPendingDraw() {
 }
 
 async function ensureFormulaRuntime() {
-    if (state.formulaRuntime) return state.formulaRuntime;
-    if (!state.formulaLoading) state.formulaLoading = Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([module]) => (state.formulaRuntime = module.default || module));
-    return state.formulaLoading;
+    const view = state;
+    formulaModulePromise ||= Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([module]) => module.default || module).catch(error => { formulaModulePromise = null; throw error; });
+    const runtime = await formulaModulePromise; if (live(view)) view.formulaRuntime = runtime; return runtime;
 }
 
 function renderFormulaLayer() {
-    if (!state.formulaLayer) return;
-    const formulas = state.elements.filter(element => element.type === 'formula' && visible(element));
-    const activeIds = new Set(formulas.map(formula => formula.id));
-    state.formulaLayer.querySelectorAll('[data-id]').forEach(node => { if (!activeIds.has(node.dataset.id)) node.remove(); });
+    const view = state, layer = view.formulaLayer; if (!layer) return;
+    const version = ++view.renderVersion, formulas = view.elements.filter(element => element.type === 'formula' && visible(element));
+    const ids = new Set(formulas.map(element => element.id)); [...layer.children].forEach(node => { if (!ids.has(node.dataset.id)) node.remove(); });
     if (!formulas.length) return;
     ensureFormulaRuntime().then(runtime => {
-        if (!state.formulaLayer) return;
-        formulas.forEach(formula => {
-            const point = screenPoint(formula);
-            let node = state.formulaLayer.querySelector(`[data-id="${formula.id}"]`);
-            if (!node) { node = document.createElement('div'); node.className = 'whiteboard-formula-object'; node.dataset.id = formula.id; node.dataset.latex = formula.latex; try { runtime.render(formula.latex, node, { throwOnError: false, displayMode: false, strict: 'ignore' }); } catch { node.textContent = formula.latex; } state.formulaLayer.append(node); }
-            node.style.left = `${point.x}px`; node.style.top = `${point.y}px`; node.style.transform = `scale(${state.camera.zoom})`; node.style.color = formula.color;
-        });
-    });
+        if (!live(view) || view.renderVersion !== version || view.formulaLayer !== layer) return;
+        const nodes = new Map([...layer.children].map(node => [node.dataset.id,node]));
+        for (const formula of formulas) {
+            let node = nodes.get(formula.id);
+            if (!node) { node = document.createElement('div'); node.className = 'whiteboard-formula-object'; node.dataset.id = formula.id; layer.append(node); }
+            if (node.dataset.latex !== formula.latex) { renderFormulaMarkup(runtime,formula.latex,node,{displayMode:false,output:'html'}); node.dataset.latex = formula.latex; }
+            const point = screenPoint(formula); node.style.left = point.x + 'px'; node.style.top = point.y + 'px'; node.style.transform = 'scale(' + view.camera.zoom + ')'; node.style.color = formula.color;
+            const box = node.getBoundingClientRect();
+            if (box.width && box.height) boundsCache.set(formula,{x:formula.x,y:formula.y,width:box.width/view.camera.zoom,height:box.height/view.camera.zoom});
+        }
+    }).catch(error => { if (live(view) && view.renderVersion === version) setStatus('公式加载失败，可重新打开公式工具重试：' + error.message,'warning'); });
 }
 
 function resizeCanvas() {
-    state.resizeFrame = null;
-    if (!state.canvas || !state.committedCanvas || !state.surface) return;
-    const rect = state.surface.getBoundingClientRect(); const width = Math.max(1, Math.floor(rect.width)); const height = Math.max(1, Math.floor(rect.height));
-    const ratio = Math.min(globalThis.devicePixelRatio || 1, 1.5); const pixelWidth = Math.floor(width * ratio); const pixelHeight = Math.floor(height * ratio);
+    state.resizeFrame = null; if (!state.canvas || !state.committedCanvas || !state.surface) return;
+    const rect = state.surface.getBoundingClientRect(), width = Math.max(1,Math.floor(rect.width)), height = Math.max(1,Math.floor(rect.height));
+    const ratio = Math.min(globalThis.devicePixelRatio || 1,2,Math.sqrt(6000000/(width*height)));
+    const pixelWidth = Math.floor(width*ratio), pixelHeight = Math.floor(height*ratio);
     state.logicalWidth = width; state.logicalHeight = height; state.pixelRatio = ratio;
     if (state.canvas.width !== pixelWidth || state.canvas.height !== pixelHeight) {
-        state.canvas.width = pixelWidth; state.canvas.height = pixelHeight;
-        state.committedCanvas.width = pixelWidth; state.committedCanvas.height = pixelHeight;
-        state.context = state.canvas.getContext('2d', { alpha: true, desynchronized: true });
-        state.committedContext = state.committedCanvas.getContext('2d', { alpha: false, desynchronized: true });
+        state.canvas.width=pixelWidth;state.canvas.height=pixelHeight;state.committedCanvas.width=pixelWidth;state.committedCanvas.height=pixelHeight;
     }
+    state.context ||= state.canvas.getContext('2d',{alpha:true,desynchronized:true});
+    state.committedContext ||= state.committedCanvas.getContext('2d',{alpha:false,desynchronized:true});
     redraw();
 }
 
@@ -473,55 +347,109 @@ function countStrokePoints(elements = state.elements) {
     return total;
 }
 
-function pushUndo(snapshot = cloneElements()) { state.undo.push(snapshot); if (state.undo.length > MAX_HISTORY) state.undo.shift(); state.redo = []; }
+function pushUndo(snapshot = cloneElements()) {
+    state.undo.push(snapshot);
+    let weight = state.undo.reduce((total, entry) => total + historyWeight(entry), 0);
+    while (state.undo.length > MAX_HISTORY || (weight > 500000 && state.undo.length > 1)) weight -= historyWeight(state.undo.shift());
+    state.redo = [];
+}
 
-function markDirty() { state.dirty = true; state.draftRevision++; setStatus('有未保存修改', 'warning'); scheduleDraft(); updateControls(); }
+function markDirty() {
+    state.dirty = true; state.draftRevision++; setStatus('有未保存修改', 'warning'); scheduleDraft(); updateControls();
+}
 
 function scheduleDraft() {
     if (state.draftTimer !== null) return;
     state.draftTimer = setTimeout(() => { state.draftTimer = null; saveDraftNow(); }, DRAFT_DELAY_MS);
 }
 
-async function saveDraftNow(strict = false) {
-    if (!state.dirty || !state.boardId || state.readOnly) return;
-    if (state.savedDraftRevision === state.draftRevision) return;
-    const boardId = state.boardId;
-    const revision = state.draftRevision;
-    try {
-        const document = documentValue();
-        if (globalThis.window?.__TAURI__?.core?.invoke) await invoke('save_whiteboard_draft', { request: { id: state.boardId, name: state.boardName, document } });
-        else localStorage.setItem(`dtkit_whiteboard_draft_${state.boardId}`, JSON.stringify({ name: state.boardName, document, savedAt: Date.now() }));
-        if (state.boardId === boardId) state.savedDraftRevision = revision;
-        setStatus('恢复草稿已保存');
-    } catch (error) { setStatus(`草稿保存失败：${error}`, 'warning'); if (strict) throw error; }
+async function saveDraftNow(strict = false, force = false) {
+    const view = state;
+    if(view.readOnly)return persistRecovery(strict);
+    if (!view.dirty || !view.boardId || (!force && view.savedDraftRevision === view.draftRevision)) return;
+    const id = view.boardId, generation = view.boardGeneration, revision = view.draftRevision;
+    if (view.pendingDraft?.id === id && view.pendingDraft.revision === revision) {
+        if (strict) return view.pendingDraft.promise;
+        return view.pendingDraft.promise.catch(() => {});
+    }
+    const request = { id, name: view.boardName, document: documentValue() };
+    const job = { id, revision, promise: null };
+    const promise = view.storeTail.catch(() => {}).then(async () => {
+        await writeDraftRequest(request);
+        if (view.boardGeneration === generation && view.boardId === id) {
+            view.savedDraftRevision = revision;
+            if (view.legacyPending) { localStorage.removeItem(LEGACY_KEY); view.legacyPending = false; }
+        }
+        if (sameBoard(view, generation, id) && view.draftRevision === revision) setStatus('恢复草稿已保存');
+    });
+    job.promise = promise; view.pendingDraft = job; view.storeTail = promise.catch(() => {});
+    promise.finally(() => { if (view.pendingDraft === job) view.pendingDraft = null; }).catch(() => {});
+    if (strict) return promise;
+    return promise.catch(error => { if (sameBoard(view, generation, id)) setStatus('草稿保存失败：' + (error?.message || error), 'warning'); });
 }
 
-function thumbnailDataUrl() {
-    const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 180; const context = canvas.getContext('2d');
-    const bounds = contentBounds(); const scale = bounds ? Math.min(2, Math.min(290 / Math.max(1, bounds.width), 150 / Math.max(1, bounds.height))) : 1;
-    const camera = bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2, zoom: scale } : state.camera;
-    const oldCamera = state.camera; state.camera = camera; drawBackground(context, 320, 180, camera); context.save(); context.translate(160 - camera.x * camera.zoom, 90 - camera.y * camera.zoom); context.scale(camera.zoom, camera.zoom); state.elements.forEach(element => drawElement(context, element)); context.restore(); state.camera = oldCamera;
+async function thumbnailDataUrl(snapshot,view=state) {
+    const canvas=await renderBoardImage(snapshot,{thumbnail:true,signal:view.abortController.signal,drawElement,drawBackground,runtime:view.formulaRuntime});
     return canvas.toDataURL('image/png');
 }
 
-async function saveBoard(asNew = false) {
-    if (state.readOnly) return setStatus('当前窗口为只读；接管后才能保存', 'warning');
-    const input = document.getElementById('whiteboardName'); state.boardName = input?.value.trim() || '未命名白板';
-    setStatus('正在保存…', 'saving');
-    try {
-        const previousId = state.boardId;
-        const request = { id: asNew ? null : state.boardId, name: state.boardName, document: documentValue(), thumbnailDataUrl: thumbnailDataUrl() };
-        const meta = invoke ? await invoke('save_whiteboard', { request }) : { id: request.id || state.boardId, name: state.boardName, updatedAt: Date.now() };
-        if (asNew && invoke) {
-            await invoke('discard_whiteboard_draft', { id: previousId });
-            await releaseEdit(previousId);
+async function saveBoard(asNew=false) {
+    if(!editable()||state.saveBusy)return;
+    finishPointer();const view=state,generation=view.boardGeneration,previousId=view.boardId;
+    view.boardName=view.root.querySelector('#whiteboardName').value.trim()||'未命名白板';
+    const revision=view.draftRevision;let persistedRevision=-1,activeId=previousId;
+    const request={id:asNew?null:previousId,name:view.boardName,document:documentValue(),thumbnailDataUrl:null};
+    view.saveBusy=true;updateControls();setStatus('正在保存…','saving');
+    try{
+        request.thumbnailDataUrl=await thumbnailDataUrl(request.document,view);
+        if(!sameBoard(view,generation,previousId))return;
+        view.savedDraftRevision=-1;
+        const operation=view.storeTail.catch(()=>{}).then(async()=>{
+            // A formal write deletes its draft. Invalidate confirmations again after all preceding draft writes.
+            view.savedDraftRevision=-1;
+            let meta;
+            if(hasNativeStore())meta=await invoke('save_whiteboard',{request});
+            else {
+            const id=request.id||newId(),now=Date.now(),list=JSON.parse(localStorage.getItem(BROWSER_INDEX)||'[]');
+            meta={id,name:request.name,createdAt:list.find(item=>item.id===id)?.createdAt||now,updatedAt:now,hasDraft:false};
+            localStorage.setItem(browserBoardKey(id),JSON.stringify({meta,document:request.document,thumbnail:request.thumbnailDataUrl}));
+            localStorage.setItem(BROWSER_INDEX,JSON.stringify([meta,...list.filter(item=>item.id!==id)]));localStorage.removeItem('dtkit_whiteboard_draft_'+id);
+            }
+            if(view.boardGeneration===generation&&view.boardId===previousId&&view.draftRevision!==revision&&!view.readOnly){
+                const latestRevision=view.draftRevision;
+                try{await writeDraftRequest({id:meta.id,name:view.boardName,document:documentValue(view)});}
+                catch(error){if(asNew)await releaseEdit(meta.id);throw error;}
+                persistedRevision=latestRevision;
+            }
+            return meta;
+        });
+        view.storeTail=operation.catch(()=>{});const meta=await operation;
+        if(!sameBoard(view,generation,previousId)){if(meta?.id&&meta.id!==previousId)await releaseEdit(meta.id);return;}
+        if(!meta?.id)throw new Error('保存未返回有效的白板信息');
+        const canDiscardOld=!view.readOnly;
+        // Adopt a successful copy before cleanup yields, so new edits and teardown drafts use its identity.
+        view.boardId=meta.id;activeId=meta.id;view.isFormal=true;
+        if(asNew){view.recovery=null;setReadOnly(false);}
+        if(asNew){
+            // A draft queued during the save belongs to the old board. Finish it before releasing that lease.
+            await view.storeTail;
+            if(hasNativeStore()){
+                // A failed cleanup must not orphan a successfully saved copy or discard another owner's draft.
+                if(canDiscardOld)try{await invoke('discard_whiteboard_draft',{id:previousId});}catch{/* Keep the old recovery draft. */}
+                await releaseEdit(previousId);
+            }
+            else localStorage.removeItem('dtkit_whiteboard_draft_'+previousId);
         }
-        state.boardId = meta.id; state.boardName = meta.name; state.isFormal = true; state.dirty = false;
-        setReadOnly(false);
-        if (input) input.value = state.boardName;
-        clearTimeout(state.draftTimer); state.draftTimer = null; setStatus('正式白板已保存');
-        await loadHistory(); updateControls();
-    } catch (error) { setStatus(`保存失败：${error}`, 'warning'); }
+        if(!sameBoard(view,generation,activeId))return;
+        if(view.boardName===request.name)view.boardName=meta.name;
+        view.isFormal=true;view.dirty=view.draftRevision!==revision;view.savedDraftRevision=persistedRevision>=0?persistedRevision:view.dirty?-1:revision;
+        if(view.legacyPending){localStorage.removeItem(LEGACY_KEY);view.legacyPending=false;}
+        clearTimeout(view.draftTimer);view.draftTimer=null;
+        setStatus(view.dirty?'保存完成，后续修改仍待保存':'正式白板已保存',view.dirty?'warning':'saved');
+        if(view.dirty&&view.savedDraftRevision!==view.draftRevision){scheduleDraft();void saveDraftNow();}
+        await loadHistory();
+    }catch(error){if(sameBoard(view,generation,activeId))setStatus('保存失败：'+(error?.message||error),'warning');}
+    finally{view.saveBusy=false;if(live(view))updateControls();}
 }
 
 function contentBounds() {
@@ -531,374 +459,608 @@ function contentBounds() {
 }
 
 function fitContent() {
-    const box = contentBounds(); if (!box) { state.camera = { x: 0, y: 0, zoom: 1 }; }
-    else state.camera = { x: box.x + box.width / 2, y: box.y + box.height / 2, zoom: Math.min(2, Math.max(.1, Math.min((state.logicalWidth - 100) / Math.max(1, box.width), (state.logicalHeight - 100) / Math.max(1, box.height)))) };
-    redraw(); updateControls();
+    animateCamera(fitCamera(contentBounds(),state.logicalWidth,state.logicalHeight,90));
 }
 
 function hitElement(point) {
-    const padding = 10 / state.camera.zoom;
-    return [...state.elements].reverse().find(element => { const box = elementBounds(element); return point.x >= box.x - padding && point.x <= box.x + box.width + padding && point.y >= box.y - padding && point.y <= box.y + box.height + padding; });
+    const padding = (state.mode === 'eraser' ? Math.max(10,state.width*2) : 7) / state.camera.zoom;
+    return [...state.elements].reverse().find(element => {
+        const box = elementBounds(element);
+        return point.x >= box.x-padding && point.x <= box.x+box.width+padding && point.y >= box.y-padding && point.y <= box.y+box.height+padding && hitTestElement(element.type==='formula'?{...element,width:box.width,height:box.height}:element,point,padding,{fill:state.mode==='select'});
+    });
 }
 
-function moveElement(element, dx, dy) {
-    if (element.type === 'stroke') element.points.forEach(point => { point[0] += dx; point[1] += dy; });
-    else if (['line', 'arrow', 'rect', 'ellipse'].includes(element.type)) { element.x1 += dx; element.x2 += dx; element.y1 += dy; element.y2 += dy; }
-    else { element.x += dx; element.y += dy; }
-    boundsCache.delete(element);
-}
+function moveElement(element,dx,dy) { translateElement(element,dx,dy); boundsCache.delete(element); }
 
 function beginPointer(event) {
-    if (state.pointerId !== null) return;
     if (event.button !== 0 && event.button !== 1) return;
-    event.preventDefault(); closeHistory(); closeToolPanels(); state.pointerId = event.pointerId; state.canvas.setPointerCapture?.(event.pointerId);
-    const point = worldPoint(event); const pan = event.button === 1 || state.spacePressed || state.mode === 'pan';
-    if (pan) { state.active = { type: 'pan', clientX: event.clientX, clientY: event.clientY, camera: { ...state.camera } }; return; }
-    if (state.readOnly) { state.pointerId = null; return; }
-    if (['pen', 'highlighter'].includes(state.mode)) {
-        pushUndo(); clearOverlay();
-        state.active = { type: 'stroke', renderedPointIndex: 0, preview: { id: newId(), type: 'stroke', tool: state.mode, color: state.color, width: state.width / state.camera.zoom, points: [[point.x, point.y, point.pressure]] } };
-        schedulePointerRender('stroke'); return;
+    if (event.pointerType === 'touch' && state.active?.pointerType === 'pen') return;
+    if(event.pointerType==='touch')state.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    if (event.pointerType === 'touch' && state.pointers.size === 2) {
+        cancelPointer(false); state.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+        const points=[...state.pointers.values()]; if(points.length<2)return;
+        const rect=state.canvas.getBoundingClientRect(), center={x:(points[0].x+points[1].x)/2-rect.left,y:(points[0].y+points[1].y)/2-rect.top};
+        state.pinch={distance:Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y),camera:{...state.camera},center};
+        for(const id of state.pointers.keys())try{state.canvas.setPointerCapture(id);}catch{}
+        event.preventDefault(); return;
     }
-    if (['line', 'arrow', 'rect', 'ellipse'].includes(state.mode)) {
-        pushUndo(); clearOverlay();
-        state.active = { type: 'shape', start: point, preview: { id: newId(), type: state.mode, color: state.color, width: state.width / state.camera.zoom, x1: point.x, y1: point.y, x2: point.x, y2: point.y } };
-        schedulePointerRender('overlay'); return;
+    if (state.pointerId !== null || state.pinch) return;
+    event.preventDefault(); closeHistory(); closeToolPanels(); closeHelp(); cancelCameraAnimation();
+    const point=worldPoint(event), pan=event.button===1||state.spacePressed||state.mode==='pan';
+    if (!pan && state.mode!=='select' && !editable()) return;
+    state.pointerId=event.pointerId; try {state.canvas.setPointerCapture(event.pointerId);} catch { /* Synthetic or released pointer. */ }
+    state.canvas.focus({preventScroll:true}); state.root.classList.add('is-interacting');
+    if(pan){state.active={type:'pan',clientX:event.clientX,clientY:event.clientY,camera:{...state.camera}};updateCursor(event);return;}
+    if(state.mode==='select'){
+        const hit=hitElement(point);state.selectionId=hit?.id||null;state.active={type:'select',selectedId:hit?.id||null,last:point,snapshot:null,moved:false};redrawOverlay();updateControls();return;
     }
-    if (state.mode === 'eraser') { const hit = hitElement(point); if (hit) { pushUndo(); state.elements = state.elements.filter(item => item.id !== hit.id); markDirty(); redraw(); } return; }
-    if (state.mode === 'select') { const hit = hitElement(point); state.active = { type: 'select', selectedId: hit?.id || null, last: point, snapshot: hit ? cloneElements() : null }; redraw(); return; }
-    if (['text', 'note', 'formula'].includes(state.mode)) { state.pointerId = null; openObjectDialog(state.mode, point); }
+    state.selectionId=null;
+    if(['pen','highlighter','line','arrow','rect','ellipse','text','note','formula'].includes(state.mode) && state.elements.length>=MAX_ELEMENTS){setStatus('已达到2000个对象，请新建白板后继续','warning');finishPointer();return;}
+    if(['pen','highlighter'].includes(state.mode)){
+        if(state.totalPoints>=MAX_POINTS){setStatus('笔迹点数已达上限，请新建白板','warning');finishPointer();return;}
+        clearOverlay();state.active={type:'stroke',pointerType:event.pointerType,nextIndex:1,initialized:false,preview:{id:newId(),type:'stroke',tool:state.mode,color:state.color,width:state.width/state.camera.zoom,points:[[point.x,point.y,point.pressure]]}};schedulePointerRender('stroke');
+    }else if(['line','arrow','rect','ellipse'].includes(state.mode)){
+        clearOverlay();state.active={type:'shape',start:point,preview:{id:newId(),type:state.mode,color:state.color,width:state.width/state.camera.zoom,x1:point.x,y1:point.y,x2:point.x,y2:point.y}};schedulePointerRender('overlay');
+    }else if(state.mode==='eraser'){state.active={type:'erase',snapshot:null,last:point,changed:false};eraseAt(point);}
+    else if(['text','note','formula'].includes(state.mode)){state.pointerId=null;state.active=null;state.root.classList.remove('is-interacting');try{state.canvas.releasePointerCapture(event.pointerId);}catch{}void openObjectDialog(state.mode,point);}
+    updateCursor(event);
 }
 
 function movePointer(event) {
-    if (event.pointerId !== state.pointerId || !state.active) return;
-    event.preventDefault();
-    if (state.active.type === 'pan') {
-        state.camera.x = state.active.camera.x - (event.clientX - state.active.clientX) / state.camera.zoom;
-        state.camera.y = state.active.camera.y - (event.clientY - state.active.clientY) / state.camera.zoom;
-        schedulePointerRender('full'); return;
+    updateCursor(event);
+    if(state.pointers.has(event.pointerId))state.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    if(state.pinch && state.pointers.size>=2){
+        event.preventDefault();const points=[...state.pointers.values()],rect=state.canvas.getBoundingClientRect(),center={x:(points[0].x+points[1].x)/2-rect.left,y:(points[0].y+points[1].y)/2-rect.top};
+        const gesture=state.pinch,next=Math.max(.1,Math.min(8,gesture.camera.zoom*Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y)/Math.max(1,gesture.distance)));
+        const worldX=gesture.camera.x+(gesture.center.x-state.logicalWidth/2)/gesture.camera.zoom,worldY=gesture.camera.y+(gesture.center.y-state.logicalHeight/2)/gesture.camera.zoom;
+        state.camera={x:worldX-(center.x-state.logicalWidth/2)/next,y:worldY-(center.y-state.logicalHeight/2)/next,zoom:next};schedulePointerRender('full');updateControls();return;
     }
-    const samples = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
-    const events = samples.length ? samples : [event];
-    if (state.active.type === 'stroke') {
-        const points = state.active.preview.points;
-        for (const sample of events) {
-            const point = worldPoint(sample); const last = points.at(-1);
-            if (Math.hypot(point.x - last[0], point.y - last[1]) * state.camera.zoom > 0.7
-                && points.length < MAX_STROKE_POINTS && state.totalPoints + points.length < MAX_POINTS) {
-                points.push([point.x, point.y, point.pressure]);
-            }
-        }
-        schedulePointerRender('stroke'); return;
+    if(event.pointerId!==state.pointerId||!state.active)return;event.preventDefault();
+    if(state.active.type==='pan'){state.camera.x=state.active.camera.x-(event.clientX-state.active.clientX)/state.camera.zoom;state.camera.y=state.active.camera.y-(event.clientY-state.active.clientY)/state.camera.zoom;schedulePointerRender('full');return;}
+    if(!editable() && state.active.type!=='select')return;
+    const samples=typeof event.getCoalescedEvents==='function'?event.getCoalescedEvents():[], events=samples.length?samples:[event];
+    if(state.active.type==='stroke'){
+        const points=state.active.preview.points;
+        for(const sample of events){const point=worldPoint(sample),last=points.at(-1);if(Math.hypot(point.x-last[0],point.y-last[1])*state.camera.zoom>.7&&points.length<MAX_STROKE_POINTS&&state.totalPoints+points.length<MAX_POINTS)points.push([point.x,point.y,point.pressure]);}
+        schedulePointerRender('stroke');return;
     }
-    const point = worldPoint(events.at(-1));
-    if (state.active.type === 'shape') { state.active.preview.x2 = point.x; state.active.preview.y2 = point.y; schedulePointerRender('overlay'); return; }
-    if (state.active.type === 'select' && state.active.selectedId) {
-        const element = state.elements.find(item => item.id === state.active.selectedId);
-        if (element) moveElement(element, point.x - state.active.last.x, point.y - state.active.last.y);
-        state.active.last = point; schedulePointerRender('full');
+    const point=worldPoint(events.at(-1));
+    if(state.active.type==='shape'){const end=constrainShape(state.active.preview.type,state.active.start,point,event.shiftKey);state.active.preview.x2=end.x;state.active.preview.y2=end.y;schedulePointerRender('overlay');}
+    else if(state.active.type==='select'&&state.active.selectedId&&editable()){
+        const element=state.elements.find(element=>element.id===state.active.selectedId);
+        if(element && Math.hypot(point.x-state.active.last.x,point.y-state.active.last.y)>.05){state.active.snapshot ||= cloneElements();moveElement(element,point.x-state.active.last.x,point.y-state.active.last.y);state.active.moved=true;state.active.last=point;schedulePointerRender('full');}
+    }else if(state.active.type==='erase'){
+        for(const sample of events){const next=worldPoint(sample),previous=state.active.last,steps=Math.min(128,Math.max(1,Math.ceil(Math.hypot(next.x-previous.x,next.y-previous.y)*state.camera.zoom/8)));
+            for(let index=1;index<=steps;index++)eraseAt({x:previous.x+(next.x-previous.x)*index/steps,y:previous.y+(next.y-previous.y)*index/steps});state.active.last=next;}
+        schedulePointerRender('full');
     }
 }
 
 function finishPointer(event) {
-    if (event && event.pointerId !== state.pointerId) return;
-    try { state.canvas?.releasePointerCapture?.(state.pointerId); } catch { /* released by OS */ }
-    const active = state.active; state.pointerId = null;
-    if (!active) return;
-    cancelPendingDraw();
-    if (active.type === 'stroke' && active.preview.points.length) {
-        state.elements.push(active.preview); state.totalPoints += active.preview.points.length; markDirty();
+    if(event)state.pointers.delete(event.pointerId);
+    if(state.pinch){if(state.pointers.size<2){state.pinch=null;state.pointerId=null;state.active=null;state.root?.classList.remove('is-interacting');}return;}
+    if(event&&event.pointerId!==state.pointerId)return;
+    const active=state.active;try{if(state.pointerId!==null)state.canvas?.releasePointerCapture?.(state.pointerId);}catch{}
+    state.pointerId=null;state.active=null;if(!event)state.pointers.clear();state.root?.classList.remove('is-interacting');
+    if(!active)return;cancelPendingDraw();
+    if(editable()){
+        if(active.type==='stroke'&&active.preview.points.length){pushUndo();state.elements.push(active.preview);state.totalPoints+=active.preview.points.length;markDirty();}
+        else if(active.type==='shape'&&Math.hypot(active.preview.x2-active.preview.x1,active.preview.y2-active.preview.y1)>2){pushUndo();state.elements.push(active.preview);markDirty();}
+        else if((active.type==='select'&&active.moved||active.type==='erase'&&active.changed)&&active.snapshot){pushUndo(active.snapshot);markDirty();}
     }
-    if (active.type === 'shape' && Math.hypot(active.preview.x2 - active.preview.x1, active.preview.y2 - active.preview.y1) > 2) { state.elements.push(active.preview); markDirty(); }
-    if (active.type === 'select' && active.snapshot && JSON.stringify(active.snapshot) !== JSON.stringify(state.elements)) { state.undo.push(active.snapshot); if (state.undo.length > MAX_HISTORY) state.undo.shift(); state.redo = []; markDirty(); }
-    state.active = active.type === 'select' ? { type: 'select', selectedId: active.selectedId } : null;
-    redraw(); updateControls();
+    redraw();updateControls();
 }
 
 function zoomAt(event) {
-    event.preventDefault(); const before = worldPoint(event); const next = Math.min(8, Math.max(.1, state.camera.zoom * Math.exp(-event.deltaY * .0012)));
-    const rect = state.canvas.getBoundingClientRect(); const sx = event.clientX - rect.left - state.logicalWidth / 2; const sy = event.clientY - rect.top - state.logicalHeight / 2;
-    state.camera.zoom = next; state.camera.x = before.x - sx / next; state.camera.y = before.y - sy / next; redraw(); updateControls();
+    event.preventDefault();if(state.pointerId!==null||state.pinch)return;cancelCameraAnimation();
+    const rect=state.canvas.getBoundingClientRect(),delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?state.logicalHeight:1);
+    state.camera=zoomCamera(state.camera,state.camera.zoom*Math.exp(-Math.max(-200,Math.min(200,delta))*.003),{x:event.clientX-rect.left,y:event.clientY-rect.top},state.logicalWidth,state.logicalHeight);
+    schedulePointerRender('full');updateControls();
 }
 
-function setMode(mode) { state.mode = mode; closeToolPanels(); updateControls(); savePrefs(); }
-function setColor(color) { if (/^#[0-9a-f]{6}$/i.test(color)) { state.color = color.toLowerCase(); updateControls(); savePrefs(); } }
+function setMode(mode) {
+    if((state.readOnly||state.boardBusy)&&!['select','pan'].includes(mode))return;
+    if(!['select','pan','pen','highlighter','eraser','line','arrow','rect','ellipse','text','note','formula'].includes(mode))return;
+    finishPointer();state.mode=mode;closeToolPanels();if(mode!=='select')state.selectionId=null;redrawOverlay();updateControls();savePrefs();
+}
+
+function setColor(color) {
+    if(!editable()||!/^#[0-9a-f]{6}$/i.test(color))return;
+    state.color=color.toLowerCase();
+    const element=selectedElement();if(state.mode==='select'&&element&&element.color!==state.color){pushUndo();element.color=state.color;markDirty();redraw();}
+    updateControls();savePrefs();
+}
 
 function replaceElements(elements) {
     state.elements = elements; state.totalPoints = countStrokePoints(elements); boundsCache = new WeakMap();
 }
 
-function undo() { if (!state.undo.length) return; state.redo.push(cloneElements()); replaceElements(state.undo.pop()); state.active = null; markDirty(); redraw(); }
-function redo() { if (!state.redo.length) return; state.undo.push(cloneElements()); replaceElements(state.redo.pop()); state.active = null; markDirty(); redraw(); }
+function undo() { if(!editable())return;finishPointer();if(!state.undo.length)return;state.redo.push(cloneElements());replaceElements(state.undo.pop());state.active=null;state.selectionId=null;markDirty();redraw(); }
+
+function redo() { if(!editable())return;finishPointer();if(!state.redo.length)return;pushUndoPreservingRedo();replaceElements(state.redo.pop());state.active=null;state.selectionId=null;markDirty();redraw(); }
 
 function updateControls() {
-    document.querySelectorAll('[data-board-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.boardMode === state.mode)));
-    document.querySelectorAll('[data-panel-modes]').forEach(button => {
-        button.classList.toggle('is-mode-active', button.dataset.panelModes.split(',').includes(state.mode));
+    if (!state.root) return;
+    const blocked = state.readOnly || state.boardBusy;
+    state.root.style.setProperty('--wb-ink',state.color); state.root.style.setProperty('--wb-pen-width',state.width+'px');
+    state.root.setAttribute('aria-busy',String(state.boardBusy)); state.surface.dataset.mode=state.spacePressed?'pan':state.mode;
+    state.surface.classList.toggle('is-empty',state.elements.length===0);
+    state.root.querySelectorAll('[data-board-mode]').forEach(button=>{
+        button.setAttribute('aria-pressed',String(button.dataset.boardMode===state.mode));
+        button.disabled=state.boardBusy || (state.readOnly && !['select','pan'].includes(button.dataset.boardMode));
     });
-    document.querySelectorAll('[data-board-color]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.boardColor === state.color)));
-    const name = document.getElementById('whiteboardName'); if (name && document.activeElement !== name) name.value = state.boardName;
-    const size = document.getElementById('whiteboardSize'); if (size) size.value = String(state.width);
-    const sizeValue = document.getElementById('whiteboardSizeValue'); if (sizeValue) sizeValue.textContent = `${state.width} px`;
-    const undoButton = document.getElementById('whiteboardUndo'); if (undoButton) undoButton.disabled = !state.undo.length;
-    const redoButton = document.getElementById('whiteboardRedo'); if (redoButton) redoButton.disabled = !state.redo.length;
-    const count = document.getElementById('whiteboardObjectCount'); if (count) count.textContent = `${state.elements.length} 个对象`;
-    const zoom = document.getElementById('whiteboardZoom'); if (zoom) zoom.textContent = `${Math.round(state.camera.zoom * 100)}%`;
-    const nameInput = document.getElementById('whiteboardName'); if (nameInput) nameInput.readOnly = state.readOnly;
-    document.querySelectorAll('[data-board-mode]:not([data-board-mode="pan"]), #whiteboardSave, #whiteboardSaveAs, #whiteboardClear, #whiteboardUndo, #whiteboardRedo')
-        .forEach(control => { control.disabled = state.readOnly || control.disabled && ['whiteboardUndo', 'whiteboardRedo'].includes(control.id); });
+    state.root.querySelectorAll('[data-panel-modes]').forEach(button=>button.classList.toggle('is-mode-active',button.dataset.panelModes.split(',').includes(state.mode)));
+    state.root.querySelectorAll('[data-board-color]').forEach(button=>{button.setAttribute('aria-pressed',String(button.dataset.boardColor===state.color));button.disabled=blocked;});
+    state.root.querySelectorAll('[data-board-background]').forEach(button=>{button.setAttribute('aria-pressed',String(button.dataset.boardBackground===state.background));button.disabled=blocked;});
+    const get=id=>state.root.querySelector('#'+id);
+    const name=get('whiteboardName');if(document.activeElement!==name)name.value=state.boardName;name.readOnly=blocked;
+    get('whiteboardSize').value=String(state.width);get('whiteboardSize').disabled=blocked;
+    get('whiteboardSizeValue').textContent=state.width+' px';get('whiteboardColorInput').value=state.color;get('whiteboardColorInput').disabled=blocked;
+    get('whiteboardUndo').disabled=blocked||!state.undo.length;get('whiteboardRedo').disabled=blocked||!state.redo.length;
+    get('whiteboardSave').disabled=blocked||state.saveBusy;
+    get('whiteboardSave').setAttribute('aria-busy',String(state.saveBusy));
+    get('whiteboardSaveAs').disabled=blocked||state.saveBusy;
+    get('whiteboardClear').disabled=blocked||!state.elements.length;
+    get('whiteboardNew').disabled=state.boardBusy||state.saveBusy;
+    get('whiteboardExport').disabled=state.exportBusy||state.boardBusy;
+    get('whiteboardTakeOver').disabled=state.boardBusy||state.saveBusy;
+    get('whiteboardObjectCount').textContent=state.elements.length+' 个对象';
+    get('whiteboardZoom').textContent=Math.round(state.camera.zoom*100)+'%';
+    get('whiteboardZoomOut').disabled=state.camera.zoom<=.1001;
+    get('whiteboardZoomIn').disabled=state.camera.zoom>=7.999;
+    if(state.cursor && blocked)state.cursor.hidden=true;
+    updateSelectionControls();
 }
 
 function setReadOnly(readOnly) {
-    state.readOnly = Boolean(readOnly);
-    const banner = document.getElementById('whiteboardReadOnly');
-    if (banner) banner.hidden = !state.readOnly;
+    if(readOnly&&!state.readOnly){
+        cancelPointer();state.dialog?.close();
+        if(state.dirty&&state.savedDraftRevision!==state.draftRevision){
+            state.recovery={id:newId(),name:(state.boardName+' · 接管前恢复').slice(0,60),document:documentValue(),revision:state.draftRevision,persisted:false};
+        }
+    }
+    state.readOnly=Boolean(readOnly);
+    const banner=state.root?.querySelector('#whiteboardReadOnly');if(banner)banner.hidden=!state.readOnly;
     updateControls();
+    if(state.readOnly&&state.recovery)void persistRecovery();
 }
 
 async function releaseEdit(id = state.boardId) {
-    if (!invoke || !id) return;
-    try { await invoke('release_whiteboard_edit', { id }); } catch { /* release is best effort during teardown */ }
+    if (!hasNativeStore() || !id) return;
+    try { await invoke('release_whiteboard_edit', { id }); } catch { /* Best effort on teardown. */ }
 }
 
 async function takeOverEdit() {
-    if (!invoke || !state.boardId) return;
-    try {
-        await invoke('take_over_whiteboard_edit', { id: state.boardId });
-        setReadOnly(false); setStatus('已接管此白板的编辑权');
-    } catch (error) { setStatus(`接管失败：${error}`, 'warning'); }
+    const view=state,id=view.boardId,generation=view.boardGeneration;
+    if(!hasNativeStore()||!id||view.boardBusy||view.saveBusy)return;
+    view.boardBusy=true;updateControls();
+    try{
+        await persistRecovery(true);
+        await invoke('take_over_whiteboard_edit',{id});
+        const result=await invoke('load_whiteboard',{id});
+        if(!sameBoard(view,generation,id)){if(result.editable)await releaseEdit(id);return;}
+        const value=normalizeDocumentV2(result.draft?.document||result.document);
+        applyDocument(value,result.draft?.name||result.meta.name);view.isFormal=result.isFormal!==false;
+        view.dirty=Boolean(result.draft);view.savedDraftRevision=view.draftRevision;
+        view.recovery=null;setReadOnly(result.editable===false);
+        setStatus(view.readOnly?'编辑权再次被接管，请重试':'已加载最新内容并接管编辑权',view.readOnly?'warning':'saved');
+    }catch(error){if(sameBoard(view,generation,id)){await releaseEdit(id);setStatus('接管失败：'+(error?.message||error),'warning');}}
+    finally{if(live(view)){view.boardBusy=false;updateControls();}}
 }
 
-async function openObjectDialog(type, point) {
-    const dialog = document.getElementById('whiteboardObjectDialog'); const input = document.getElementById('whiteboardObjectInput'); const symbols = document.getElementById('whiteboardFormulaSymbols'); const preview = document.getElementById('whiteboardFormulaPreview');
-    dialog.dataset.type = type; dialog.dataset.x = point.x; dialog.dataset.y = point.y; input.value = ''; symbols.hidden = type !== 'formula'; preview.hidden = type !== 'formula';
-    document.getElementById('whiteboardDialogTitle').textContent = type === 'formula' ? '插入数学表达式' : type === 'note' ? '插入便签' : '插入文字';
-    input.placeholder = type === 'formula' ? '输入 LaTeX，例如：\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}' : '输入内容'; dialog.hidden = false; input.focus();
-    if (type === 'formula') { await ensureFormulaRuntime(); updateFormulaPreview(); }
-}
+function openObjectDialog(type,point,element=null) { if(editable())return state.dialog?.open(type,point,element); }
 
-function closeObjectDialog() { document.getElementById('whiteboardObjectDialog').hidden = true; }
-
-function updateFormulaPreview() {
-    const dialog = document.getElementById('whiteboardObjectDialog'); if (dialog.dataset.type !== 'formula' || !state.formulaRuntime) return;
-    const preview = document.getElementById('whiteboardFormulaPreview');
-    try { state.formulaRuntime.render(document.getElementById('whiteboardObjectInput').value || '\\square', preview, { throwOnError: false, displayMode: true, strict: 'ignore' }); } catch { preview.textContent = '表达式暂时无法预览'; }
-}
-
-function confirmObjectDialog() {
-    const dialog = document.getElementById('whiteboardObjectDialog'); const type = dialog.dataset.type; const value = document.getElementById('whiteboardObjectInput').value.trim(); if (!value) return;
-    pushUndo(); const base = { id: newId(), type, color: state.color, x: Number(dialog.dataset.x), y: Number(dialog.dataset.y) };
-    state.elements.push(type === 'formula' ? { ...base, latex: value, width: 220, height: 60 } : type === 'note' ? { ...base, text: value, width: 220, height: 150 } : { ...base, text: value, size: 24 });
-    closeObjectDialog(); markDirty(); redraw();
+function confirmObjectDialog({type,point,value,element}) {
+    if(!editable())return false;
+    if(!element && state.elements.length>=MAX_ELEMENTS){setStatus('已达到 2000 个对象上限，请新建白板继续','warning');return false;}
+    const existing=element && state.elements.find(item=>item.id===element.id);
+    if(element && !existing)return false;
+    pushUndo();
+    if(existing){if(type==='formula')existing.latex=value;else existing.text=value;if(type==='note')existing.height=noteHeight(value,existing.width);boundsCache.delete(existing);}
+    else{
+        const base={id:newId(),type,color:state.color,x:point.x,y:point.y};
+        state.elements.push(type==='formula'?{...base,latex:value,width:220,height:60}:type==='note'?{...base,text:value,width:220,height:noteHeight(value,220)}:{...base,text:value,size:24});
+    }
+    markDirty();redraw();return true;
 }
 
 function toggleHistory() {
-    const panel = document.getElementById('whiteboardHistory'); const rail = document.getElementById('whiteboardHistoryRail'); const open = panel.getAttribute('aria-hidden') === 'true';
-    panel.setAttribute('aria-hidden', String(!open)); rail.setAttribute('aria-expanded', String(open)); if (open) loadHistory();
+    const panel=state.root.querySelector('#whiteboardHistory'),open=panel.getAttribute('aria-hidden')==='true';
+    closeToolPanels();closeHelp();
+    panel.inert=!open;panel.setAttribute('aria-hidden',String(!open));
+    state.root.querySelector('#whiteboardHistoryRail').setAttribute('aria-expanded',String(open));
+    if(open)void loadHistory();
 }
 
 function closeHistory() {
-    const panel = document.getElementById('whiteboardHistory'); const rail = document.getElementById('whiteboardHistoryRail');
-    if (!panel || panel.getAttribute('aria-hidden') === 'true') return;
-    panel.setAttribute('aria-hidden', 'true'); rail?.setAttribute('aria-expanded', 'false');
+    const panel=state.root?.querySelector('#whiteboardHistory');if(!panel)return;
+    if(panel.contains(document.activeElement))state.root.querySelector('#whiteboardHistoryRail')?.focus({preventScroll:true});
+    panel.inert=true;panel.setAttribute('aria-hidden','true');state.root.querySelector('#whiteboardHistoryRail')?.setAttribute('aria-expanded','false');
 }
 
-function closeToolPanels(except = null) {
-    document.querySelectorAll('[data-board-panel-content]').forEach(panel => {
-        if (panel.dataset.boardPanelContent !== except) panel.hidden = true;
-    });
-    document.querySelectorAll('[data-board-panel]').forEach(button => {
-        if (button.dataset.boardPanel !== except) button.setAttribute('aria-expanded', 'false');
-    });
+function closeToolPanels(except=null) {
+    state.root?.querySelectorAll('[data-board-panel-content]').forEach(panel=>{if(panel.dataset.boardPanelContent!==except)showPopover(panel,false);});
+    state.root?.querySelectorAll('[data-board-panel]').forEach(button=>{if(button.dataset.boardPanel!==except)button.setAttribute('aria-expanded','false');});
 }
 
 function toggleToolPanel(name) {
-    const panel = document.querySelector(`[data-board-panel-content="${name}"]`);
-    const trigger = document.querySelector(`[data-board-panel="${name}"]`);
-    if (!panel || !trigger) return;
-    const opening = panel.hidden;
-    closeToolPanels(opening ? name : null);
-    panel.hidden = !opening; trigger.setAttribute('aria-expanded', String(opening));
+    const panel=state.root.querySelector('[data-board-panel-content="'+name+'"]'),trigger=state.root.querySelector('[data-board-panel="'+name+'"]');
+    if(!panel||!trigger)return;
+    const opening=trigger.getAttribute('aria-expanded')!=='true';closeToolPanels(opening?name:null);closeHelp();closeHistory();
+    showPopover(panel,opening);trigger.setAttribute('aria-expanded',String(opening));
 }
 
 async function loadHistory() {
-    try { state.histories = invoke ? await invoke('list_whiteboards') : []; } catch { state.histories = []; }
-    const list = document.getElementById('whiteboardHistoryList'); if (!list) return;
-    list.innerHTML = state.histories.length ? state.histories.map((item, index) => `
-        <button class="whiteboard-history-card${item.id === state.boardId ? ' is-current' : ''}" type="button" data-board-id="${item.id}" data-distance="${Math.min(5, Math.abs(index - Math.max(0, state.histories.findIndex(entry => entry.id === state.boardId))))}">
-            <span class="whiteboard-history-thumb" data-thumbnail-id="${item.id}"><i class="ri-layout-grid-line"></i></span>
-            <span><strong>${escapeHtml(item.name)}</strong><small>${new Date(item.updatedAt).toLocaleString()}${item.hasDraft ? ' · 未保存草稿' : ''}</small></span>
-        </button>`).join('') : '<div class="whiteboard-history-empty"><i class="ri-layout-grid-line"></i><span>手动保存后，白板会出现在这里</span></div>';
-    list.querySelectorAll('[data-board-id]').forEach(button => button.addEventListener('click', () => openBoard(button.dataset.boardId), { signal: state.abortController.signal }));
-    state.historyObserver?.disconnect();
-    if (typeof IntersectionObserver === 'function') {
-        state.historyObserver = new IntersectionObserver(entries => entries.filter(entry => entry.isIntersecting).forEach(entry => loadThumbnail(entry.target)), { root: list, rootMargin: '80px' });
-        list.querySelectorAll('[data-thumbnail-id]').forEach(node => state.historyObserver.observe(node));
+    const view=state,version=++view.historyVersion,list=view.root?.querySelector('#whiteboardHistoryList');if(!list)return;
+    let items;
+    try{items=hasNativeStore()?await invoke('list_whiteboards'):readBrowserHistory();}
+    catch(error){if(live(view)&&view.historyVersion===version)setStatus('历史记录读取失败：'+(error?.message||error),'warning');return;}
+    if(!live(view)||view.historyVersion!==version)return;
+    view.histories=Array.isArray(items)?items.filter(item=>item&&typeof item.id==='string'&&typeof item.name==='string'):[];
+    view.historyObserver?.disconnect();list.replaceChildren();
+    if(!view.histories.length){const empty=document.createElement('div');empty.className='whiteboard-history-empty';empty.textContent='从一笔开始，恢复草稿与正式白板都会留在这里';list.append(empty);return;}
+    for(const item of view.histories){
+        const button=document.createElement('button');button.type='button';button.className='whiteboard-history-card'+(item.id===view.boardId?' is-current':'');button.dataset.boardId=item.id;
+        const thumb=document.createElement('span');thumb.className='whiteboard-history-thumb';thumb.dataset.thumbnailId=item.id;
+        const glyph=document.createElement('i');glyph.className='ri-layout-grid-line';thumb.append(glyph);
+        const label=document.createElement('span'),title=document.createElement('strong'),date=document.createElement('small');
+        title.textContent=item.name;date.textContent=new Date(item.updatedAt).toLocaleString()+(item.hasDraft?' · 未保存草稿':'');label.append(title,date);button.append(thumb,label);
+        button.addEventListener('click',()=>void openBoard(item.id),{signal:view.abortController.signal});list.append(button);
     }
-    requestAnimationFrame(() => list.querySelector('.is-current')?.scrollIntoView({ block: 'center' }));
+    if(typeof IntersectionObserver==='function'){
+        view.historyObserver=new IntersectionObserver(entries=>entries.filter(entry=>entry.isIntersecting).forEach(entry=>void loadThumbnail(entry.target,view,version)),{root:list,rootMargin:'80px'});
+        list.querySelectorAll('[data-thumbnail-id]').forEach(node=>view.historyObserver.observe(node));
+    }else for(const node of list.querySelectorAll('[data-thumbnail-id]'))void loadThumbnail(node,view,version);
 }
 
-async function loadThumbnail(node) {
-    state.historyObserver?.unobserve(node); try { const source = await invoke?.('get_whiteboard_thumbnail', { id: node.dataset.thumbnailId }); if (source) { const image = new Image(); image.alt = ''; image.loading = 'lazy'; image.src = source; node.replaceChildren(image); } } catch { /* keep placeholder */ }
+async function loadThumbnail(node,view=state,version=view.historyVersion) {
+    view.historyObserver?.unobserve(node);
+    try{
+        const source=hasNativeStore()?await invoke('get_whiteboard_thumbnail',{id:node.dataset.thumbnailId}):JSON.parse(localStorage.getItem(browserBoardKey(node.dataset.thumbnailId))||'null')?.thumbnail;
+        if(!live(view)||version!==view.historyVersion||!node.isConnected||!source?.startsWith('data:image/png;base64,'))return;
+        const image=new Image();image.alt='';image.loading='lazy';image.src=source;node.replaceChildren(image);
+    }catch{/* Keep the lightweight placeholder. */}
 }
 
 async function openBoard(id) {
-    if (id === state.boardId) return;
-    await saveDraftNow(); await releaseEdit(); setStatus('正在打开白板…', 'saving');
+    if (id === state.boardId || state.boardBusy || state.saveBusy) return;
+    finishPointer(); const view = state, previousId = view.boardId, generation = view.boardGeneration;
+    view.boardBusy = true; updateControls(); setStatus('正在打开白板…', 'saving');
+    let acquiredId = null;
     try {
-        const result = await invoke('load_whiteboard', { id }); state.boardId = result.meta.id; state.boardName = result.meta.name; state.isFormal = result.isFormal !== false;
-        applyDocument(result.draft?.document || result.document, result.meta.name); state.dirty = Boolean(result.draft); setReadOnly(result.editable === false);
-        setStatus(state.readOnly ? '已以只读方式打开' : result.draft ? '已恢复未保存草稿' : '正式白板已打开', state.readOnly || result.draft ? 'warning' : 'saved'); await loadHistory();
-    } catch (error) { setStatus(`打开失败：${error}`, 'warning'); }
+        await saveDraftNow(true); if (!sameBoard(view, generation, previousId)) return;
+        let result;
+        if (hasNativeStore()) result = await invoke('load_whiteboard', { id });
+        else {
+            const stored = JSON.parse(localStorage.getItem(browserBoardKey(id)) || 'null');
+            const draft = JSON.parse(localStorage.getItem('dtkit_whiteboard_draft_' + id) || 'null');
+            if (!stored && !draft) throw new Error('白板不存在');
+            result = { meta: stored?.meta || { id, name: draft.name }, document: stored?.document, draft, editable: true, isFormal: !!stored };
+        }
+        acquiredId = result?.meta?.id; if (!sameBoard(view, generation, previousId)) { if (acquiredId && acquiredId !== previousId) await releaseEdit(acquiredId); return; }
+        const value = normalizeDocumentV2(result.draft?.document || result.document);
+        await releaseEdit(previousId); if (!sameBoard(view, generation, previousId)) { if (acquiredId) await releaseEdit(acquiredId); return; }
+        clearTimeout(view.draftTimer); view.draftTimer = null; view.boardGeneration++;
+        view.boardId = result.meta.id; view.boardName = result.meta.name; view.isFormal = result.isFormal !== false;
+        view.recovery=null; applyDocument(value, result.draft?.name || result.meta.name); view.dirty = !!result.draft; view.savedDraftRevision = view.dirty ? 0 : -1; setReadOnly(result.editable === false);
+        closeHistory(); setStatus(view.readOnly ? '已以只读方式打开' : result.draft ? '已恢复未保存草稿' : '正式白板已打开', view.readOnly || result.draft ? 'warning' : 'saved');
+        await loadHistory();
+    } catch (error) {
+        if (acquiredId && acquiredId !== previousId && view.boardId !== acquiredId) await releaseEdit(acquiredId);
+        if (live(view)) setStatus('打开失败，当前白板已保留：' + (error?.message || error), 'warning');
+    } finally { if (live(view)) { view.boardBusy = false; updateControls(); } }
 }
 
-function newBoard() {
-    const previousId = state.boardId;
-    Promise.resolve(saveDraftNow()).finally(() => releaseEdit(previousId));
-    state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; replaceElements([]); state.camera = { x: 0, y: 0, zoom: 1 }; state.undo = []; state.redo = []; state.dirty = false; state.draftRevision = 0; state.savedDraftRevision = -1; setReadOnly(false); redraw(); updateControls(); setStatus('新白板');
-}
-
-function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
-
-function exportBoard() {
-    const bounds = contentBounds();
-    const padding = 64;
-    const scale = bounds
-        ? Math.min(2, 2200 / Math.max(1, bounds.width), 1400 / Math.max(1, bounds.height))
-        : 1;
-    const width = bounds ? Math.max(640, Math.min(2400, Math.ceil(bounds.width * scale + padding * 2))) : 1280;
-    const height = bounds ? Math.max(360, Math.min(1600, Math.ceil(bounds.height * scale + padding * 2))) : 720;
-    const camera = bounds
-        ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2, zoom: scale }
-        : { ...state.camera, zoom: 1 };
-    const canvas = document.createElement('canvas');
-    canvas.width = width; canvas.height = height;
-    const context = canvas.getContext('2d');
-    const oldCamera = state.camera;
+async function newBoard() {
+    if (state.boardBusy || state.saveBusy) return;
+    finishPointer(); const view = state, id = view.boardId, generation = view.boardGeneration;
+    view.boardBusy = true; updateControls();
     try {
-        state.camera = camera;
-        drawBackground(context, width, height, camera);
-        context.save();
-        context.translate(width / 2 - camera.x * camera.zoom, height / 2 - camera.y * camera.zoom);
-        context.scale(camera.zoom, camera.zoom);
-        state.elements.forEach(element => drawElement(context, element));
-        context.restore();
-    } finally {
-        state.camera = oldCamera;
-    }
-    const link = document.createElement('a'); link.href = canvas.toDataURL('image/png'); link.download = `${state.boardName || 'DtKit-白板'}.png`; link.click(); setStatus('当前白板已导出为高清 PNG');
+        await saveDraftNow(true); await view.storeTail; if (!sameBoard(view, generation, id)) return;
+        await releaseEdit(id); if (!sameBoard(view, generation, id)) return;
+        clearTimeout(view.draftTimer); view.draftTimer = null; view.boardGeneration++; view.boardId = newId();
+        view.boardName = '未命名白板'; view.isFormal = false; view.dirty = false; view.legacyPending = false; view.draftRevision = 0; view.savedDraftRevision = -1;
+        view.selectionId=null; view.recovery=null; cancelCameraAnimation(); replaceElements([]); view.camera = { x: 0, y: 0, zoom: 1 }; view.undo = []; view.redo = []; view.active = null;
+        closeHistory(); setReadOnly(false); redraw(); setStatus('新白板');
+    } catch (error) { if (live(view)) setStatus('恢复草稿保存失败，当前白板已保留：' + (error?.message || error), 'warning'); }
+    finally { if (live(view)) { view.boardBusy = false; updateControls(); } }
 }
 
-function clearBoard() { if (!state.elements.length || !globalThis.confirm('确定清空当前白板的全部内容吗？')) return; pushUndo(); replaceElements([]); markDirty(); redraw(); }
+
+
+async function exportBoard() {
+    if(state.exportBusy||state.boardBusy)return;
+    finishPointer();const view=state,generation=view.boardGeneration,id=view.boardId,snapshot=documentValue(),name=view.boardName;
+    view.exportBusy=true;updateControls();setStatus('正在生成高清图片…','saving');closeToolPanels();
+    try{
+        const canvas=await renderBoardImage(snapshot,{signal:view.abortController.signal,drawElement,drawBackground,runtime:view.formulaRuntime});
+        if(!sameBoard(view,generation,id))return;
+        const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error('无法生成 PNG 图片')),'image/png'));
+        if(!sameBoard(view,generation,id))return;
+        const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=(name||'DtKit-白板')+'.png';link.click();
+        setTimeout(()=>URL.revokeObjectURL(url),1000);setStatus('当前白板已导出为高清 PNG');
+    }catch(error){if(sameBoard(view,generation,id))setStatus('导出失败：'+(error?.message||error),'warning');}
+    finally{view.exportBusy=false;if(live(view))updateControls();}
+}
+
+function clearBoard() { if(!editable()||!state.elements.length||!globalThis.confirm('清空当前白板？可以使用撤销恢复。'))return;finishPointer();pushUndo();replaceElements([]);state.selectionId=null;markDirty();redraw(); }
 
 function bindEvents(signal) {
-    state.canvas.addEventListener('pointerdown', beginPointer, { signal }); state.canvas.addEventListener('pointermove', movePointer, { signal }); state.canvas.addEventListener('pointerup', finishPointer, { signal }); state.canvas.addEventListener('pointercancel', finishPointer, { signal }); state.canvas.addEventListener('wheel', zoomAt, { passive: false, signal });
-    document.querySelectorAll('[data-board-mode]').forEach(button => button.addEventListener('click', () => setMode(button.dataset.boardMode), { signal }));
-    document.querySelectorAll('[data-board-panel]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); toggleToolPanel(button.dataset.boardPanel); }, { signal }));
-    document.querySelectorAll('[data-board-panel-content]').forEach(panel => panel.addEventListener('click', event => event.stopPropagation(), { signal }));
-    document.querySelectorAll('[data-board-color]').forEach(button => button.addEventListener('click', () => setColor(button.dataset.boardColor), { signal }));
-    document.getElementById('whiteboardColorInput').addEventListener('input', event => setColor(event.target.value), { signal });
-    document.getElementById('whiteboardSize').addEventListener('input', event => { state.width = Number(event.target.value); savePrefs(); updateControls(); }, { signal });
-    document.getElementById('whiteboardName').addEventListener('input', event => { state.boardName = event.target.value; markDirty(); }, { signal });
-    document.getElementById('whiteboardUndo').addEventListener('click', undo, { signal }); document.getElementById('whiteboardRedo').addEventListener('click', redo, { signal });
-    document.getElementById('whiteboardSave').addEventListener('click', () => saveBoard(false), { signal }); document.getElementById('whiteboardSaveAs').addEventListener('click', () => saveBoard(true), { signal });
-    document.getElementById('whiteboardExport').addEventListener('click', exportBoard, { signal }); document.getElementById('whiteboardClear').addEventListener('click', clearBoard, { signal }); document.getElementById('whiteboardFit').addEventListener('click', fitContent, { signal });
-    document.getElementById('whiteboardHistoryRail').addEventListener('click', toggleHistory, { signal }); document.getElementById('whiteboardNew').addEventListener('click', newBoard, { signal });
-    document.getElementById('whiteboardTakeOver').addEventListener('click', takeOverEdit, { signal });
-    document.getElementById('whiteboardBackground').addEventListener('click', () => { const menu = document.getElementById('whiteboardBackgroundMenu'); menu.hidden = !menu.hidden; }, { signal });
-    document.querySelectorAll('[data-board-background]').forEach(button => button.addEventListener('click', () => { state.background = button.dataset.boardBackground; document.getElementById('whiteboardBackgroundMenu').hidden = true; savePrefs(); markDirty(); redraw(); }, { signal }));
-    document.getElementById('whiteboardDialogClose').addEventListener('click', closeObjectDialog, { signal }); document.getElementById('whiteboardDialogCancel').addEventListener('click', closeObjectDialog, { signal }); document.getElementById('whiteboardDialogConfirm').addEventListener('click', confirmObjectDialog, { signal });
-    document.getElementById('whiteboardObjectInput').addEventListener('input', updateFormulaPreview, { signal }); document.querySelectorAll('[data-formula]').forEach(button => button.addEventListener('click', () => { const input = document.getElementById('whiteboardObjectInput'); input.setRangeText(button.dataset.formula, input.selectionStart, input.selectionEnd, 'end'); input.focus(); updateFormulaPreview(); }, { signal }));
-    document.addEventListener('keydown', event => {
-        if (event.key === ' ' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) { state.spacePressed = true; event.preventDefault(); }
-        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-        const key = event.key.toLowerCase();
-        if ((event.ctrlKey || event.metaKey) && key === 's') { event.preventDefault(); saveBoard(event.shiftKey); }
-        else if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-        else if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); redo(); }
-        else if (key === 'v') setMode('select'); else if (key === 'b') setMode('pen'); else if (key === 'h') setMode('highlighter'); else if (key === 'e') setMode('eraser');
-        else if (key === 'escape') { closeObjectDialog(); state.active = null; redraw(); }
-    }, { signal });
-    document.addEventListener('pointerdown', event => { if (!event.target.closest('.whiteboard-cluster')) closeToolPanels(); }, { signal });
-    document.addEventListener('keyup', event => { if (event.key === ' ') state.spacePressed = false; }, { signal });
-    window.addEventListener('dtkit:power-state', event => { if (event.detail?.suspended) { finishPointer(); saveDraftNow(); } }, { signal });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) saveDraftNow(); }, { signal });
+    const view=state,on=(id,event,handler)=>view.root.querySelector('#'+id)?.addEventListener(event,handler,{signal});
+    view.canvas.addEventListener('pointerdown',beginPointer,{signal});view.canvas.addEventListener('pointermove',movePointer,{signal});
+    view.canvas.addEventListener('pointerup',finishPointer,{signal});view.canvas.addEventListener('pointercancel',()=>cancelPointer(),{signal});
+    view.canvas.addEventListener('lostpointercapture',event=>{if(view.pointerId===event.pointerId)cancelPointer();},{signal});
+    view.canvas.addEventListener('pointerleave',()=>{view.cursor.hidden=true;},{signal});
+    view.canvas.addEventListener('wheel',zoomAt,{passive:false,signal});
+    view.canvas.addEventListener('dblclick',event=>{if(view.mode!=='select'||!editable())return;const element=hitElement(worldPoint(event));if(element&&['text','note','formula'].includes(element.type))openObjectDialog(element.type,{x:element.x,y:element.y},element);},{signal});
+    view.root.querySelectorAll('[data-board-mode]').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.boardMode),{signal}));
+    view.root.querySelectorAll('[data-board-panel]').forEach(button=>button.addEventListener('click',()=>toggleToolPanel(button.dataset.boardPanel),{signal}));
+    view.root.querySelectorAll('[data-board-color]').forEach(button=>button.addEventListener('click',()=>setColor(button.dataset.boardColor),{signal}));
+    on('whiteboardColorInput','input',event=>setColor(event.target.value));
+    on('whiteboardSize','input',event=>{if(!editable())return;view.width=Number(event.target.value);savePrefs();updateControls();});
+    on('whiteboardName','input',event=>{if(!editable())return;view.boardName=event.target.value;markDirty();});
+    on('whiteboardUndo','click',undo);on('whiteboardRedo','click',redo);
+    on('whiteboardSave','click',()=>void saveBoard());on('whiteboardSaveAs','click',()=>void saveBoard(true));
+    on('whiteboardExport','click',()=>void exportBoard());on('whiteboardClear','click',clearBoard);on('whiteboardFit','click',fitContent);
+    on('whiteboardZoomOut','click',()=>animateCamera({...view.camera,zoom:Math.max(.1,view.camera.zoom/1.25)}));
+    on('whiteboardZoomIn','click',()=>animateCamera({...view.camera,zoom:Math.min(8,view.camera.zoom*1.25)}));
+    on('whiteboardZoomReset','click',()=>animateCamera({...view.camera,zoom:1}));
+    on('whiteboardHistoryRail','click',toggleHistory);on('whiteboardHistoryClose','click',closeHistory);on('whiteboardNew','click',()=>void newBoard());
+    on('whiteboardTakeOver','click',()=>void takeOverEdit());
+    on('whiteboardBackground','click',()=>{const menu=view.root.querySelector('#whiteboardBackgroundMenu'),button=view.root.querySelector('#whiteboardBackground'),open=button.getAttribute('aria-expanded')!=='true';showPopover(menu,open);button.setAttribute('aria-expanded',String(open));});
+    view.root.querySelectorAll('[data-board-background]').forEach(button=>button.addEventListener('click',()=>{
+        if(!editable())return;
+        if(view.background!==button.dataset.boardBackground){view.background=button.dataset.boardBackground;savePrefs();markDirty();redraw();}
+        updateControls();
+    },{signal}));
+    on('whiteboardDelete','click',deleteSelected);on('whiteboardDuplicate','click',duplicateSelected);
+    on('whiteboardEditSelected','click',()=>{const element=selectedElement();if(element)openObjectDialog(element.type,{x:element.x,y:element.y},element);});
+    on('whiteboardHelp','click',()=>{const button=view.root.querySelector('#whiteboardHelp'),open=button.getAttribute('aria-expanded')!=='true';closeToolPanels();closeHistory();showPopover(view.root.querySelector('#whiteboardHelpPanel'),open);button.setAttribute('aria-expanded',String(open));});
+    document.addEventListener('keydown',event=>{
+        if(!live(view)||view.dialog?.isOpen())return;
+        const key=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
+        const typing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
+        if(modifier&&key==='s'){event.preventDefault();void saveBoard(event.shiftKey);return;}
+        if(key==='escape'){
+            const trigger=view.root.querySelector('[data-board-panel][aria-expanded="true"]');
+            const handled=trigger||view.active||view.selectionId||view.root.querySelector('#whiteboardHelp')?.getAttribute('aria-expanded')==='true'||view.root.querySelector('#whiteboardHistory')?.getAttribute('aria-hidden')==='false';
+            if(handled)event.preventDefault();
+            closeToolPanels();closeHelp();closeHistory();cancelPointer();if(trigger)trigger.focus({preventScroll:true});else{view.selectionId=null;redrawOverlay();}return;
+        }
+        if(typing||event.altKey)return;
+        if(modifier){
+            if(key==='z'){event.preventDefault();event.shiftKey?redo():undo();}
+            else if(key==='y'){event.preventDefault();redo();}
+            else if(key==='d'){event.preventDefault();duplicateSelected();}
+            else if(key==='0'){event.preventDefault();fitContent();}
+            else if(key==='1'){event.preventDefault();animateCamera({...view.camera,zoom:1});}
+            return;
+        }
+        if(key===' '){event.preventDefault();view.spacePressed=true;updateControls();return;}
+        if(['delete','backspace'].includes(key)){if(selectedElement()){event.preventDefault();deleteSelected();}return;}
+        if(key.startsWith('arrow')&&selectedElement()){event.preventDefault();const step=event.shiftKey?10:1;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}
+        const modes={v:'select',b:'pen',h:'highlighter',e:'eraser',r:'rect',o:'ellipse',l:'line',a:'arrow',t:'text',n:'note',f:'formula'};
+        if(modes[key]){event.preventDefault();setMode(modes[key]);}
+    },{signal});
+    document.addEventListener('pointerdown',event=>{
+        if(!event.target.closest('.whiteboard-cluster'))closeToolPanels();
+        if(!event.target.closest('#whiteboardHelp,#whiteboardHelpPanel'))closeHelp();
+    },{signal});
+    view.root.addEventListener('keydown',event=>{
+        const panel=event.target.closest('[data-board-panel-content]');
+        if(!panel||event.target.matches('input,textarea')||!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+        const buttons=[...panel.querySelectorAll('button:not(:disabled)')].filter(button=>button.getClientRects().length);if(!buttons.length)return;
+        event.preventDefault();const index=buttons.indexOf(document.activeElement),next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowUp'?-1:1)+buttons.length)%buttons.length;buttons[next].focus();
+    },{signal});
+    document.addEventListener('keyup',event=>{if(event.key===' '){view.spacePressed=false;updateControls();}},{signal});
+    window.addEventListener('blur',()=>{view.spacePressed=false;cancelPointer();updateControls();},{signal});
+    window.addEventListener('dtkit:power-state',event=>{if(event.detail?.suspended){finishPointer();cancelCameraAnimation();void saveDraftNow();}},{signal});
+    document.addEventListener('visibilitychange',()=>{if(document.hidden){finishPointer();cancelCameraAnimation();void saveDraftNow();}},{signal});
+    const motion=matchMedia('(prefers-reduced-motion: reduce)');
+    motion.addEventListener('change',()=>{
+        if(!motion.matches)return;
+        const target=view.cameraTarget;cancelCameraAnimation();if(target){view.camera=target;redraw();updateControls();}
+        for(const [node,entry] of view.popovers){entry.animation?.cancel();node.hidden=!entry.open;}view.popovers.clear();
+    },{signal});
 }
 
 async function initWhiteboardTool() {
-    destroyWhiteboardTool(); state.abortController = new AbortController(); state.canvas = document.getElementById('whiteboardCanvas'); state.committedCanvas = document.getElementById('whiteboardCommittedCanvas'); state.surface = document.getElementById('whiteboardSurface'); state.formulaLayer = document.getElementById('whiteboardFormulaLayer');
-    if (!state.canvas || !state.committedCanvas || !state.surface) return;
-    readPrefs(); state.boardId = newId(); state.boardName = '未命名白板'; state.isFormal = false; state.dirty = false; state.readOnly = false; state.draftRevision = 0; state.savedDraftRevision = -1; replaceElements([]); bindEvents(state.abortController.signal);
-    if (typeof ResizeObserver === 'function') { state.resizeObserver = new ResizeObserver(scheduleResize); state.resizeObserver.observe(state.surface); } else window.addEventListener('resize', scheduleResize, { signal: state.abortController.signal });
-    const listen = globalThis.window?.__TAURI__?.event?.listen;
-    if (listen) {
-        const signal = state.abortController.signal;
-        Promise.resolve(listen('whiteboard-edit-revoked', event => {
-            const revoked = event.payload;
-            const instanceId = globalThis.window?.__DTKIT_TOOL_PAGE_CONTEXT?.instanceId ?? null;
-            const isOwner = typeof revoked === 'string' || (revoked?.instanceId ?? null) === instanceId;
-            if (isOwner && (typeof revoked === 'string' ? revoked : revoked?.id) === state.boardId) { setReadOnly(true); setStatus('编辑权已由另一页面接管', 'warning'); }
-        })).then(unlisten => { if (signal.aborted) unlisten?.(); else state.editRevokedUnlisten = unlisten; });
+    await destroyWhiteboardTool();state=createState();boundsCache=new WeakMap();
+    const view=state;view.abortController=new AbortController();view.root=document.querySelector('.whiteboard-tool');
+    if(!view.root){view.abortController.abort();return;}
+    const get=id=>view.root.querySelector('#'+id);
+    view.canvas=get('whiteboardCanvas');view.committedCanvas=get('whiteboardCommittedCanvas');view.surface=get('whiteboardSurface');view.formulaLayer=get('whiteboardFormulaLayer');
+    view.inkLayer=get('whiteboardInkLayer');view.tail=get('whiteboardStrokeTail');view.tailPath=get('whiteboardStrokeTailPath');view.cursor=get('whiteboardCursor');
+    readPrefs();view.boardId=newId();
+    view.dialog=createObjectDialog({root:view.root,signal:view.abortController.signal,isEditable:()=>live(view)&&editable(),ensureFormulaRuntime,onConfirm:confirmObjectDialog});
+    bindEvents(view.abortController.signal);mountSegmentedControl(view.root.querySelector('.whiteboard-direct-tools'),{signal:view.abortController.signal});
+    if(typeof ResizeObserver==='function'){view.resizeObserver=new ResizeObserver(()=>{if(live(view))scheduleResize();});view.resizeObserver.observe(view.surface);}
+    else window.addEventListener('resize',scheduleResize,{signal:view.abortController.signal});
+    const listen=window.__TAURI__?.event?.listen;
+    if(listen){
+        Promise.resolve(listen('whiteboard-edit-revoked',event=>{
+            if(!live(view))return;
+            const revoked=event.payload,instanceId=window.__DTKIT_TOOL_PAGE_CONTEXT?.instanceId??null;
+            const owner=typeof revoked==='string'||(revoked?.instanceId??null)===instanceId;
+            if(owner&&(typeof revoked==='string'?revoked:revoked?.id)===view.boardId){setReadOnly(true);setStatus('编辑权已由另一页面接管','warning');}
+        })).then(unlisten=>{if(!live(view))unlisten?.();else view.editRevokedUnlisten=unlisten;}).catch(error=>{if(live(view))setStatus('编辑状态监听失败：'+(error?.message||error),'warning');});
     }
-    importLegacyBoard(); updateControls(); scheduleResize(); await loadHistory();
+    importLegacyBoard();updateControls();scheduleResize();showPopover(view.root.querySelector('.whiteboard-toolbar'),true);await loadHistory();
 }
 
 function destroyWhiteboardTool() {
-    finishPointer();
-    const closingBoardId = state.boardId;
-    const draftPromise = state.dirty ? saveDraftNow() : Promise.resolve();
-    const closing = Promise.resolve(draftPromise).finally(() => releaseEdit(closingBoardId));
-    clearTimeout(state.draftTimer); state.draftTimer = null; state.abortController?.abort(); state.abortController = null; state.resizeObserver?.disconnect(); state.resizeObserver = null; state.historyObserver?.disconnect(); state.historyObserver = null; state.editRevokedUnlisten?.(); state.editRevokedUnlisten = null;
-    if (state.resizeFrame !== null) cancelAnimationFrame(state.resizeFrame); state.resizeFrame = null; cancelPendingDraw(); state.canvas = null; state.context = null; state.committedCanvas = null; state.committedContext = null; state.surface = null; state.formulaLayer = null; state.pointerId = null; state.active = null;
-    return closing;
+    const view=state;
+    if(view.closing)return view.closing;
+    if(!view.abortController)return Promise.resolve();
+    finishPointer();cancelCameraAnimation();view.dialog?.close();
+    const closingId=view.boardId,draftPromise=saveDraftNow(false,true);
+    clearTimeout(view.draftTimer);view.draftTimer=null;view.abortController.abort();
+    for(const entry of view.popovers.values())entry.animation?.cancel();view.popovers.clear();
+    view.resizeObserver?.disconnect();view.historyObserver?.disconnect();view.editRevokedUnlisten?.();view.editRevokedUnlisten=null;
+    if(view.resizeFrame!==null)cancelAnimationFrame(view.resizeFrame);view.resizeFrame=null;cancelPendingDraw();
+    view.closing=Promise.resolve(draftPromise).then(()=>view.storeTail).catch(()=>{}).then(()=>releaseEdit(closingId));
+    return view.closing;
 }
 
 function serializeWhiteboard() {
-    const hasNativeStore = Boolean(globalThis.window?.__TAURI__?.core?.invoke);
-    return {
-        version: 1, boardId: state.boardId, boardName: state.boardName,
-        isFormal: state.isFormal, dirty: state.dirty,
-        // Native drafts already own the potentially large document. Do not duplicate
-        // that document into the workspace's localStorage journal.
-        document: hasNativeStore ? null : structuredClone(documentValue()),
-        ui: { mode: state.mode, color: state.color, width: state.width, camera: { ...state.camera } }
-    };
+    return {version:1,boardId:state.boardId,boardName:state.boardName,isFormal:state.isFormal,dirty:state.dirty,
+        document:hasNativeStore()&&!state.recovery?null:documentValue(),recovery:!!state.recovery,ui:{mode:state.mode,color:state.color,width:state.width,camera:{...state.camera}}};
 }
 
 async function restoreWhiteboard(snapshot) {
-    if (snapshot?.version !== 1 || !/^[0-9a-f-]{36}$/i.test(snapshot.boardId || '')) return;
-    const hasNativeStore = Boolean(globalThis.window?.__TAURI__?.core?.invoke);
-    if (hasNativeStore && (snapshot.isFormal || snapshot.dirty)) {
-        // Re-read shared native data and acquire this page's lease. A sleep snapshot
-        // must never overwrite changes made by another window while it was asleep.
-        const result = await invoke('load_whiteboard', { id: snapshot.boardId });
-        state.boardId = result.meta.id;
-        state.boardName = result.meta.name;
-        state.isFormal = result.isFormal !== false;
-        applyDocument(result.draft?.document || result.document, result.meta.name);
-        state.dirty = Boolean(result.draft);
-        state.savedDraftRevision = state.draftRevision;
-        setReadOnly(result.editable === false);
-    } else {
-        state.boardId = snapshot.boardId;
-        state.boardName = typeof snapshot.boardName === 'string' ? snapshot.boardName.slice(0, 60) : '未命名白板';
-        state.isFormal = false;
-        if (snapshot.document && Array.isArray(snapshot.document.elements)) applyDocument(snapshot.document, state.boardName);
-        state.dirty = Boolean(snapshot.dirty);
-    }
-    const ui = snapshot.ui || {};
-    if (['pen','highlighter','eraser','line','arrow','rect','ellipse','select','pan','text','note','formula'].includes(ui.mode)) state.mode = ui.mode;
-    if (/^#[0-9a-f]{6}$/i.test(ui.color || '')) state.color = ui.color;
-    if (Number.isFinite(ui.width)) state.width = Math.min(24, Math.max(1, ui.width));
-    if (ui.camera && [ui.camera.x, ui.camera.y, ui.camera.zoom].every(Number.isFinite)) state.camera = { x: ui.camera.x, y: ui.camera.y, zoom: Math.min(8, Math.max(0.1, ui.camera.zoom)) };
-    redraw(); updateControls();
-    setStatus(state.readOnly ? '另一页面正在编辑，已以只读方式恢复' : '已恢复白板工作区', state.readOnly ? 'warning' : 'saved');
+    if(snapshot?.version!==1||!/^[0-9a-f-]{36}$/i.test(snapshot.boardId||''))return;
+    const view=state,generation=++view.boardGeneration,previousId=view.boardId;let acquiredId=null;
+    view.boardBusy=true;updateControls();
+    try{
+        if(snapshot.recovery&&snapshot.document){
+            applyDocument(snapshot.document,snapshot.boardName);view.boardId=newId();view.boardName=(view.boardName+' · 恢复副本').slice(0,60);view.isFormal=false;view.dirty=true;view.draftRevision=1;setReadOnly(false);await saveDraftNow(true);
+        }else if(hasNativeStore()&&(snapshot.isFormal||snapshot.dirty)){
+            const result=await invoke('load_whiteboard',{id:snapshot.boardId});acquiredId=result.editable?snapshot.boardId:null;
+            if(!live(view)||view.boardGeneration!==generation){if(result?.editable&&snapshot.boardId!==previousId)await releaseEdit(snapshot.boardId);return;}
+            const document=normalizeDocumentV2(result.draft?.document||result.document);
+            if(previousId!==snapshot.boardId)await releaseEdit(previousId);
+            if(!live(view)||view.boardGeneration!==generation){if(result.editable)await releaseEdit(snapshot.boardId);return;}
+            view.boardId=result.meta.id;view.isFormal=result.isFormal!==false;
+            applyDocument(document,result.draft?.name||result.meta.name);view.dirty=Boolean(result.draft);view.savedDraftRevision=view.draftRevision;setReadOnly(result.editable===false);
+        }else{
+            if(!live(view)||view.boardGeneration!==generation)return;
+            if(snapshot.document)applyDocument(snapshot.document,typeof snapshot.boardName==='string'?snapshot.boardName.slice(0,60):'未命名白板');
+            view.boardId=snapshot.boardId;view.isFormal=Boolean(snapshot.isFormal);view.dirty=Boolean(snapshot.dirty);
+        }
+        if(!live(view)||view.boardGeneration!==generation)return;
+        const ui=snapshot.ui||{};
+        if(['pen','highlighter','eraser','line','arrow','rect','ellipse','select','pan','text','note','formula'].includes(ui.mode))view.mode=ui.mode;
+        if(/^#[0-9a-f]{6}$/i.test(ui.color||''))view.color=ui.color;
+        if(Number.isFinite(ui.width))view.width=Math.min(24,Math.max(1,ui.width));
+        if(ui.camera&&[ui.camera.x,ui.camera.y,ui.camera.zoom].every(Number.isFinite))view.camera={x:ui.camera.x,y:ui.camera.y,zoom:Math.min(8,Math.max(.1,ui.camera.zoom))};
+        redraw();setStatus(view.readOnly?'另一页面正在编辑，已以只读方式恢复':'已恢复白板工作区',view.readOnly?'warning':'saved');
+    }catch(error){if(acquiredId&&view.boardId!==acquiredId)await releaseEdit(acquiredId);throw error;}
+    finally{if(live(view)&&view.boardGeneration===generation){view.boardBusy=false;updateControls();}}
 }
 
 async function flushWhiteboard() {
-    finishPointer();
-    clearTimeout(state.draftTimer); state.draftTimer = null;
-    await saveDraftNow(true);
+    const view=state;finishPointer();clearTimeout(view.draftTimer);view.draftTimer=null;
+    await saveDraftNow(true,true);await view.storeTail;
+}
+
+function cancelCameraAnimation() {
+    if(state.cameraFrame!==null)cancelAnimationFrame(state.cameraFrame);state.cameraFrame=null;state.cameraTarget=null;
+}
+function animateCamera(target) {
+    cancelCameraAnimation();const view=state,start={...view.camera};view.cameraTarget=target;
+    if(prefersReducedMotion()){view.camera={...target};redraw();updateControls();view.cameraTarget=null;return;}
+    const began=performance.now();
+    const frame=now=>{if(!live(view))return;const t=Math.min(1,(now-began)/260),ease=1-Math.pow(1-t,3);
+        view.camera={x:start.x+(target.x-start.x)*ease,y:start.y+(target.y-start.y)*ease,zoom:start.zoom+(target.zoom-start.zoom)*ease};redraw();updateControls();
+        if(t<1)view.cameraFrame=requestAnimationFrame(frame);else{view.cameraFrame=null;view.cameraTarget=null;}};
+    view.cameraFrame=requestAnimationFrame(frame);
+}
+function eraseAt(point) {
+    if(!editable()||state.active?.type!=='erase')return;
+    const hit=hitElement(point);if(!hit)return;state.active.snapshot ||= cloneElements();state.elements=state.elements.filter(element=>element!==hit);
+    state.totalPoints=countStrokePoints();state.active.changed=true;if(state.selectionId===hit.id)state.selectionId=null;
+}
+function cancelPointer(clearPointers=true) {
+    const active=state.active;try{if(state.pointerId!==null)state.canvas?.releasePointerCapture?.(state.pointerId);}catch{}
+    state.pointerId=null;state.active=null;state.pinch=null;if(clearPointers)state.pointers.clear();cancelPendingDraw();
+    if(active?.snapshot)replaceElements(active.snapshot);
+    if(active?.type==='pan')state.camera=active.camera;
+    state.root?.classList.remove('is-interacting');redraw();updateControls();
+}
+function updateCursor(event) {
+    if(!state.cursor||!state.surface)return;
+    const rect=state.surface.getBoundingClientRect(),tool=state.spacePressed||state.active?.type==='pan'?'pan':state.mode;
+    state.surface.dataset.mode=tool;const show=event&&event.pointerType!=='touch'&&['pen','highlighter','eraser'].includes(tool)&&!state.readOnly&&!state.boardBusy;
+    state.cursor.hidden=!show;
+    if(show){const size=tool==='eraser'?Math.max(24,state.width*4):Math.max(6,state.width);state.cursor.style.width=size+'px';state.cursor.style.height=size+'px';state.cursor.style.transform='translate3d('+(event.clientX-rect.left-size/2)+'px,'+(event.clientY-rect.top-size/2)+ 'px,0)';state.cursor.style.borderColor=tool==='eraser'?'#8e8e93':state.color;}
+}
+function selectedElement() { return state.elements.find(element=>element.id===state.selectionId)||null; }
+function updateSelectionControls() {
+    const element=selectedElement(),bar=document.getElementById('whiteboardSelectionToolbar');if(!bar)return;
+    bar.hidden=!element||state.mode!=='select'||!!state.active?.moved||state.active?.type==='pan';
+    const names={stroke:'笔迹',line:'直线',arrow:'箭头',rect:'矩形',ellipse:'椭圆',note:'便签',text:'文字',formula:'公式'};
+    const label=document.getElementById('whiteboardSelectionLabel');if(label)label.textContent=element?names[element.type]||'对象':'';
+    for(const id of ['whiteboardDuplicate','whiteboardDelete','whiteboardEditSelected']){const button=document.getElementById(id);if(button)button.disabled=!element||!editable()||(id==='whiteboardEditSelected'&&!['text','note','formula'].includes(element.type));}
+}
+function deleteSelected() {
+    if(!editable()||!selectedElement())return;finishPointer();pushUndo();replaceElements(state.elements.filter(element=>element.id!==state.selectionId));state.selectionId=null;markDirty();redraw();
+}
+function duplicateSelected() {
+    const element=selectedElement();if(!editable()||!element)return;
+    if(state.elements.length>=MAX_ELEMENTS||state.totalPoints+(element.points?.length||0)>MAX_POINTS){setStatus('白板已达容量上限，请新建白板','warning');return;}
+    const clone=structuredClone(element);clone.id=newId();translateElement(clone,24/state.camera.zoom,24/state.camera.zoom);pushUndo();state.elements.push(clone);state.totalPoints=countStrokePoints();state.selectionId=clone.id;markDirty();redraw();
+}
+function nudgeSelected(dx,dy) {
+    const element=selectedElement();if(!editable()||!element)return;pushUndo();moveElement(element,dx/state.camera.zoom,dy/state.camera.zoom);markDirty();redraw();
+}
+function pushUndoPreservingRedo() { const redo=state.redo;pushUndo();state.redo=redo; }
+function closeHelp() { const panel=state.root?.querySelector('#whiteboardHelpPanel');if(panel)showPopover(panel,false);state.root?.querySelector('#whiteboardHelp')?.setAttribute('aria-expanded','false'); }
+
+
+function showPopover(node,open) {
+    if(!node)return;
+    const view=state,previous=view.popovers.get(node);
+    if(previous?.open===open||(!open&&node.hidden))return;
+    const current=previous&&getComputedStyle(node),from=current?{opacity:current.opacity,translate:current.translate,scale:current.scale}:null;
+    previous?.animation?.cancel();
+    if(!open&&node.contains(document.activeElement)){
+        const name=node.dataset.boardPanelContent;
+        view.root.querySelector(name?'[data-board-panel="'+name+'"]':'#whiteboardHelp')?.focus({preventScroll:true});
+    }
+    node.hidden=false;node.inert=!open;
+    const entry={open,animation:null};view.popovers.set(node,entry);
+    const finish=()=>{if(view.popovers.get(node)!==entry)return;node.hidden=!entry.open;view.popovers.delete(node);};
+    if(prefersReducedMotion()||!node.animate){finish();return;}
+    const first=from||(open?{opacity:0,translate:'0 -6px',scale:'.98'}:{opacity:1,translate:'0 0',scale:'1'});
+    entry.animation=node.animate([first,open?{opacity:1,translate:'0 0',scale:'1'}:{opacity:0,translate:'0 -4px',scale:'.985'}],{duration:open?240:140,easing:'cubic-bezier(.22,1,.36,1)'});
+    entry.animation.finished.then(finish,()=>{});
+}
+
+
+async function persistRecovery(strict=false) {
+    const view=state,record=view.recovery;
+    if(!record||record.persisted)return;
+    if(!view.recoveryJob){
+        const job=view.storeTail.catch(()=>{}).then(async()=>{
+            // The new identity protects the new owner's document and keeps this local work discoverable in history.
+            let thumbnailDataUrl=null;
+            try{const image=await renderBoardImage(record.document,{thumbnail:true,drawElement,drawBackground,runtime:view.formulaRuntime});thumbnailDataUrl=image.toDataURL('image/png');}
+            catch{/* A preview failure must never block preserving the document. */}
+            const request={id:record.id,name:record.name,document:record.document,thumbnailDataUrl};
+            if(hasNativeStore()){await invoke('save_whiteboard',{request});await releaseEdit(record.id);}
+            else{
+                const now=Date.now(),meta={id:record.id,name:record.name,createdAt:now,updatedAt:now,hasDraft:false},list=JSON.parse(localStorage.getItem(BROWSER_INDEX)||'[]');
+                localStorage.setItem(browserBoardKey(record.id),JSON.stringify({meta,document:record.document,thumbnail:request.thumbnailDataUrl}));
+                localStorage.setItem(BROWSER_INDEX,JSON.stringify([meta,...list.filter(item=>item.id!==record.id)]));
+            }
+            record.persisted=true;
+            if(live(view)&&view.recovery===record){setStatus('未保存修改已另存为“接管前恢复”白板');await loadHistory();}
+        });
+        view.recoveryJob=job;view.storeTail=job.catch(()=>{});
+        job.finally(()=>{if(view.recoveryJob===job)view.recoveryJob=null;}).catch(()=>{});
+    }
+    if(strict)return view.recoveryJob;
+    return view.recoveryJob.catch(error=>{if(live(view))setStatus('恢复副本保存失败，请保留此页并重试：'+(error?.message||error),'warning');});
+}
+
+
+async function writeDraftRequest(request) {
+    if(hasNativeStore())await invoke('save_whiteboard_draft',{request});
+    else localStorage.setItem('dtkit_whiteboard_draft_'+request.id,JSON.stringify({name:request.name,document:request.document,savedAt:Date.now()}));
+}
+
+function readBrowserHistory() {
+    const stored=JSON.parse(localStorage.getItem(BROWSER_INDEX)||'[]');
+    const list=Array.isArray(stored)?stored.map(item=>({...item,hasDraft:!!localStorage.getItem('dtkit_whiteboard_draft_'+item.id)})):[];
+    const ids=new Set(list.map(item=>item.id));
+    for(let index=0;index<localStorage.length;index++){
+        const key=localStorage.key(index);if(!key?.startsWith('dtkit_whiteboard_draft_'))continue;
+        const id=key.slice('dtkit_whiteboard_draft_'.length);
+        if(ids.has(id)||!/^[0-9a-f-]{36}$/i.test(id))continue;
+        try{const draft=JSON.parse(localStorage.getItem(key));if(!draft?.document)continue;list.push({id,name:draft.name||'未命名白板',createdAt:draft.savedAt||0,updatedAt:draft.savedAt||0,hasDraft:true});ids.add(id);}
+        catch{/* A damaged draft does not hide other recoverable boards. */}
+    }
+    return list.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
 }
 
 registerTool({

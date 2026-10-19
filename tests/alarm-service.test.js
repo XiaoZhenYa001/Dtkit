@@ -13,7 +13,12 @@ import {
     stopAlarmAudio,
     syncAlarmTasks
 } from '../src/core/alarmService.js';
-import { formatAlarmDuration } from '../src/tools/alarm-clock/taskListView.js';
+import {
+    filterAlarmTasks,
+    formatAlarmDuration,
+    getAlarmScheduleLabel,
+    getAlarmTaskStatus
+} from '../src/tools/alarm-clock/taskListView.js';
 import { createAlarmTask } from '../src/tools/alarm-clock/taskFactory.js';
 import { enqueueUniqueAudioTask } from '../src/tools/alarm-clock/audioManager.js';
 import { formatAudioFileSize } from '../src/tools/alarm-clock/actionConfigView.js';
@@ -98,10 +103,75 @@ test('legacy repeating alarms are migrated to an explicit all-days schedule', ()
     assert.deepEqual(task.config.repeatDays, [0, 1, 2, 3, 4, 5, 6]);
 });
 
+test('hourly alarms resume at midnight on the next enabled day', () => {
+    const now = new Date(2026, 7, 3, 10, 30, 0, 0).getTime(); // Monday
+    const task = {
+        type: 'hourly', enabled: true, paused: false,
+        config: { repeatEnabled: true, repeatDays: [2] }
+    };
+    const nextTuesday = new Date(2026, 7, 4, 0, 0, 0, 0).getTime();
+    assert.equal(getAlarmRemainingSeconds(task, now), (nextTuesday - now) / 1000);
+
+    task.config.repeatDays = [1];
+    assert.equal(getAlarmRemainingSeconds(task, now), 30 * 60);
+    const lateMonday = new Date(2026, 7, 3, 23, 30, 0, 0).getTime();
+    const followingMonday = new Date(2026, 7, 10, 0, 0, 0, 0).getTime();
+    assert.equal(getAlarmRemainingSeconds(task, lateMonday), (followingMonday - lateMonday) / 1000);
+});
+
 test('alarm duration formatting is stable for fractional and long durations', () => {
     assert.equal(formatAlarmDuration(0), '00:00:00');
     assert.equal(formatAlarmDuration(61.2), '00:01:02');
     assert.equal(formatAlarmDuration(100 * 60 * 60), '100:00:00');
+});
+
+test('alarm filters distinguish active, paused and ended reminders without changing their order', () => {
+    const active = { id: 'active', enabled: true, paused: false };
+    const paused = { id: 'paused', enabled: true, paused: true };
+    const completed = { id: 'completed', enabled: false, paused: false };
+    const disabledWhilePaused = { id: 'disabled', enabled: false, paused: true };
+    const tasks = [paused, completed, active, disabledWhilePaused];
+
+    assert.equal(getAlarmTaskStatus(active), 'active');
+    assert.equal(getAlarmTaskStatus(paused), 'paused');
+    assert.equal(getAlarmTaskStatus(completed), 'completed');
+    assert.equal(getAlarmTaskStatus(disabledWhilePaused), 'completed');
+    assert.deepEqual(filterAlarmTasks(tasks), tasks);
+    assert.deepEqual(filterAlarmTasks(tasks, 'active'), [active]);
+    assert.deepEqual(filterAlarmTasks(tasks, 'paused'), [paused]);
+    assert.deepEqual(filterAlarmTasks(tasks, 'completed'), [completed, disabledWhilePaused]);
+    assert.deepEqual(tasks, [paused, completed, active, disabledWhilePaused]);
+});
+
+test('weekly alarm labels describe weekdays, weekends and custom day order', () => {
+    const task = { type: 'fixed', config: { time: '09:00', repeatEnabled: true } };
+    for (const [repeatDays, label] of [
+        [[5, 4, 3, 2, 1, 1], '09:00 · 工作日'],
+        [[6, 0], '09:00 · 周末'],
+        [[0, 1, 2, 3, 4, 5, 6], '09:00 · 每天'],
+        [['0', '5', '1'], '09:00 · 每周一、五、日']
+    ]) {
+        task.config.repeatDays = repeatDays;
+        assert.equal(getAlarmScheduleLabel(task), label);
+    }
+});
+
+test('schedule labels explain countdowns, intervals and one-time reminders', () => {
+    assert.equal(getAlarmScheduleLabel({
+        type: 'countdown', config: { totalSeconds: 3665 }
+    }), '1小时 1分钟 5秒');
+    assert.equal(getAlarmScheduleLabel({
+        type: 'interval', config: { intervalValue: 30, intervalUnit: 'minutes' }
+    }), '每 30 分钟');
+    assert.equal(getAlarmScheduleLabel({
+        type: 'interval', config: { intervalValue: 2, intervalUnit: 'hours' }
+    }), '每 2 小时');
+    assert.equal(getAlarmScheduleLabel({
+        type: 'fixed', config: { time: '09:00', repeatEnabled: false, repeatDays: [1] }
+    }), '09:00 · 仅一次');
+    assert.equal(getAlarmScheduleLabel({
+        type: 'hourly', config: { repeatEnabled: false }
+    }), '每逢整点 · 仅一次');
 });
 
 test('alarm task factory validates schedules and produces serializable tasks', () => {
@@ -128,6 +198,12 @@ test('alarm task factory validates schedules and produces serializable tasks', (
     }).error, '倒计时时间超出有效范围');
     assert.equal(createAlarmTask({
         name: '无重复日', type: 'fixed', action: 'notify', time: '09:00', repeatEnabled: true
+    }).error, '重复提醒至少选择一天');
+});
+
+test('invalid repeat-day input returns a validation message instead of throwing', () => {
+    assert.equal(createAlarmTask({
+        name: '错误重复日', type: 'hourly', action: 'notify', repeatDays: '1,2,3'
     }).error, '重复提醒至少选择一天');
 });
 
@@ -232,6 +308,39 @@ test('alarm task state transitions preserve deterministic countdown schedules', 
     assert.equal(task.config.deadlineAt, now + 140_000);
 });
 
+test('stale pause and resume actions cannot change an already transitioned schedule', () => {
+    const now = 1_800_000_000_000;
+    const task = prepareAlarmTaskSchedule(countdownTask(120), { now });
+    const tasks = [task];
+
+    assert.equal(resumeAlarmTask(tasks, task.id, now + 10_000), null);
+    assert.equal(task.config.deadlineAt, now + 120_000);
+    pauseAlarmTask(tasks, task.id, now + 20_000);
+    assert.equal(pauseAlarmTask(tasks, task.id, now + 30_000), null);
+    assert.equal(task.pausedAt, now + 20_000);
+    assert.equal(task.config.remainingSeconds, 100);
+
+    resumeAlarmTask(tasks, task.id, now + 40_000);
+    assert.equal(task.config.deadlineAt, now + 140_000);
+    assert.equal(resumeAlarmTask(tasks, task.id, now + 50_000), null);
+    assert.equal(task.config.deadlineAt, now + 140_000);
+});
+
+test('restarting a paused countdown starts a fresh active schedule', () => {
+    const now = 1_800_000_000_000;
+    const task = countdownTask(120);
+    task.paused = true;
+    task.pausedAt = now - 10_000;
+    task.config.remainingSeconds = 15;
+
+    assert.equal(restartCountdownTask([task], task.id, now), task);
+    assert.equal(task.enabled, true);
+    assert.equal(task.paused, false);
+    assert.equal('pausedAt' in task, false);
+    assert.equal(task.config.remainingSeconds, 120);
+    assert.equal(task.config.deadlineAt, now + 120_000);
+});
+
 test('independent alarm pages mutate the latest shared record without deleting other pages tasks', async () => {
     const values = new Map();
     const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
@@ -268,11 +377,106 @@ test('an alarm trigger is recorded once across native windows and missed-trigger
     assert.deepEqual(data.processedTriggers, ['native-trigger-1']);
 });
 
+test('a delayed completion cannot disable a countdown that has since restarted', () => {
+    const now = 1_800_000_000_000;
+    const task = prepareAlarmTaskSchedule(countdownTask(120), { now });
+    const data = { tasks: [task] };
+    const trigger = {
+        id: task.id, type: 'countdown', triggerId: 'previous-run', triggeredAt: now - 10_000,
+        config: { deadlineAt: now - 10_000 }
+    };
+
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now), true);
+    assert.equal(task.enabled, true);
+    assert.equal(task.config.deadlineAt, now + 120_000);
+    assert.equal(task.config.remainingSeconds, 120);
+    assert.equal(data.completedToday, 1);
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now), false);
+});
+
+test('a delayed trigger cannot complete a reminder whose timing type has changed', () => {
+    const now = 1_800_000_000_000;
+    const task = {
+        id: 'edited', type: 'fixed', enabled: true, paused: false,
+        config: { time: '10:00', repeatEnabled: false, repeatDays: [] }
+    };
+    const data = { tasks: [task] };
+    const trigger = {
+        id: task.id, type: 'countdown', triggerId: 'old-countdown', triggeredAt: now,
+        config: { totalSeconds: 60, remainingSeconds: 60, deadlineAt: now }
+    };
+
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now), true);
+    assert.equal(task.enabled, true);
+    assert.equal(task.config.time, '10:00');
+    assert.equal(data.completedToday, 1);
+    assert.equal(recordTriggeredAlarmOnce(data, trigger, now), false);
+});
+
+test('old fixed and hourly triggers preserve edited one-time schedules', () => {
+    const now = 1_800_000_000_000;
+    const scenarios = [
+        { type: 'fixed', current: { time: '10:00', repeatEnabled: false },
+            previous: { time: '09:00', repeatEnabled: false } },
+        { type: 'fixed', current: { time: '09:00', repeatEnabled: false },
+            previous: { time: '09:00', repeatEnabled: true, repeatDays: [1, 2, 3, 4, 5] } },
+        { type: 'hourly', current: { repeatEnabled: false },
+            previous: { repeatEnabled: true, repeatDays: [0, 6] } }
+    ];
+
+    for (const [index, { type, current, previous }] of scenarios.entries()) {
+        const task = { id: 'edited', type, enabled: true, paused: false, config: current };
+        const data = { tasks: [task] };
+        assert.equal(recordTriggeredAlarmOnce(data, {
+            id: task.id, type, triggerId: `old-schedule-${index}`, triggeredAt: now,
+            config: previous
+        }, now), true);
+        assert.equal(task.enabled, true);
+        assert.equal(data.completedToday, 1);
+    }
+
+    const unchanged = { id: 'unchanged', type: 'fixed', enabled: true,
+        config: { time: '10:00', repeatEnabled: false } };
+    const data = { tasks: [unchanged] };
+    assert.equal(recordTriggeredAlarmOnce(data, {
+        ...structuredClone(unchanged), triggerId: 'current-schedule', triggeredAt: now
+    }, now), true);
+    assert.equal(unchanged.enabled, false);
+    assert.equal(data.completedToday, 1);
+});
+
+test('replaying an older completion cannot reset a newer day completion count', () => {
+    const today = new Date(2026, 7, 8, 12, 0, 0).getTime();
+    const yesterday = new Date(2026, 7, 7, 12, 0, 0).getTime();
+    const task = countdownTask();
+    const data = { tasks: [task], completedToday: 3, lastDate: new Date(today).toDateString() };
+
+    assert.equal(recordTriggeredAlarmOnce(data, {
+        id: task.id, triggerId: 'yesterday', triggeredAt: yesterday
+    }, today), true);
+    assert.equal(task.enabled, false);
+    assert.equal(data.completedToday, 3);
+    assert.equal(data.lastDate, new Date(today).toDateString());
+});
+
 test('a failed alarm persistence transaction leaves the previous shared record intact', async () => {
     const initial = JSON.stringify({ tasks: [{ id: 'existing' }], revision: 5 });
     const storage = { getItem: () => initial, setItem: () => { throw new Error('disk full'); } };
     await assert.rejects(updateAlarmData(data => { data.tasks.push({ id: 'new' }); }, { storage, locks: null }), /保存闹钟数据失败/);
     assert.deepEqual(readAlarmData(storage), JSON.parse(initial));
+});
+
+test('alarm transactions reject task IDs that the native scheduler cannot read', async () => {
+    let stored = JSON.stringify({ tasks: [{ id: 'existing' }], revision: 5 });
+    const initial = stored;
+    const storage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+
+    for (const invalidId of [null, 1, {}, '']) {
+        await assert.rejects(updateAlarmData(data => {
+            data.tasks.push({ id: invalidId });
+        }, { storage, locks: null }), /闹钟任务标识无效或重复/);
+        assert.equal(stored, initial);
+    }
 });
 
 test('embedded alarm pages delegate scheduling and audio control to the trusted parent service', async () => {

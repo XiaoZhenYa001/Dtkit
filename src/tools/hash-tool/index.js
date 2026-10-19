@@ -1,734 +1,308 @@
-/**
- * Hash 计算工具 - 玻璃拟态风格
- * 计算文本或文件的哈希值 (MD5, SHA-1, SHA-256, SHA-512)
- */
 import { registerTool } from '../toolRegistry.js';
+import { mountSegmentedControl, revealContent, transitionLayout } from '../../core/toolMotion.js';
+import { validateHashResults, inspectHashVerification, formatHashBytes, textByteLength } from './core.js';
+import '../../css/tools/developer-workbench.css';
 import '../../css/tools/hash-tool.css';
 
-// ============================================
-// 工具状态
-// ============================================
-const hashState = {
-    selectedFile: null,
-    isCalculating: false,
-    results: {},
-    algorithms: {
-        md5: true,
-        sha1: true,
-        sha256: true,
-        sha512: false
-    },
-    uppercase: true,
-    verifyHash: '',
-    unlistenProgress: null,
-    abortController: null  // 用于清理事件监听器
-};
+let state = null;
+const DEFAULT_ALGORITHMS = ['md5', 'sha1', 'sha256'];
+const LABELS = { md5: 'MD5', sha1: 'SHA-1', sha256: 'SHA-256', sha512: 'SHA-512' };
+const LENGTHS = { md5: 32, sha1: 40, sha256: 64, sha512: 128 };
 
-// ============================================
-// HTML 模板
-// ============================================
 function getTemplate() {
-    return `
-        <div class="view-container hash-tool-view">
-            <div class="hash-glass-container">
-                <!-- 主操作区 -->
-                <div class="hash-main-panel">
-                    <div class="hash-header-title">
-                        <h1>哈希校验工具</h1>
-                        <p>输入文本或上传文件，即刻生成安全校验指纹</p>
+    return `<div class="view-container dev-workbench hash-tool-view">
+        <header class="dw-header"><div><p class="dw-eyebrow">CHECKSUM WORKSPACE</p><h1 class="dw-title">MD5 / Hash</h1>
+            <p class="dw-subtitle">为文本与文件，生成一份准确的指纹。</p></div><span class="dw-chip">本地计算</span></header>
+        <div class="hash-layout hash-glass-container">
+            <main class="hash-main-panel" aria-label="输入与计算结果">
+                <section class="dw-card hash-input-card">
+                    <header class="dw-card-header"><div id="hashModeGroup" class="dw-segmented" role="group" aria-label="计算来源">
+                        <button type="button" data-hash-mode="text" aria-pressed="true">文本</button>
+                        <button type="button" data-hash-mode="file" aria-pressed="false">文件</button></div>
+                        <span id="hashInputMeta" class="dw-label">0 字节 · UTF-8</span></header>
+                    <div id="hashInputPanels">
+                        <div id="hashTextPanel" class="hash-source-panel"><label class="hash-sr-only" for="hashTextInput">需要计算的文本</label>
+                            <textarea id="hashTextInput" class="dw-mono hash-textarea" spellcheck="false" placeholder="输入文本，或直接计算空文本的摘要…"></textarea>
+                            <div class="hash-input-actions dw-actions"><button id="hashPasteBtn" class="dw-button" type="button">粘贴文本</button>
+                                <button id="hashClearTextBtn" class="dw-button" type="button">清空</button><span class="dw-status">保留空格与换行</span></div></div>
+                        <div id="hashFilePanel" class="hash-source-panel" hidden>
+                            <div id="hashFileUpload" class="hash-file-upload"><i class="ri-upload-cloud-2-line" aria-hidden="true"></i>
+                                <p id="hashFileName">将文件拖放到这里</p><span id="hashFileMeta" class="dw-status">文件在本机读取与计算。</span>
+                                <div class="dw-actions"><button id="hashChooseFileBtn" class="dw-button" type="button">选择文件</button>
+                                    <button class="dw-button hash-clear-file" type="button" hidden>移除文件</button></div></div>
+                            <input type="file" id="hashFileInput" hidden></div>
                     </div>
-
-                    <!-- 文本输入 -->
-                    <div class="hash-content-card">
-                        <textarea id="hashTextInput" class="hash-textarea"
-                            placeholder="输入需要计算哈希值的文本内容..."></textarea>
-                    </div>
-
-                    <!-- 文件上传 -->
-                    <div id="hashFileUpload" class="hash-file-upload">
-                        <i class="ri-upload-cloud-2-line"></i>
-                        <span>将文件拖放到此处，或 <b>点击浏览</b></span>
-                    </div>
-
-                    <!-- 隐藏的文件输入 -->
-                    <input type="file" id="hashFileInput" class="is-initially-hidden">
-
-                    <!-- 进度条 -->
-                    <div id="hashProgressContainer" class="hash-progress-container">
-                        <div id="hashProgressBar" class="hash-progress-bar"></div>
-                    </div>
-
-                    <!-- 结果区域 -->
-                    <div class="hash-results-container">
-                        <span class="hash-section-label">计算结果</span>
-                        <div id="hashResultsList">
-                            <div class="hash-empty-results">
-                                <i class="ri-shield-check-line"></i>
-                                <p>输入文本或选择文件后点击计算</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 校验区域 -->
-                    <div class="hash-verify-section">
-                        <span class="hash-section-label">哈希校验</span>
-                        <input type="text" id="hashVerifyInput" class="hash-verify-input"
-                            placeholder="粘贴要校验的哈希值...">
-                        <div id="hashVerifyResult" class="hash-verify-result"></div>
-                    </div>
+                </section>
+                <div id="hashProgressContainer" class="hash-progress-container" hidden>
+                    <div class="hash-progress-heading"><span id="hashProgressLabel">正在计算…</span><button id="hashCancelBtn" type="button" class="dw-button">取消等待</button></div>
+                    <div class="hash-progress-track" role="progressbar" aria-label="Hash 计算进度" aria-valuemin="0" aria-valuemax="100"><div id="hashProgressBar" class="hash-progress-bar"></div></div>
                 </div>
-
-                <!-- 右侧配置面板 -->
-                <div class="hash-config-panel">
-                    <span class="hash-section-label">算法配置</span>
-
-                    <div class="hash-switch-group">
-                        <span>MD5</span>
-                        <div class="hash-switch active" data-algo="md5"></div>
-                    </div>
-                    <div class="hash-switch-group">
-                        <span>SHA-1</span>
-                        <div class="hash-switch active" data-algo="sha1"></div>
-                    </div>
-                    <div class="hash-switch-group">
-                        <span>SHA-256</span>
-                        <div class="hash-switch active" data-algo="sha256"></div>
-                    </div>
-                    <div class="hash-switch-group">
-                        <span>SHA-512</span>
-                        <div class="hash-switch" data-algo="sha512"></div>
-                    </div>
-
-                    <div class="hash-switch-group hash-switch-group--separated">
-                        <span>大写输出</span>
-                        <div class="hash-switch active" data-option="uppercase"></div>
-                    </div>
-
-                    <button id="hashCalculateBtn" class="hash-btn-calculate">
-                        <i class="ri-shield-flash-line"></i> 立即计算
-                    </button>
-
-                    <div class="hash-security-tip">
-                        <b><i class="ri-shield-check-line"></i> 安全提示</b>
-                        <span>所有计算均在本地完成，不会上传您的文件或文本到任何服务器。</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
+                <section id="hashResultsSection" class="dw-card hash-results-container" data-stale="false">
+                    <header class="dw-card-header"><h2 class="dw-card-title">计算结果</h2><button id="hashCopyAllBtn" type="button" class="dw-button" disabled>复制全部</button></header>
+                    <div id="hashResultsList"><div class="dw-empty hash-empty-results">选择算法，点击计算。空文本也有自己的摘要。</div></div>
+                </section>
+                <section class="dw-card hash-verify-section"><header class="dw-card-header"><h2 class="dw-card-title">核对摘要</h2><span class="dw-label">忽略大小写</span></header>
+                    <div class="dw-card-body"><label class="hash-sr-only" for="hashVerifyInput">要核对的十六进制摘要</label>
+                        <input id="hashVerifyInput" class="dw-control dw-mono hash-verify-input" type="text" spellcheck="false" autocomplete="off" placeholder="粘贴一串十六进制摘要…">
+                        <p id="hashVerifyResult" class="dw-status hash-verify-result" role="status" aria-live="polite"></p></div></section>
+                <p id="hashStatus" class="dw-status" role="status" aria-live="polite">准备就绪 · Ctrl / ⌘ + Enter 计算</p>
+            </main>
+            <aside class="dw-card hash-config-panel" aria-label="计算设置">
+                <div class="hash-config-heading"><p class="dw-eyebrow">ALGORITHMS</p><h2 class="dw-card-title">算法与输出</h2><p class="dw-status">可以同时计算多种摘要。</p></div>
+                ${Object.entries(LABELS).map(([id, label]) => `<div class="hash-switch-group"><div><span class="hash-algorithm-label">${label}</span><p class="dw-status">${LENGTHS[id]} 位十六进制</p></div>
+                    <button class="hash-switch${DEFAULT_ALGORITHMS.includes(id) ? ' active' : ''}" type="button" role="switch" aria-checked="${DEFAULT_ALGORITHMS.includes(id)}" aria-label="${label}" data-algo="${id}"><span></span></button></div>`).join('')}
+                <div class="hash-switch-group hash-switch-group--separated"><div><span class="hash-algorithm-label">大写输出</span><p class="dw-status">仅改变显示，不影响摘要。</p></div>
+                    <button class="hash-switch active" type="button" role="switch" aria-checked="true" aria-label="大写输出" data-option="uppercase"><span></span></button></div>
+                <button id="hashCalculateBtn" class="dw-button dw-button--primary hash-btn-calculate" type="button">计算摘要</button>
+                <p class="dw-status hash-shortcut">Ctrl / ⌘ + Enter 快速计算</p>
+                <div class="hash-security-tip"><h3>选择合适的算法</h3><p class="dw-status">一般文件校验可使用 SHA-256。MD5 与 SHA-1 适合兼容既有校验值。</p><p class="dw-status">输入中的每个空格、换行和字节都会参与计算。</p></div>
+            </aside>
+        </div></div>`;
 }
 
-// ============================================
-// CSS 样式（引用外部文件）
-// ============================================
-
-
-// ============================================
-// 初始化函数
-// ============================================
-async function init() {
-    console.log('[HashTool] 初始化哈希工具');
-
-    // 清理之前的事件监听器
-    if (hashState.abortController) {
-        hashState.abortController.abort();
-    }
-    hashState.abortController = new AbortController();
-
-    // 绑定事件
-    bindEvents();
-
-    // 监听后端进度事件
-    await setupProgressListener();
+function active(view) { return state === view && !view.controller.signal.aborted && view.root.isConnected; }
+function node(view, id) { return view.root.querySelector('#' + id); }
+function status(view, message, tone = '') { const target = node(view, 'hashStatus'); target.textContent = message; target.dataset.tone = tone; }
+function selectedAlgorithms(view) { return Object.keys(LABELS).filter(id => view.algorithms.includes(id)); }
+function displayHash(view, hash) { return view.uppercase ? hash.toUpperCase() : hash.toLowerCase(); }
+function updateVerification(view) {
+    const result = inspectHashVerification(node(view, 'hashVerifyInput').value, view.results, view.valid);
+    const target = node(view, 'hashVerifyResult'); target.textContent = result.message; target.dataset.tone = result.tone;
+    target.classList.toggle('match', result.tone === 'success'); target.classList.toggle('mismatch', result.tone === 'error');
+    node(view, 'hashVerifyInput').setAttribute('aria-invalid', String(result.tone === 'error'));
 }
-
-// ============================================
-// 绑定事件
-// ============================================
-function bindEvents() {
-    const signal = hashState.abortController?.signal;
-
-    // 计算按钮
-    const calculateBtn = document.getElementById('hashCalculateBtn');
-    if (calculateBtn) {
-        calculateBtn.addEventListener('click', handleCalculate, { signal });
-    }
-
-    // 文件上传区域
-    const fileUpload = document.getElementById('hashFileUpload');
-    const fileInput = document.getElementById('hashFileInput');
-
-    if (fileUpload && fileInput) {
-        // 点击上传区域
-        fileUpload.addEventListener('click', async () => {
-            // 如果已选择文件，则不响应点击
-            if (hashState.selectedFile) return;
-
-            // 在 Tauri 环境中使用原生对话框以获取文件路径
-            if (window.__TAURI__?.dialog?.open) {
-                try {
-                    const filePath = await window.__TAURI__.dialog.open({
-                        multiple: false,
-                        title: '选择文件'
-                    });
-                    if (filePath) {
-                        // 从路径中提取文件名
-                        const fileName = filePath.split(/[/\\]/).pop() || '未知文件';
-                        // 获取文件信息
-                        let fileSize = 0;
-                        try {
-                            const stat = await window.__TAURI__.fs.stat(filePath);
-                            fileSize = stat.size || 0;
-                        } catch (e) {
-                            console.warn('[HashTool] 无法获取文件大小');
-                        }
-                        // 创建伪 File 对象
-                        const fakeFile = { name: fileName, size: fileSize, path: filePath };
-                        selectFile(fakeFile);
-                    }
-                } catch (err) {
-                    console.error('[HashTool] 选择文件失败:', err);
-                    // fallback 到原生 input
-                    fileInput.click();
-                }
-            } else {
-                // 浏览器环境使用原生 input
-                fileInput.click();
-            }
-        }, { signal });
-
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files && e.target.files[0]) {
-                selectFile(e.target.files[0]);
-            }
-        }, { signal });
-
-        // 拖放支持
-        fileUpload.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            if (!hashState.selectedFile) {
-                fileUpload.classList.add('dragover');
-            }
-        }, { signal });
-
-        fileUpload.addEventListener('dragleave', () => {
-            fileUpload.classList.remove('dragover');
-        }, { signal });
-
-        fileUpload.addEventListener('drop', (e) => {
-            e.preventDefault();
-            fileUpload.classList.remove('dragover');
-            // 如果已选择文件，则不响应拖放
-            if (hashState.selectedFile) return;
-            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                selectFile(e.dataTransfer.files[0]);
-            }
-        }, { signal });
-    }
-
-    // 算法开关
-    document.querySelectorAll('.hash-switch[data-algo]').forEach(sw => {
-        sw.addEventListener('click', () => {
-            const algo = sw.dataset.algo;
-            hashState.algorithms[algo] = !hashState.algorithms[algo];
-            sw.classList.toggle('active', hashState.algorithms[algo]);
-        }, { signal });
-    });
-
-    // 大写开关
-    const uppercaseSwitch = document.querySelector('.hash-switch[data-option="uppercase"]');
-    if (uppercaseSwitch) {
-        uppercaseSwitch.addEventListener('click', () => {
-            hashState.uppercase = !hashState.uppercase;
-            uppercaseSwitch.classList.toggle('active', hashState.uppercase);
-            // 如果已有结果，重新格式化
-            if (Object.keys(hashState.results).length > 0) {
-                renderResults();
-            }
-        }, { signal });
-    }
-
-    // 校验输入
-    const verifyInput = document.getElementById('hashVerifyInput');
-    if (verifyInput) {
-        verifyInput.addEventListener('input', (e) => {
-            hashState.verifyHash = e.target.value.trim();
-            verifyHash();
-        }, { signal });
-    }
-
-    // 文本输入变化时清除文件选择
-    const textInput = document.getElementById('hashTextInput');
-    if (textInput) {
-        textInput.addEventListener('input', () => {
-            if (textInput.value.trim() && hashState.selectedFile) {
-                clearFile();
-            }
-        }, { signal });
-    }
-
-    // 使用事件委托处理复制按钮点击（避免每次 renderResults 时重复绑定）
-    const resultsList = document.getElementById('hashResultsList');
-    if (resultsList) {
-        resultsList.addEventListener('click', async (e) => {
-            const copyBtn = e.target.closest('.hash-copy-btn');
-            if (copyBtn) {
-                const hash = copyBtn.dataset.hash;
-                try {
-                    await navigator.clipboard.writeText(hash);
-                    copyBtn.innerHTML = '<i class="ri-check-line"></i> 已复制';
-                    copyBtn.classList.add('copied');
-                    setTimeout(() => {
-                        copyBtn.innerHTML = '<i class="ri-file-copy-line"></i> 复制';
-                        copyBtn.classList.remove('copied');
-                    }, 1500);
-                } catch (err) {
-                    showToast('复制失败', 'error');
-                }
-            }
-        }, { signal });
-    }
+function updateActions(view) {
+    node(view, 'hashCalculateBtn').disabled = Boolean(view.job);
+    node(view, 'hashCalculateBtn').textContent = view.job ? '正在计算…' : '计算摘要';
+    node(view, 'hashResultsList').setAttribute('aria-busy', String(Boolean(view.job)));
+    node(view, 'hashCopyAllBtn').disabled = !view.valid;
+    view.root.querySelectorAll('.hash-copy-btn').forEach(button => { button.disabled = !view.valid; });
+    node(view, 'hashResultsSection').dataset.stale = String(!view.valid && Object.keys(view.results).length > 0);
+    node(view, 'hashProgressContainer').hidden = !view.job;
 }
-
-// ============================================
-// 设置进度监听
-// ============================================
-async function setupProgressListener() {
+function renderResults(view, animate = false) {
+    const list = node(view, 'hashResultsList'); const children = [];
+    for (const id of Object.keys(LABELS)) {
+        if (!view.results[id]) continue;
+        const row = document.createElement('div'); row.className = 'hash-result-pill'; row.dataset.algo = id;
+        const name = document.createElement('span'); name.className = 'hash-algo-tag'; name.textContent = LABELS[id];
+        const hash = document.createElement('code'); hash.className = 'hash-string dw-mono'; hash.textContent = displayHash(view, view.results[id]);
+        const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'dw-button hash-copy-btn'; copy.dataset.algo = id;
+        copy.textContent = '复制'; copy.setAttribute('aria-label', `复制 ${LABELS[id]} 摘要`); row.append(name, hash, copy); children.push(row);
+    }
+    if (!children.length) { const empty = document.createElement('div'); empty.className = 'dw-empty hash-empty-results'; empty.textContent = '选择算法，点击计算。空文本也有自己的摘要。'; children.push(empty); }
+    list.replaceChildren(...children); updateActions(view); updateVerification(view);
+    if (animate) revealContent(list, { signal: view.controller.signal, distance: 4 });
+}
+function updateInputMeta(view) {
+    node(view, 'hashInputMeta').textContent = view.mode === 'text' ? `${textByteLength(node(view, 'hashTextInput').value).toLocaleString()} 字节 · UTF-8`
+        : view.file ? (Number.isFinite(view.file.size) ? formatHashBytes(view.file.size) : '大小将在计算时读取') : '未选择文件';
+}
+function updateSettings(view) {
+    view.root.querySelectorAll('[data-hash-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.hashMode === view.mode)));
+    node(view, 'hashTextPanel').hidden = view.mode !== 'text'; node(view, 'hashFilePanel').hidden = view.mode !== 'file';
+    view.root.querySelectorAll('.hash-switch[data-algo]').forEach(button => { const checked = view.algorithms.includes(button.dataset.algo); button.setAttribute('aria-checked', String(checked)); button.classList.toggle('active', checked); });
+    const uppercase = view.root.querySelector('[data-option="uppercase"]'); uppercase.setAttribute('aria-checked', String(view.uppercase)); uppercase.classList.toggle('active', view.uppercase);
+    updateInputMeta(view);
+}
+function renderFile(view) {
+    const file = view.file; node(view, 'hashFileName').textContent = file?.name || '将文件拖放到这里';
+    node(view, 'hashFileMeta').textContent = file?.needsReselect ? '此浏览器文件需要重新选择，才能继续计算。'
+        : file ? (Number.isFinite(file.size) ? formatHashBytes(file.size) : '大小将在计算时读取') : '文件在本机读取与计算。';
+    node(view, 'hashChooseFileBtn').textContent = file?.needsReselect ? '重新选择文件' : file ? '更换文件' : '选择文件';
+    view.root.querySelector('.hash-clear-file').hidden = !file;
+    node(view, 'hashFileUpload').classList.toggle('has-file', Boolean(file)); updateInputMeta(view);
+}
+function resetIo(view) { view.ioGeneration++; view.choosing = false; view.pasting = false; node(view, 'hashChooseFileBtn').disabled = false; node(view, 'hashPasteBtn').disabled = false; }
+function cancelJob(view) {
+    const job = view.job; if (!job) return;
+    view.job = null; job.worker?.terminate(); job.reject?.(new DOMException('计算已取消', 'AbortError')); updateActions(view);
+}
+function invalidate(view, message = '输入或算法已更新，请重新计算。') {
+    view.revision++; cancelJob(view); view.valid = false; resetIo(view); updateActions(view); updateVerification(view); updateInputMeta(view); status(view, message);
+}
+function selectFile(view, file) {
+    if (!active(view)) return;
+    view.file = file; view.mode = 'file'; invalidate(view, '文件已就绪，点击计算摘要。');
+    transitionLayout(node(view, 'hashInputPanels'), () => { updateSettings(view); renderFile(view); }, { signal: view.controller.signal });
+}
+async function chooseFile(view) {
+    if (view.choosing) return;
+    const open = window.__TAURI__?.dialog?.open;
+    if (!open) { node(view, 'hashFileInput').click(); return; }
+    const token = ++view.ioGeneration; const revision = view.revision;
+    view.choosing = true; node(view, 'hashChooseFileBtn').disabled = true;
     try {
-        if (window.__TAURI__?.event?.listen) {
-            hashState.unlistenProgress = await window.__TAURI__.event.listen('hash-progress', (event) => {
-                const { progress } = event.payload;
-                updateProgress(progress);
-            });
-        }
-    } catch (err) {
-        console.warn('[HashTool] 无法设置进度监听:', err);
-    }
-}
-
-// ============================================
-// 选择文件
-// ============================================
-function selectFile(file) {
-    hashState.selectedFile = file;
-    // 保存文件路径（如果有的话）
-    hashState.selectedFilePath = file.path || null;
-
-    // 清空文本输入
-    const textInput = document.getElementById('hashTextInput');
-    if (textInput) textInput.value = '';
-
-    // 更新 UI - 选择后禁止点击
-    const fileUpload = document.getElementById('hashFileUpload');
-    if (fileUpload) {
-        fileUpload.style.cursor = 'default';
-        fileUpload.style.pointerEvents = 'none';
-        fileUpload.innerHTML = `
-            <div class="hash-file-info">
-                <i class="ri-file-3-line hash-file-info__icon"></i>
-                <span class="file-name">${escapeHtml(file.name)}</span>
-                <span class="file-size">(${formatFileSize(file.size)})</span>
-                <button class="hash-clear-file">
-                    <i class="ri-close-line"></i> 取消
-                </button>
-            </div>
-        `;
-
-        fileUpload.querySelector('.hash-clear-file')?.addEventListener('click', (event) => {
-            event.stopPropagation();
-            clearFile();
-        }, { signal: hashState.abortController?.signal });
-    }
-}
-
-// ============================================
-// 清除文件
-// ============================================
-function clearFile() {
-    hashState.selectedFile = null;
-    hashState.selectedFilePath = null;
-
-    const fileUpload = document.getElementById('hashFileUpload');
-    if (fileUpload) {
-        // 恢复可点击状态
-        fileUpload.style.cursor = 'pointer';
-        fileUpload.style.pointerEvents = 'auto';
-        fileUpload.innerHTML = `
-            <i class="ri-upload-cloud-2-line"></i>
-            <span>将文件拖放到此处，或 <b>点击浏览</b></span>
-        `;
-    }
-
-    const fileInput = document.getElementById('hashFileInput');
-    if (fileInput) fileInput.value = '';
-}
-
-// ============================================
-// 处理计算
-// ============================================
-async function handleCalculate() {
-    if (hashState.isCalculating) return;
-
-    const textInput = document.getElementById('hashTextInput');
-    const text = textInput?.value || '';
-
-    // 获取选中的算法
-    const selectedAlgorithms = Object.entries(hashState.algorithms)
-        .filter(([_, enabled]) => enabled)
-        .map(([algo]) => algo);
-
-    if (selectedAlgorithms.length === 0) {
-        showToast('请至少选择一种算法', 'warning');
-        return;
-    }
-
-    if (!text.trim() && !hashState.selectedFile) {
-        showToast('请输入文本或选择文件', 'warning');
-        return;
-    }
-
-    hashState.isCalculating = true;
-    updateCalculateButton(true);
-
-    try {
-        if (hashState.selectedFile) {
-            await calculateFileHash(selectedAlgorithms);
-        } else {
-            await calculateTextHash(text, selectedAlgorithms);
-        }
-    } catch (err) {
-        console.error('[HashTool] 计算失败:', err);
-        showToast('计算失败: ' + err.message, 'error');
+        const path = await open({ multiple: false, title: '选择要计算摘要的文件' });
+        if (!active(view) || view.suspended || revision !== view.revision || token !== view.ioGeneration) return;
+        if (typeof path === 'string' && path) selectFile(view, { name: path.split(/[/\\]/).pop() || path, path, size: null });
+    } catch (error) {
+        if (active(view) && !view.suspended && revision === view.revision && token === view.ioGeneration) status(view, `无法选择文件：${error?.message || error}`, 'error');
     } finally {
-        hashState.isCalculating = false;
-        updateCalculateButton(false);
-        hideProgress();
+        if (active(view) && token === view.ioGeneration) { view.choosing = false; node(view, 'hashChooseFileBtn').disabled = false; }
     }
 }
-
-// ============================================
-// 计算文本哈希
-// ============================================
-async function calculateTextHash(text, algorithms) {
-    showProgress();
-    updateProgress(50);
-
+async function paste(view) {
+    if (view.pasting) return;
+    const token = ++view.ioGeneration; const revision = view.revision;
+    view.pasting = true; node(view, 'hashPasteBtn').disabled = true;
     try {
-        if (window.__TAURI__?.core?.invoke) {
-            // 使用 Rust 后端
-            const results = await window.__TAURI__.core.invoke('calculate_text_hash', {
-                text,
-                algorithms,
-                uppercase: hashState.uppercase
-            });
-            hashState.results = results;
-        } else {
-            // 浏览器环境 fallback
-            hashState.results = await calculateTextHashJS(text, algorithms);
-        }
-
-        updateProgress(100);
-        renderResults();
-        verifyHash();
-        showToast('计算完成', 'success');
-    } catch (err) {
-        throw err;
+        const text = await navigator.clipboard.readText();
+        if (!active(view) || view.suspended || revision !== view.revision || token !== view.ioGeneration) return;
+        node(view, 'hashTextInput').value = text; invalidate(view); node(view, 'hashTextInput').focus({ preventScroll: true });
+    } catch {
+        if (active(view) && !view.suspended && revision === view.revision && token === view.ioGeneration) status(view, '无法读取剪贴板，请使用 Ctrl + V。', 'error');
+    } finally {
+        if (active(view) && token === view.ioGeneration) { view.pasting = false; node(view, 'hashPasteBtn').disabled = false; }
     }
 }
-
-// ============================================
-// 计算文件哈希
-// ============================================
-async function calculateFileHash(algorithms) {
-    const file = hashState.selectedFile;
-    if (!file) return;
-
-    showProgress();
-
+async function copy(view, algorithm = null) {
+    if (!view.valid) return;
+    const revision = view.revision;
+    const value = algorithm ? displayHash(view, view.results[algorithm]) : Object.keys(LABELS).filter(id => view.results[id]).map(id => `${LABELS[id]}: ${displayHash(view, view.results[id])}`).join('\n');
+    try { await navigator.clipboard.writeText(value); if (active(view) && !view.suspended && view.valid && revision === view.revision) status(view, algorithm ? `${LABELS[algorithm]} 摘要已复制` : '全部摘要已复制', 'success'); }
+    catch { if (active(view) && !view.suspended && revision === view.revision) status(view, '复制失败，请选择摘要手动复制。', 'error'); }
+}
+function currentJob(view, job) { return active(view) && view.job === job && view.revision === job.revision; }
+function progress(view, percent, detail = '') {
+    const value = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+    const track = view.root.querySelector('.hash-progress-track'); track.classList.toggle('is-indeterminate', value === null);
+    if (value === null) track.removeAttribute('aria-valuenow'); else track.setAttribute('aria-valuenow', String(Math.round(value)));
+    node(view, 'hashProgressBar').style.width = value === null ? '35%' : `${value}%`;
+    node(view, 'hashProgressLabel').textContent = detail || (value === null ? '正在计算…' : `正在计算 ${Math.round(value)}%`);
+}
+async function workerHashes(view, job, input, algorithms) {
+    let payload;
+    if (typeof input === 'string') payload = { text: input };
+    else { progress(view, null, '正在读取文件…'); payload = { bytes: await input.arrayBuffer() }; }
+    if (!currentJob(view, job)) throw new DOMException('计算已取消', 'AbortError');
+    return new Promise((resolve, reject) => {
+        job.reject = reject;
+        try {
+            const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }); job.worker = worker;
+            worker.onmessage = event => { if (event.data?.id !== job.id || !currentJob(view, job)) return;
+                if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data.results); };
+            worker.onerror = event => { event.preventDefault(); reject(new Error('计算线程无法运行，请重试。')); };
+            worker.addEventListener('messageerror', () => reject(new Error('无法读取计算线程结果，请重试。')), { once: true });
+            progress(view, null, '正在计算摘要…'); worker.postMessage({ id: job.id, ...payload, algorithms }, payload.bytes ? [payload.bytes] : []);
+        } catch (error) { reject(error); }
+    });
+}
+async function calculate(view) {
+    if (!active(view) || view.suspended || view.job) return;
+    const algorithms = selectedAlgorithms(view);
+    if (!algorithms.length) { status(view, '请至少选择一种算法。', 'error'); return; }
+    if (view.mode === 'file' && (!view.file || view.file.needsReselect)) { status(view, view.file?.needsReselect ? '请重新选择此浏览器文件。' : '请先选择文件。', 'error'); return; }
+    const job = { id: crypto.randomUUID(), revision: view.revision, mode: view.mode, worker: null, reject: null };
+    const file = view.file; const text = node(view, 'hashTextInput').value; const invoke = window.__TAURI__?.core?.invoke;
+    view.job = job; view.valid = false; resetIo(view); updateActions(view); updateVerification(view); progress(view, null); status(view, '正在计算摘要…');
     try {
-        if (window.__TAURI__?.core?.invoke) {
-            // Tauri 环境
-            let filePath = hashState.selectedFilePath;
-
-            // 如果没有保存的路径，需要用对话框选择
-            if (!filePath) {
-                const { open } = window.__TAURI__.dialog;
-                filePath = await open({
-                    multiple: false,
-                    title: '选择要计算哈希的文件',
-                    defaultPath: file.name
-                });
-
-                if (!filePath) {
-                    showToast('未选择文件', 'warning');
-                    return;
-                }
-                // 保存路径供后续使用
-                hashState.selectedFilePath = filePath;
-            }
-
-            const taskId = Date.now().toString();
-            const results = await window.__TAURI__.core.invoke('calculate_file_hash', {
-                filePath,
-                algorithms,
-                uppercase: hashState.uppercase,
-                taskId
-            });
-
-            hashState.results = results;
+        let results;
+        if (invoke && job.mode === 'text') results = await invoke('calculate_text_hash', { text, algorithms, uppercase: false });
+        else if (invoke && file?.path) {
+            await view.progressReady; if (!currentJob(view, job)) return;
+            results = await invoke('calculate_file_hash', { filePath: file.path, algorithms, uppercase: false, taskId: job.id });
         } else {
-            // 浏览器环境 fallback
-            hashState.results = await calculateFileHashJS(file, algorithms);
+            if (job.mode === 'file' && !file.file) throw new Error('此文件路径需要在桌面应用中读取，请重新选择文件。');
+            results = await workerHashes(view, job, job.mode === 'text' ? text : file.file, algorithms);
         }
-
-        updateProgress(100);
-        renderResults();
-        verifyHash();
-        showToast('计算完成', 'success');
-    } catch (err) {
-        throw err;
+        if (!currentJob(view, job)) return;
+        view.results = validateHashResults(results, algorithms); view.valid = true; view.resultMode = job.mode;
+        renderResults(view, true); status(view, `${job.mode === 'text' ? '文本' : '文件'}摘要已完成 · ${algorithms.length} 种算法`, 'success');
+    } catch (error) {
+        if (currentJob(view, job) && error?.name !== 'AbortError') { view.valid = false; updateVerification(view); status(view, `计算失败：${error?.message || error}`, 'error'); }
+    } finally {
+        job.worker?.terminate(); job.reject = null;
+        if (currentJob(view, job)) { view.job = null; updateActions(view); }
     }
 }
+async function listenProgress(view) {
+    const listen = window.__TAURI__?.event?.listen; if (!listen) return;
+    try {
+        const unlisten = await listen('hash-progress', event => {
+            const payload = event.payload; const job = view.job;
+            if (!job || !currentJob(view, job) || job.mode !== 'file' || payload?.taskId !== job.id) return;
+            if (Number.isFinite(payload.totalBytes) && payload.totalBytes >= 0 && view.file) { view.file.size = payload.totalBytes; renderFile(view); }
+            const percentage = Number.isFinite(payload.progress) ? Math.max(0, Math.min(100, payload.progress)) : null;
+            progress(view, percentage, Number.isFinite(payload.bytesProcessed) && Number.isFinite(payload.totalBytes)
+                ? `${formatHashBytes(payload.bytesProcessed)} / ${formatHashBytes(payload.totalBytes)}${percentage === null ? '' : ` · ${Math.round(percentage)}%`}` : '');
+        });
+        if (active(view)) view.unlisten = unlisten; else unlisten();
+    } catch { if (active(view)) view.unlisten = null; }
+}
 
-// ============================================
-// JavaScript 文本哈希计算 (Fallback)
-// ============================================
-async function calculateTextHashJS(text, algorithms) {
-    const results = {};
-    const encoder = new TextEncoder();
-    const data = encoder.encode(text);
-
-    for (const algo of algorithms) {
-        try {
-            let hashBuffer;
-            const algoMap = {
-                'md5': 'MD5', // Web Crypto 不支持 MD5
-                'sha1': 'SHA-1',
-                'sha256': 'SHA-256',
-                'sha512': 'SHA-512'
-            };
-
-            const cryptoAlgo = algoMap[algo];
-            if (cryptoAlgo && cryptoAlgo !== 'MD5') {
-                hashBuffer = await crypto.subtle.digest(cryptoAlgo, data);
-                let hash = Array.from(new Uint8Array(hashBuffer))
-                    .map(b => b.toString(16).padStart(2, '0'))
-                    .join('');
-                results[algo] = hashState.uppercase ? hash.toUpperCase() : hash;
-            } else if (algo === 'md5') {
-                // MD5 需要额外实现或跳过
-                results[algo] = '(浏览器不支持 MD5，请使用桌面版)';
-            }
-        } catch (err) {
-            console.error(`[HashTool] ${algo} 计算失败:`, err);
-        }
+export function initHashTool() {
+    destroyHashTool(); const root = document.querySelector('.hash-tool-view'); if (!root) return;
+    const view = { root, controller: new AbortController(), mode: 'text', file: null, algorithms: [...DEFAULT_ALGORITHMS], uppercase: true,
+        results: {}, valid: false, resultMode: null, revision: 0, ioGeneration: 0, job: null, unlisten: null, choosing: false, pasting: false,
+        suspended: document.documentElement.classList.contains('app-is-suspended') };
+    state = view; const { signal } = view.controller; const on = (target, name, callback) => target.addEventListener(name, callback, { signal });
+    on(node(view, 'hashTextInput'), 'input', () => invalidate(view));
+    on(node(view, 'hashVerifyInput'), 'input', () => updateVerification(view));
+    root.querySelectorAll('[data-hash-mode]').forEach(button => on(button, 'click', () => {
+        if (view.mode === button.dataset.hashMode) return; view.mode = button.dataset.hashMode; invalidate(view);
+        transitionLayout(node(view, 'hashInputPanels'), () => updateSettings(view), { signal }); revealContent(node(view, view.mode === 'text' ? 'hashTextPanel' : 'hashFilePanel'), { signal, distance: 4 });
+    }));
+    root.querySelectorAll('.hash-switch[data-algo]').forEach(button => on(button, 'click', () => {
+        const id = button.dataset.algo; view.algorithms = view.algorithms.includes(id) ? view.algorithms.filter(value => value !== id) : [...view.algorithms, id];
+        invalidate(view); updateSettings(view);
+    }));
+    on(root.querySelector('[data-option="uppercase"]'), 'click', () => { view.uppercase = !view.uppercase; updateSettings(view); renderResults(view); });
+    on(node(view, 'hashChooseFileBtn'), 'click', () => { void chooseFile(view); });
+    on(node(view, 'hashFileInput'), 'change', event => { const file = event.target.files?.[0]; if (file) selectFile(view, { name: file.name, size: file.size, path: typeof file.path === 'string' ? file.path : null, file }); event.target.value = ''; });
+    on(root.querySelector('.hash-clear-file'), 'click', () => { view.file = null; invalidate(view, '文件已移除。'); renderFile(view); });
+    const drop = node(view, 'hashFileUpload');
+    on(drop, 'dragover', event => { event.preventDefault(); drop.classList.add('dragover'); });
+    on(drop, 'dragleave', event => { if (!drop.contains(event.relatedTarget)) drop.classList.remove('dragover'); });
+    on(drop, 'drop', event => { event.preventDefault(); drop.classList.remove('dragover'); const file = event.dataTransfer.files?.[0]; if (file) selectFile(view, { name: file.name, size: file.size, path: typeof file.path === 'string' ? file.path : null, file }); });
+    on(node(view, 'hashPasteBtn'), 'click', () => { void paste(view); });
+    on(node(view, 'hashClearTextBtn'), 'click', () => { node(view, 'hashTextInput').value = ''; invalidate(view, '文本已清空，可以计算空文本摘要。'); node(view, 'hashTextInput').focus(); });
+    on(node(view, 'hashCalculateBtn'), 'click', () => { void calculate(view); });
+    on(root, 'keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); void calculate(view); } });
+    on(node(view, 'hashCancelBtn'), 'click', () => { invalidate(view, '已取消等待，修改内容后可重新计算。'); });
+    on(node(view, 'hashCopyAllBtn'), 'click', () => { void copy(view); });
+    on(node(view, 'hashResultsList'), 'click', event => { const button = event.target.closest('.hash-copy-btn'); if (button) void copy(view, button.dataset.algo); });
+    on(window, 'dtkit:power-state', event => {
+        view.suspended = event.detail?.suspended === true;
+        if (view.suspended) { resetIo(view); if (view.job) invalidate(view, '计算已暂停，回来后可重新计算。'); }
+    });
+    mountSegmentedControl(node(view, 'hashModeGroup'), { signal });
+    updateSettings(view); renderFile(view); renderResults(view); revealContent(root, { signal }); view.progressReady = listenProgress(view);
+}
+function serializeDraft() {
+    if (!state) return null; const view = state; const fields = {};
+    for (const id of ['hashTextInput', 'hashVerifyInput']) { const field = node(view, id); fields[id] = { value: field.value, start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection, scrollTop: field.scrollTop, scrollLeft: field.scrollLeft }; }
+    return { version: 1, mode: view.mode, algorithms: [...view.algorithms], uppercase: view.uppercase, fields,
+        file: view.file ? { name: view.file.name, size: view.file.size, path: view.file.path || null } : null,
+        results: view.results, valid: view.valid, resultMode: view.resultMode,
+        panelScroll: [...view.root.querySelectorAll('.hash-main-panel,.hash-config-panel')].map(panel => panel.scrollTop),
+        focusedField: document.hasFocus() ? document.activeElement?.id : null };
+}
+function restoreDraft(snapshot) {
+    if (!state || snapshot?.version !== 1) return; const view = state;
+    invalidate(view, '草稿已恢复，点击计算摘要。'); view.mode = snapshot.mode === 'file' ? 'file' : 'text'; view.uppercase = snapshot.uppercase !== false;
+    view.algorithms = Array.isArray(snapshot.algorithms) ? Object.keys(LABELS).filter(id => snapshot.algorithms.includes(id)) : [...DEFAULT_ALGORITHMS];
+    for (const id of ['hashTextInput', 'hashVerifyInput']) node(view, id).value = typeof snapshot.fields?.[id]?.value === 'string' ? snapshot.fields[id].value : '';
+    view.file = snapshot.file && typeof snapshot.file.name === 'string' ? { name: snapshot.file.name, size: Number.isFinite(snapshot.file.size) && snapshot.file.size >= 0 ? snapshot.file.size : null,
+        path: typeof snapshot.file.path === 'string' && snapshot.file.path ? snapshot.file.path : null, needsReselect: !(typeof snapshot.file.path === 'string' && snapshot.file.path) } : null;
+    view.resultMode = snapshot.resultMode === 'file' ? 'file' : 'text'; view.results = {}; view.valid = false;
+    try {
+        if (Object.keys(snapshot.results || {}).length) view.results = validateHashResults(snapshot.results, Object.keys(snapshot.results));
+        view.valid = snapshot.valid === true && Object.keys(view.results).length > 0 && view.resultMode === 'text' && view.mode === 'text'
+            && selectedAlgorithms(view).join() === Object.keys(view.results).join();
+    } catch { view.results = {}; }
+    if (view.resultMode === 'file' && view.file?.needsReselect) view.results = {};
+    updateSettings(view); renderFile(view); renderResults(view);
+    status(view, view.valid ? '草稿与有效摘要已恢复。' : view.file?.needsReselect && view.mode === 'file' ? '草稿已恢复，请重新选择浏览器文件。' : '草稿已恢复，点击计算摘要。', view.valid ? 'success' : '');
+    for (const id of ['hashTextInput', 'hashVerifyInput']) { const field = node(view, id); const saved = snapshot.fields?.[id];
+        if (Number.isInteger(saved?.start) && Number.isInteger(saved?.end)) field.setSelectionRange(saved.start, saved.end, saved.direction);
+        field.scrollTop = Number.isFinite(saved?.scrollTop) ? saved.scrollTop : 0; field.scrollLeft = Number.isFinite(saved?.scrollLeft) ? saved.scrollLeft : 0;
     }
-
-    return results;
+    view.root.querySelectorAll('.hash-main-panel,.hash-config-panel').forEach((panel, index) => { panel.scrollTop = Number.isFinite(snapshot.panelScroll?.[index]) ? snapshot.panelScroll[index] : 0; });
+    if (['hashTextInput', 'hashVerifyInput'].includes(snapshot.focusedField) && document.hasFocus() && !view.suspended) node(view, snapshot.focusedField).focus({ preventScroll: true });
 }
-
-// ============================================
-// JavaScript 文件哈希计算 (Fallback)
-// ============================================
-async function calculateFileHashJS(file, algorithms) {
-    const results = {};
-    const buffer = await file.arrayBuffer();
-
-    for (const algo of algorithms) {
-        try {
-            const algoMap = {
-                'sha1': 'SHA-1',
-                'sha256': 'SHA-256',
-                'sha512': 'SHA-512'
-            };
-
-            const cryptoAlgo = algoMap[algo];
-            if (cryptoAlgo) {
-                const hashBuffer = await crypto.subtle.digest(cryptoAlgo, buffer);
-                let hash = Array.from(new Uint8Array(hashBuffer))
-                    .map(b => b.toString(16).padStart(2, '0'))
-                    .join('');
-                results[algo] = hashState.uppercase ? hash.toUpperCase() : hash;
-            } else if (algo === 'md5') {
-                results[algo] = '(浏览器不支持 MD5)';
-            }
-        } catch (err) {
-            console.error(`[HashTool] ${algo} 计算失败:`, err);
-        }
-    }
-
-    return results;
+export function destroyHashTool() {
+    if (!state) return; const view = state; cancelJob(view); resetIo(view); state = null; view.controller.abort(); view.unlisten?.(); view.unlisten = null;
 }
-
-// ============================================
-// 渲染结果
-// ============================================
-function renderResults() {
-    const container = document.getElementById('hashResultsList');
-    if (!container) return;
-
-    const results = hashState.results;
-    if (Object.keys(results).length === 0) {
-        container.innerHTML = `
-            <div class="hash-empty-results">
-                <i class="ri-shield-check-line"></i>
-                <p>输入文本或选择文件后点击计算</p>
-            </div>
-        `;
-        return;
-    }
-
-    const algoOrder = ['md5', 'sha1', 'sha256', 'sha512'];
-    const algoNames = {
-        'md5': 'MD5',
-        'sha1': 'SHA-1',
-        'sha256': 'SHA-256',
-        'sha512': 'SHA-512'
-    };
-
-    let html = '';
-    for (const algo of algoOrder) {
-        if (results[algo]) {
-            const hash = hashState.uppercase ? results[algo].toUpperCase() : results[algo].toLowerCase();
-            html += `
-                <div class="hash-result-pill" data-algo="${algo}">
-                    <span class="hash-algo-tag">${algoNames[algo]}</span>
-                    <span class="hash-string" title="${hash}">${hash}</span>
-                    <button class="hash-copy-btn" data-hash="${hash}">
-                        <i class="ri-file-copy-line"></i> 复制
-                    </button>
-                </div>
-            `;
-        }
-    }
-
-    container.innerHTML = html;
-
-    // 注意：复制事件已通过事件委托在 bindEvents 中处理，无需在此重复绑定
-}
-
-// ============================================
-// 校验哈希
-// ============================================
-function verifyHash() {
-    const verifyResult = document.getElementById('hashVerifyResult');
-    if (!verifyResult) return;
-
-    const inputHash = hashState.verifyHash.toLowerCase().replace(/\s/g, '');
-    if (!inputHash) {
-        verifyResult.className = 'hash-verify-result';
-        verifyResult.textContent = '';
-        return;
-    }
-
-    // 检查是否匹配任何结果
-    let matched = false;
-    let matchedAlgo = '';
-
-    for (const [algo, hash] of Object.entries(hashState.results)) {
-        if (hash.toLowerCase() === inputHash) {
-            matched = true;
-            matchedAlgo = algo.toUpperCase();
-            break;
-        }
-    }
-
-    if (matched) {
-        verifyResult.className = 'hash-verify-result match';
-        verifyResult.innerHTML = `<i class="ri-check-line"></i> 校验通过！匹配 ${matchedAlgo} 算法`;
-    } else if (Object.keys(hashState.results).length > 0) {
-        verifyResult.className = 'hash-verify-result mismatch';
-        verifyResult.innerHTML = `<i class="ri-close-line"></i> 校验失败，哈希值不匹配`;
-    }
-}
-
-// ============================================
-// UI 辅助函数
-// ============================================
-function showProgress() {
-    const container = document.getElementById('hashProgressContainer');
-    if (container) container.classList.add('active');
-}
-
-function hideProgress() {
-    const container = document.getElementById('hashProgressContainer');
-    const bar = document.getElementById('hashProgressBar');
-    if (container) container.classList.remove('active');
-    if (bar) bar.style.width = '0%';
-}
-
-function updateProgress(percent) {
-    const bar = document.getElementById('hashProgressBar');
-    if (bar) bar.style.width = `${Math.min(100, percent)}%`;
-}
-
-function updateCalculateButton(calculating) {
-    const btn = document.getElementById('hashCalculateBtn');
-    if (btn) {
-        btn.disabled = calculating;
-        btn.innerHTML = calculating
-            ? '<i class="ri-loader-4-line"></i> 计算中...'
-            : '<i class="ri-shield-flash-line"></i> 立即计算';
-    }
-}
-
-function showToast(message, type = 'info') {
-    // 使用全局 toast 或自定义实现
-    if (window.showToast) {
-        window.showToast(message, type);
-    } else {
-        console.log(`[${type}] ${message}`);
-    }
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-// ============================================
-// 销毁函数
-// ============================================
-function destroy() {
-    console.log('[HashTool] 销毁哈希工具');
-
-    // 取消所有事件监听器
-    if (hashState.abortController) {
-        hashState.abortController.abort();
-        hashState.abortController = null;
-    }
-
-    // 清理进度监听
-    if (hashState.unlistenProgress) {
-        hashState.unlistenProgress();
-        hashState.unlistenProgress = null;
-    }
-
-    // 重置状态
-    hashState.selectedFile = null;
-    hashState.results = {};
-    hashState.verifyHash = '';
-}
-
-// ============================================
-// 注册工具
-// ============================================
-registerTool({
-    id: 'hash-tool',
-    name: 'MD5 / Hash',
-    icon: 'ri-hashtag',
-    description: '计算文本或文件的哈希值 (MD5, SHA-1, SHA-256, SHA-512)',
-    category: 'dev',
-    template: getTemplate,
-    init,
-    destroy
-});
+registerTool({ id: 'hash-tool', name: 'MD5 / Hash', icon: 'ri-hashtag', description: '本地计算文本或文件的 MD5、SHA-1、SHA-256 与 SHA-512，核对摘要。',
+    category: 'dev', template: getTemplate, init: initHashTool, destroy: destroyHashTool, serialize: serializeDraft, restore: restoreDraft });

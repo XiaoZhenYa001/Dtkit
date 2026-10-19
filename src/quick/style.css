@@ -180,6 +180,12 @@ kbd {
 .quick-tool .view-container { min-height: 100%; padding: 1rem; }
 
 .quick-shell--whiteboard {
+    --quick-board-chrome: rgba(255, 255, 255, .88);
+    --quick-board-text: #85858e;
+    --quick-board-border: rgba(32, 32, 38, .09);
+    --quick-board-hover: rgba(32, 32, 38, .055);
+    --quick-board-accent: #007aff;
+    --quick-board-accent-soft: #edf5ff;
     position: relative;
     grid-template-rows: 1fr;
     border: 0;
@@ -195,10 +201,11 @@ kbd {
     width: auto;
     height: 1.45rem;
     padding: 0 0 0 0.5rem;
-    border: 1px solid rgba(118, 93, 63, 0.09);
+    border: 1px solid var(--quick-board-border);
     border-radius: 0.55rem;
-    color: #8a8179;
-    background: rgba(255, 253, 249, 0.76);
+    color: var(--quick-board-text);
+    background: var(--quick-board-chrome);
+    backdrop-filter: blur(12px);
     pointer-events: auto;
     cursor: grab;
 }
@@ -209,15 +216,15 @@ kbd {
 
 .quick-shell--whiteboard .quick-brand {
     gap: 0.42rem;
-    color: #887e74;
+    color: var(--quick-board-text);
     font-size: 0.6rem;
-    font-weight: 680;
+    font-weight: 550;
     pointer-events: none;
 }
 
 .quick-shell--whiteboard .quick-brand::before {
     content: '···';
-    color: #b5aaa0;
+    color: #b3b3bc;
     letter-spacing: 0.08em;
 }
 
@@ -228,12 +235,29 @@ kbd {
     height: 1.45rem;
     border: 0;
     border-radius: 0.48rem;
-    color: #756c64;
+    color: var(--quick-board-text);
     background: transparent;
     box-shadow: none;
     pointer-events: auto;
     cursor: pointer;
+    transition: color 160ms ease, background-color 160ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1);
 }
+
+.quick-shell--whiteboard .quick-window-button:hover {
+    color: var(--quick-board-accent);
+    background: var(--quick-board-hover);
+}
+.quick-shell--whiteboard .quick-window-button:active { transform: scale(.92); }
+.quick-shell--whiteboard .quick-window-button:focus-visible {
+    outline: 2px solid var(--quick-board-accent);
+    outline-offset: 2px;
+}
+.quick-shell--whiteboard .quick-pin.is-active {
+    color: var(--quick-board-accent);
+    background: var(--quick-board-accent-soft);
+    box-shadow: none;
+}
+.quick-shell--whiteboard .quick-close:hover { color: #d3413b; background: rgba(211, 65, 59, .09); }
 
 .quick-shell--whiteboard .quick-content--tool,
 .quick-shell--whiteboard .quick-tool {
@@ -241,6 +265,22 @@ kbd {
     height: 100%;
     min-height: 0;
     overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+    .quick-shell--whiteboard {
+        --quick-board-chrome: rgba(37, 37, 40, .94);
+        --quick-board-text: #b6b6bd;
+        --quick-board-border: rgba(240, 240, 250, .12);
+        --quick-board-hover: rgba(240, 240, 250, .07);
+        --quick-board-accent: #65aaff;
+        --quick-board-accent-soft: #27394f;
+    }
+    .quick-shell--whiteboard .quick-brand::before { color: #777780; }
+    .quick-shell--whiteboard .quick-close:hover { color: #f28b82; background: rgba(242, 139, 130, .1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .quick-shell--whiteboard .quick-window-button { transition: none; }
 }
 
 .quick-content__icon {

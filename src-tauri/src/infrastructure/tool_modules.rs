@@ -133,6 +133,11 @@ pub(crate) fn set_tool_module_enabled(
         app.state::<super::clipboard_puzzle::PuzzleManager>().stop();
         super::clipboard_puzzle::module_stopped(&app);
     }
+    if !enabled && tool_id == "software-analysis" {
+        let analysis = app.state::<super::software_analysis::SoftwareAnalysisManager>();
+        analysis.cancel_all();
+        analysis.release_idle_cache();
+    }
     Ok(result)
 }
 

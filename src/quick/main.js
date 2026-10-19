@@ -17,6 +17,7 @@ const TOOL_LABELS = Object.freeze({
     'transfer-station': '临时文件中转站', 'resource-center': '资源控制中心',
     'system-assistant': '系统助手',
     'startup-manager': '自启动管理',
+    'software-analysis': '软件分析',
     'context-menu': '右键菜单管理',
     'whiteboard': '白板', 'password-vault': '密码',
     'clipboard-puzzle': '剪贴板拼图',

@@ -8,7 +8,8 @@ function createId() {
 
 function validateRepeatConfig(draft, config) {
     config.repeatEnabled = draft.repeatEnabled !== false;
-    config.repeatDays = [...new Set((draft.repeatDays || []).map(Number))]
+    const repeatDays = Array.isArray(draft.repeatDays) ? draft.repeatDays : [];
+    config.repeatDays = [...new Set(repeatDays.map(Number))]
         .filter(day => Number.isInteger(day) && day >= 0 && day <= 6);
     if (config.repeatEnabled && config.repeatDays.length === 0) {
         return '重复提醒至少选择一天';

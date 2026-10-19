@@ -15,6 +15,8 @@ const FORMAT_VALUES = new Set(Object.values(DATA_FORMATS));
 const XML_NAME_PATTERN = /^[A-Za-z_\p{L}][\w.\-:\p{L}\p{N}]*$/u;
 const XML_METADATA_KEYS = new Set(['#text']);
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const XML_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" });
+const INVALID_XML_CHARACTER = /[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/u;
 
 export class DataConversionError extends Error {
     constructor(message, details = {}) {
@@ -112,7 +114,44 @@ function parseYaml(source) {
     }
 }
 
-function parseXml(source) {
+function decodeXmlEntities(text) {
+    return text.replace(/&([^;\s<&]+);/g, (reference, name) => {
+        if (Object.hasOwn(XML_ENTITIES, name)) return XML_ENTITIES[name];
+        const numeric = /^#(?:x([\da-f]+)|(\d+))$/i.exec(name);
+        const point = numeric ? Number.parseInt(numeric[1] || numeric[2], numeric[1] ? 16 : 10) : NaN;
+        if (!Number.isInteger(point) || point > 0x10ffff || point < 0
+            || INVALID_XML_CHARACTER.test(String.fromCodePoint(point))) {
+            throw new Error(`实体 ${reference} 无效或未声明。`);
+        }
+        return String.fromCodePoint(point);
+    });
+}
+
+function xmlParserOptions(extra = {}) {
+    return {
+        ignoreAttributes: false,
+        attributeNamePrefix: '@_',
+        textNodeName: '#text',
+        parseTagValue: true,
+        parseAttributeValue: false,
+        numberParseOptions: { leadingZeros: false, hex: true, eNotation: true },
+        trimValues: true,
+        processEntities: true,
+        // Decode only XML's five predefined entities and valid character references.
+        // Custom declarations remain rejected before parsing.
+        entityDecoder: { decode: decodeXmlEntities, reset() {}, setXmlVersion() {},
+            setExternalEntities() {}, addInputEntities() {} },
+        ignoreDeclaration: true,
+        ignorePiTags: true,
+        maxNestedTags: 120,
+        ...extra
+    };
+}
+
+function validateXml(source) {
+    if (INVALID_XML_CHARACTER.test(source)) {
+        throw new DataConversionError('XML 解析失败：内容包含 XML 1.0 不支持的字符。', { format: DATA_FORMATS.XML });
+    }
     if (/<!DOCTYPE|<!ENTITY/i.test(source)) {
         throw new DataConversionError('XML 解析失败：出于安全考虑，不支持 DOCTYPE 或自定义实体声明。', {
             format: DATA_FORMATS.XML
@@ -129,19 +168,12 @@ function parseXml(source) {
             excerpt: excerptAt(source, line)
         });
     }
+}
+
+function parseXml(source) {
+    validateXml(source);
     try {
-        return new XMLParser({
-            ignoreAttributes: false,
-            attributeNamePrefix: '@_',
-            textNodeName: '#text',
-            parseTagValue: true,
-            parseAttributeValue: false,
-            trimValues: true,
-            processEntities: false,
-            ignoreDeclaration: true,
-            ignorePiTags: true,
-            maxNestedTags: 120
-        }).parse(source);
+        return new XMLParser(xmlParserOptions()).parse(source);
     } catch (error) {
         throw new DataConversionError(`XML 解析失败：${error.message}`, {
             format: DATA_FORMATS.XML
@@ -194,6 +226,9 @@ function prepareXmlRoot(value, requestedRootName) {
 }
 
 function validateXmlObjectKeys(value, path = 'root') {
+    if (typeof value === 'string' && INVALID_XML_CHARACTER.test(value)) {
+        throw new DataConversionError(`无法生成 XML：内容包含 XML 1.0 不支持的字符（位置：${path}）。`, { format: DATA_FORMATS.XML });
+    }
     if (Array.isArray(value)) {
         value.forEach((item, index) => validateXmlObjectKeys(item, `${path}[${index}]`));
         return;
@@ -201,7 +236,7 @@ function validateXmlObjectKeys(value, path = 'root') {
     if (!isPlainObject(value)) return;
     for (const [key, child] of Object.entries(value)) {
         const name = key.startsWith('@_') ? key.slice(2) : key;
-        if (DANGEROUS_KEYS.has(name) || (!XML_METADATA_KEYS.has(key) && (!XML_NAME_PATTERN.test(name) || name.toLowerCase().startsWith('xml')))) {
+        if (DANGEROUS_KEYS.has(name) || (!XML_METADATA_KEYS.has(key) && !XML_NAME_PATTERN.test(name))) {
             throw new DataConversionError(`无法生成 XML：字段“${key}”不是合法的 XML 节点或属性名称（位置：${path}）。`, {
                 format: DATA_FORMATS.XML
             });
@@ -226,9 +261,38 @@ function stringifyXml(value, pretty, indent, rootName) {
         indentBy: ' '.repeat(indent),
         suppressEmptyNode: false,
         suppressBooleanAttributes: false,
-        processEntities: false
+        processEntities: true
     }).build(prepareXmlRoot(value, rootName));
     return `<?xml version="1.0" encoding="UTF-8"?>${pretty ? '\n' : ''}${body}`;
+}
+
+function formatXmlSource(source, { pretty = true, indent = 2 } = {}) {
+    const options = xmlParserOptions({ preserveOrder: true, parseTagValue: false,
+        trimValues: false, ignoreDeclaration: false, ignorePiTags: false,
+        commentPropName: '#comment', cdataPropName: '#cdata' });
+    const ordered = new XMLParser(options).parse(stripBom(source));
+    let preserveLayout = false;
+    function clean(nodes) {
+        const hasElement = nodes.some(item => Object.keys(item).some(key => key !== '#text' && key !== ':@'));
+        if (hasElement && nodes.some(item => String(item['#text'] || '').trim())) preserveLayout = true;
+        for (const item of nodes) {
+            if (item[':@']?.['@_xml:space'] === 'preserve' || item['#cdata']) preserveLayout = true;
+            for (const [key, children] of Object.entries(item)) {
+                if (Array.isArray(children)) item[key] = clean(children);
+            }
+        }
+        return hasElement ? nodes.filter(item => !Object.hasOwn(item, '#text') || String(item['#text']).trim()) : nodes;
+    }
+    const normalized = clean(ordered);
+    if (preserveLayout) {
+        return { output: stripBom(source).replace(/(<\?xml\b[^?]*\bencoding\s*=\s*)(["'])[^"']*\2/i, '$1"UTF-8"'), preserveLayout };
+    }
+    const declaration = normalized.find(item => item['?xml']);
+    if (declaration?.[':@']?.['@_encoding']) declaration[':@']['@_encoding'] = 'UTF-8';
+    const output = new XMLBuilder({ ...options, format: pretty !== false, indentBy: ' '.repeat(indent === 4 ? 4 : 2),
+        suppressEmptyNode: false, suppressBooleanAttributes: false }).build(normalized).trim();
+    return { output: declaration ? output : '<?xml version="1.0" encoding="UTF-8"?>' + (pretty !== false ? '\n' : '') + output,
+        preserveLayout };
 }
 
 export function stringifyData(value, format, options = {}) {
@@ -275,16 +339,19 @@ export function convertData(request) {
     const parsed = parseData(request.source, request.sourceFormat);
     const targetFormat = normalizeFormat(request.targetFormat, false);
     const options = { ...request.options };
-    if (parsed.detectedFormat === DATA_FORMATS.XML && targetFormat === DATA_FORMATS.XML) {
-        options.rootName = undefined;
+    const sameXml = parsed.detectedFormat === DATA_FORMATS.XML && targetFormat === DATA_FORMATS.XML;
+    const formattedXml = sameXml ? formatXmlSource(request.source, options) : null;
+    const output = formattedXml ? formattedXml.output : stringifyData(parsed.value, targetFormat, options);
+    if (output.length > MAX_OUTPUT_CHARACTERS) {
+        throw new DataConversionError('转换结果超过 12 MB 安全上限，请缩小输入内容。', { format: targetFormat });
     }
-    const output = stringifyData(parsed.value, targetFormat, options);
     const stats = inspectValue(parsed.value);
     const finishedAt = globalThis.performance?.now?.() ?? Date.now();
     return {
         output,
         detectedFormat: parsed.detectedFormat,
         targetFormat,
+        preservedXmlLayout: formattedXml?.preserveLayout === true,
         elapsedMs: Math.max(0, Math.round((finishedAt - startedAt) * 10) / 10),
         nodes: stats.nodes,
         maxDepth: stats.maxDepth,

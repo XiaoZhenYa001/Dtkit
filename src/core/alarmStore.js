@@ -15,7 +15,8 @@ export async function updateAlarmData(mutate, {
         if (!changed) return { data, changed: false };
         if (data.tasks.length > 200) throw new Error('最多创建 200 个闹钟任务');
         const ids = new Set(data.tasks.map(task => task?.id));
-        if (ids.has(undefined) || ids.has('') || ids.size !== data.tasks.length) throw new Error('闹钟任务标识无效或重复');
+        if ([...ids].some(id => typeof id !== 'string' || !id)
+            || ids.size !== data.tasks.length) throw new Error('闹钟任务标识无效或重复');
         data.revision = (Number.isSafeInteger(data.revision) ? data.revision : 0) + 1;
         if (!writeAlarmData(data, storage)) throw new Error('保存闹钟数据失败，请检查可用存储空间');
         globalThis.window?.dispatchEvent(new CustomEvent(ALARM_DATA_CHANGED_EVENT, {
@@ -75,16 +76,34 @@ export function applyTriggeredAlarmTaskState(task, now = Date.now()) {
     return true;
 }
 
+function matchesTriggeredSchedule(task, triggeredTask) {
+    if (triggeredTask?.type && triggeredTask.type !== task.type) return false;
+    const current = task.config || {};
+    const previous = triggeredTask?.config || {};
+    if (task.type === 'countdown' && Number.isFinite(current.deadlineAt)
+        && Number.isFinite(previous.deadlineAt) && current.deadlineAt !== previous.deadlineAt) return false;
+    if (task.type === 'fixed' && typeof previous.time === 'string' && current.time !== previous.time) return false;
+    if ((task.type === 'fixed' || task.type === 'hourly') && typeof previous.repeatEnabled === 'boolean'
+        && (current.repeatEnabled !== false) !== previous.repeatEnabled) return false;
+    return true;
+}
+
 export function recordTriggeredAlarm(data, triggeredTask, now = Date.now()) {
     if (!data || typeof data !== 'object') return false;
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
     const task = tasks.find(item => item.id === triggeredTask?.id);
     if (!task) return false;
 
-    applyTriggeredAlarmTaskState(task, now);
+    // A completion belongs to its original schedule, even if this task was edited meanwhile.
+    if (matchesTriggeredSchedule(task, triggeredTask)) applyTriggeredAlarmTaskState(task, now);
+
     const today = new Date(now).toDateString();
-    data.completedToday = data.lastDate === today ? (Number(data.completedToday) || 0) + 1 : 1;
-    data.lastDate = today;
+    if (data.lastDate === today) {
+        data.completedToday = (Number(data.completedToday) || 0) + 1;
+    } else if (!Number.isFinite(Date.parse(data.lastDate)) || Date.parse(data.lastDate) < Date.parse(today)) {
+        data.completedToday = 1;
+        data.lastDate = today;
+    }
     return true;
 }
 

@@ -324,6 +324,7 @@ pub(crate) async fn release_idle_resources(
     app: AppHandle,
 ) -> Result<ResourceReleaseResult, String> {
     app.state::<PasswordVaultManager>().release_cached_index();
+    app.state::<super::software_analysis::SoftwareAnalysisManager>().release_idle_cache();
     let quick_host_released = app.state::<QuickHostManager>().release_hidden(&app);
     let hidden_organizer_released =
         app.get_webview_window("desktop-organizer")

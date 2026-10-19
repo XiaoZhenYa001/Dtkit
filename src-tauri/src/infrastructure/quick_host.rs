@@ -132,6 +132,10 @@ impl QuickHostManager {
                 if let Some(window) = app_handle.get_webview_window(&window_label) {
                     let minimized = window.is_minimized().unwrap_or(false);
                     if suspended.swap(minimized, Ordering::Relaxed) != minimized {
+                        if minimized {
+                            app_handle.state::<super::software_analysis::SoftwareAnalysisManager>()
+                                .cancel_window(&window_label);
+                        }
                         crate::set_webview_memory_target(&window, minimized);
                         let _ = app_handle.emit_to(
                             &window_label,
@@ -339,6 +343,7 @@ pub(crate) fn is_supported_tool_id(value: &str) -> bool {
             | "resource-center"
             | "system-assistant"
             | "startup-manager"
+            | "software-analysis"
             | "context-menu"
             | "password-vault"
             | "whiteboard"

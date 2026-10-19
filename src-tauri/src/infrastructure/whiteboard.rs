@@ -202,10 +202,122 @@ fn decode_thumbnail(data_url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn write_board_files(
+    board_root: &Path,
+    document: &Value,
+    thumbnail_data_url: Option<&str>,
+) -> Result<(), String> {
+    let document = document_bytes(document)?;
+    let thumbnail = thumbnail_data_url.map(decode_thumbnail).transpose()?;
+    atomic_write(&board_root.join("board.json"), &document)?;
+    if let Some(bytes) = thumbnail {
+        atomic_write(&board_root.join("thumbnail.png"), &bytes)?;
+    }
+    Ok(())
+}
+
 fn write_index(path: &Path, items: &[WhiteboardMeta]) -> Result<(), String> {
     let bytes =
         serde_json::to_vec_pretty(items).map_err(|error| format!("序列化白板索引失败: {error}"))?;
     atomic_write(path, &bytes)
+}
+
+fn draft_metadata(id: &str, payload: &Value, modified_at: i64) -> Option<WhiteboardMeta> {
+    safe_id(id).ok()?;
+    let document = payload.get("document")?;
+    if document.get("version").and_then(Value::as_u64) != Some(2)
+        || document.get("infinite").and_then(Value::as_bool) != Some(true)
+        || !document.get("elements").is_some_and(Value::is_array)
+    {
+        return None;
+    }
+    let saved_at = payload
+        .get("savedAt")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .unwrap_or(modified_at.max(0));
+    Some(WhiteboardMeta {
+        id: id.to_string(),
+        name: clean_name(payload.get("name").and_then(Value::as_str).unwrap_or("")),
+        created_at: saved_at,
+        updated_at: saved_at,
+        has_draft: true,
+    })
+}
+
+fn merge_draft_metadata(
+    mut items: Vec<WhiteboardMeta>,
+    drafts: impl IntoIterator<Item = WhiteboardMeta>,
+) -> Vec<WhiteboardMeta> {
+    let mut positions: HashMap<String, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(position, item)| (item.id.clone(), position))
+        .collect();
+    for draft in drafts {
+        if let Some(position) = positions.get(&draft.id) {
+            items[*position].has_draft = true;
+        } else {
+            positions.insert(draft.id.clone(), items.len());
+            items.push(draft);
+        }
+    }
+    items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    items
+}
+
+fn history_with_drafts(
+    mut items: Vec<WhiteboardMeta>,
+    drafts: &Path,
+) -> Result<Vec<WhiteboardMeta>, String> {
+    items.retain(|item| safe_id(&item.id).is_ok());
+    for item in &mut items {
+        item.has_draft = drafts.join(format!("{}.json", item.id)).is_file();
+    }
+    let formal_ids: std::collections::HashSet<_> =
+        items.iter().map(|item| item.id.clone()).collect();
+    let entries = match fs::read_dir(drafts) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(merge_draft_metadata(items, []))
+        }
+        Err(error) => return Err(format!("读取白板恢复草稿列表失败: {error}")),
+    };
+    let mut recovered = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || !entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if safe_id(id).is_err() || formal_ids.contains(id) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.len() > DOCUMENT_LIMIT as u64 {
+            continue;
+        }
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or(0);
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(payload) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        if let Some(meta) = draft_metadata(id, &payload, modified_at) {
+            recovered.push(meta);
+        }
+    }
+    Ok(merge_draft_metadata(items, recovered))
 }
 
 #[tauri::command]
@@ -216,12 +328,7 @@ pub(crate) fn list_whiteboards(app: AppHandle) -> Result<Vec<WhiteboardMeta>, St
         .lock()
         .map_err(|_| "白板存储状态不可用".to_string())?;
     let (_, drafts, index) = roots(&app)?;
-    let mut items = read_index(&index)?;
-    for item in &mut items {
-        item.has_draft = drafts.join(format!("{}.json", item.id)).is_file();
-    }
-    items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    Ok(items)
+    history_with_drafts(read_index(&index)?, &drafts)
 }
 
 #[tauri::command]
@@ -329,16 +436,11 @@ pub(crate) fn save_whiteboard(
         has_draft: false,
     };
     let board_root = boards.join(&id);
-    atomic_write(
-        &board_root.join("board.json"),
-        &document_bytes(&request.document)?,
+    write_board_files(
+        &board_root,
+        &request.document,
+        request.thumbnail_data_url.as_deref(),
     )?;
-    if let Some(data_url) = request.thumbnail_data_url {
-        atomic_write(
-            &board_root.join("thumbnail.png"),
-            &decode_thumbnail(&data_url)?,
-        )?;
-    }
     let _ = fs::remove_file(drafts.join(format!("{id}.json")));
     items.retain(|item| item.id != id);
     items.push(meta.clone());
@@ -461,6 +563,99 @@ mod tests {
     use super::*;
 
     #[test]
+    fn draft_metadata_requires_safe_ids_and_documents_and_falls_back_to_file_time() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let payload = serde_json::json!({
+            "name": "  恢复中的白板  ", "savedAt": 500,
+            "document": { "version": 2, "infinite": true, "elements": [] }
+        });
+        let meta = draft_metadata(&id, &payload, 250).unwrap();
+        assert_eq!(meta.id, id);
+        assert_eq!(meta.name, "恢复中的白板");
+        assert_eq!(meta.created_at, 500);
+        assert_eq!(meta.updated_at, 500);
+        assert!(meta.has_draft);
+        assert!(draft_metadata("../outside", &payload, 250).is_none());
+        assert!(draft_metadata(&id, &serde_json::json!({ "document": {} }), 250).is_none());
+        let fallback = draft_metadata(
+            &id,
+            &serde_json::json!({
+                "savedAt": -1, "document": { "version": 2, "infinite": true, "elements": [] }
+            }),
+            250,
+        )
+        .unwrap();
+        assert_eq!(fallback.name, "未命名白板");
+        assert_eq!(fallback.updated_at, 250);
+    }
+
+    #[test]
+    fn orphan_drafts_are_listed_without_replacing_formal_metadata_or_failing_on_corruption() {
+        let draft_root =
+            std::env::temp_dir().join(format!("dtkit-whiteboard-history-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&draft_root).unwrap();
+        let formal_id = uuid::Uuid::new_v4().to_string();
+        let orphan_id = uuid::Uuid::new_v4().to_string();
+        let fallback_id = uuid::Uuid::new_v4().to_string();
+        let broken_id = uuid::Uuid::new_v4().to_string();
+        let document = serde_json::json!({ "version": 2, "infinite": true, "elements": [] });
+        for (id, payload) in [
+            (
+                formal_id.as_str(),
+                serde_json::json!({ "name": "草稿新名", "savedAt": 30, "document": document }),
+            ),
+            (
+                orphan_id.as_str(),
+                serde_json::json!({ "name": "未正式保存的白板", "savedAt": 40, "document": document }),
+            ),
+            (
+                fallback_id.as_str(),
+                serde_json::json!({ "document": document }),
+            ),
+            (
+                "not-a-whiteboard-id",
+                serde_json::json!({ "document": document }),
+            ),
+        ] {
+            fs::write(
+                draft_root.join(format!("{id}.json")),
+                serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+        }
+        fs::write(draft_root.join(format!("{broken_id}.json")), b"{broken").unwrap();
+        fs::write(draft_root.join("ignored.json.backup"), b"{}").unwrap();
+        let formal = WhiteboardMeta {
+            id: formal_id.clone(),
+            name: "正式名称".into(),
+            created_at: 10,
+            updated_at: 20,
+            has_draft: false,
+        };
+        let items = history_with_drafts(vec![formal], &draft_root).unwrap();
+        assert_eq!(items.len(), 3);
+        assert!(items
+            .windows(2)
+            .all(|pair| pair[0].updated_at >= pair[1].updated_at));
+        let formal = items.iter().find(|item| item.id == formal_id).unwrap();
+        assert_eq!(formal.name, "正式名称");
+        assert_eq!(formal.created_at, 10);
+        assert_eq!(formal.updated_at, 20);
+        assert!(formal.has_draft);
+        let orphan = items.iter().find(|item| item.id == orphan_id).unwrap();
+        assert_eq!(orphan.name, "未正式保存的白板");
+        assert_eq!(orphan.updated_at, 40);
+        assert!(orphan.has_draft);
+        let fallback = items.iter().find(|item| item.id == fallback_id).unwrap();
+        assert_eq!(fallback.name, "未命名白板");
+        assert!(fallback.updated_at > 0);
+        for entry in fs::read_dir(&draft_root).unwrap().flatten() {
+            fs::remove_file(entry.path()).unwrap();
+        }
+        fs::remove_dir(&draft_root).unwrap();
+    }
+
+    #[test]
     fn whiteboard_ids_and_names_are_bounded() {
         assert!(safe_id(&uuid::Uuid::new_v4().to_string()).is_ok());
         assert!(safe_id("../Config").is_err());
@@ -476,6 +671,37 @@ mod tests {
         );
         assert_eq!(decode_thumbnail(&valid).unwrap(), b"png");
         assert!(decode_thumbnail("data:image/jpeg;base64,AA==").is_err());
+    }
+
+    #[test]
+    fn invalid_thumbnail_preserves_existing_document_and_thumbnail() {
+        let board_root = std::env::temp_dir().join(format!(
+            "dtkit-whiteboard-validation-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let thumbnail = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(b"original thumbnail")
+        );
+        let original = serde_json::json!({ "version": 2, "elements": [] });
+        write_board_files(&board_root, &original, Some(&thumbnail)).unwrap();
+        let document_path = board_root.join("board.json");
+        let thumbnail_path = board_root.join("thumbnail.png");
+        let before = fs::read(&document_path).unwrap();
+
+        let changed = serde_json::json!({ "version": 2, "elements": [{ "id": "new" }] });
+        assert!(write_board_files(
+            &board_root,
+            &changed,
+            Some("data:image/png;base64,%%%invalid%%%")
+        )
+        .is_err());
+        assert_eq!(fs::read(&document_path).unwrap(), before);
+        assert_eq!(fs::read(&thumbnail_path).unwrap(), b"original thumbnail");
+
+        fs::remove_file(document_path).unwrap();
+        fs::remove_file(thumbnail_path).unwrap();
+        fs::remove_dir(board_root).unwrap();
     }
 
     #[test]

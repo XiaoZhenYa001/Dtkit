@@ -1,0 +1,18 @@
+.tool-motion-segmented { position: relative; isolation: isolate; }
+.tool-motion-segmented > button { position: relative; z-index: 1; }
+.tool-segment-indicator {
+    position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none;
+    border: 1px solid rgba(0,0,0,.045); border-radius: 7px;
+    background: var(--motion-surface, var(--alarm-surface, #fff));
+    box-shadow: 0 1px 4px rgba(0,0,0,.09);
+    will-change: transform;
+}
+.tool-motion-ready > .tool-segment-indicator {
+    transition: transform 320ms cubic-bezier(.22,1,.36,1), width 320ms cubic-bezier(.22,1,.36,1), height 260ms cubic-bezier(.22,1,.36,1);
+}
+.tool-motion-segmented.tool-motion-segmented > button:is([aria-pressed="true"],[aria-selected="true"]) {
+    background: transparent; border-color: transparent; box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    .tool-motion-ready > .tool-segment-indicator { transition: none; }
+}

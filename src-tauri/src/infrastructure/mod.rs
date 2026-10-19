@@ -13,6 +13,7 @@ pub(crate) mod screen_color_picker;
 pub(crate) mod screenshot;
 pub(crate) mod shortcuts;
 pub(crate) mod snippets;
+pub(crate) mod software_analysis;
 pub(crate) mod sticky_notes;
 pub(crate) mod timetable;
 pub(crate) mod storage;

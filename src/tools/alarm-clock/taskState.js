@@ -9,7 +9,7 @@ function findTask(tasks, taskId) {
 
 export function pauseAlarmTask(tasks, taskId, now = Date.now()) {
     const task = findTask(tasks, taskId);
-    if (!task?.enabled) return null;
+    if (!task?.enabled || task.paused) return null;
     task.paused = true;
     task.pausedAt = now;
     pauseAlarmTaskSchedule(task, now);
@@ -18,7 +18,7 @@ export function pauseAlarmTask(tasks, taskId, now = Date.now()) {
 
 export function resumeAlarmTask(tasks, taskId, now = Date.now()) {
     const task = findTask(tasks, taskId);
-    if (!task?.enabled) return null;
+    if (!task?.enabled || !task.paused) return null;
     task.paused = false;
     delete task.pausedAt;
     prepareAlarmTaskSchedule(task, { restart: true, now });
@@ -44,9 +44,9 @@ export function restartCountdownTask(tasks, taskId, now = Date.now()) {
     const task = findTask(tasks, taskId);
     if (!task || task.type !== 'countdown') return null;
     task.config.remainingSeconds = task.config.totalSeconds;
-    if (task.enabled) {
-        prepareAlarmTaskSchedule(task, { restart: true, now });
-        return task;
-    }
-    return toggleAlarmTask(tasks, taskId, now);
+    task.enabled = true;
+    task.paused = false;
+    delete task.pausedAt;
+    prepareAlarmTaskSchedule(task, { restart: true, now });
+    return task;
 }

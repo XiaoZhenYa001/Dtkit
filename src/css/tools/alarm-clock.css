@@ -1,1066 +1,329 @@
-/* Tool styles loaded as an external Vite CSS chunk. */
-.alarm-clock-view {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            padding: var(--spacing-lg);
-            gap: var(--spacing-lg);
-            overflow: hidden;
-        }
-
-        /* 顶部统计栏 */
-        .alarm-header-stats {
-            display: flex;
-            gap: var(--spacing-lg);
-            flex-shrink: 0;
-        }
-
-        .alarm-stat-card {
-            background: var(--color-bg-secondary);
-            padding: var(--spacing-md) var(--spacing-lg);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--color-border);
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .alarm-stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .alarm-stat-label {
-            font-size: var(--font-size-sm);
-            color: var(--color-text-secondary);
-        }
-
-        .alarm-stat-value {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: var(--color-primary);
-        }
-
-        .alarm-stat-value--accent {
-            color: #ff6b6b;
-            font-family: 'Courier New', monospace;
-        }
-
-        .alarm-sync-status {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            min-width: 112px;
-            padding: 8px 12px;
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-md);
-            color: var(--color-text-secondary);
-            background: var(--color-bg-secondary);
-            font-size: var(--font-size-sm);
-            white-space: nowrap;
-        }
-
-        .alarm-sync-status[data-state="syncing"] i,
-        .alarm-sync-status[data-state="retrying"] i {
-            animation: alarmSyncSpin 1s linear infinite;
-        }
-
-        .alarm-sync-status[data-state="synced"] {
-            color: #15803d;
-            border-color: #86efac;
-            background: #f0fdf4;
-        }
-
-        .alarm-sync-status[data-state="retrying"] {
-            color: #a16207;
-            border-color: #fde047;
-            background: #fefce8;
-        }
-
-        .alarm-sync-status[data-state="failed"] {
-            color: #b91c1c;
-            border-color: #fca5a5;
-            background: #fef2f2;
-        }
-
-        @keyframes alarmSyncSpin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* 主体布局 */
-        .alarm-main-container {
-            display: grid;
-            grid-template-columns: 380px 1fr;
-            gap: var(--spacing-lg);
-            flex: 1;
-            min-height: 0;  /* 关键：让 flex 子元素可以缩小 */
-            height: 100%;   /* 强制铺满剩余空间 */
-            overflow: hidden; /* 防止外层容器出现滚动条 */
-        }
-
-        /* 左侧配置面板 */
-        .alarm-config-panel {
-            background: var(--color-bg-secondary);
-            border-radius: var(--radius-lg);
-            padding: var(--spacing-lg);
-            box-shadow: var(--shadow-md);
-            border: 1px solid var(--color-border);
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-md);
-
-            /* 核心修改： */
-            align-self: start;   /* 确保左侧面板高度由内容决定，不会被拉长 */
-            max-height: 100%;    /* 如果内容过多，左侧内部滚动 */
-            overflow-y: auto;
-        }
-
-        .alarm-panel-title {
-            margin: 0;
-            font-size: var(--font-size-lg);
-            color: var(--color-text-primary);
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            padding-bottom: var(--spacing-md);
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .alarm-panel-title i {
-            color: var(--color-primary);
-        }
-
-        .alarm-input-group {
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-xs);
-        }
-
-        .alarm-label {
-            font-size: var(--font-size-sm);
-            font-weight: 600;
-            color: var(--color-text-secondary);
-        }
-
-        .alarm-input,
-        .alarm-select {
-            padding: 12px 14px;
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-md);
-            background: var(--color-bg-tertiary);
-            color: var(--color-text-primary);
-            font-size: var(--font-size-sm);
-            outline: none;
-            transition: all 0.2s ease;
-        }
-
-        .alarm-input:hover,
-        .alarm-select:hover {
-            border-color: var(--color-text-tertiary);
-        }
-
-        .alarm-input:focus,
-        .alarm-select:focus {
-            border-color: var(--color-primary);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-            background: var(--color-bg-primary);
-        }
-
-        .alarm-input--small {
-            width: 60px;
-            text-align: center;
-            padding: 10px 8px;
-        }
-
-        .alarm-select--small {
-            width: auto;
-            padding: 10px 12px;
-        }
-
-        /* 动画定义 */
-        @keyframes alarmSlideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-                max-height: 0;
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-                max-height: 200px;
-            }
-        }
-
-        @keyframes alarmPopIn {
-            0% { opacity: 0; transform: scale(0.95); }
-            70% { transform: scale(1.02); }
-            100% { opacity: 1; transform: scale(1); }
-        }
-
-        .alarm-countdown-inputs,
-        .alarm-interval-inputs {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            margin-top: var(--spacing-xs);
-            overflow: hidden;
-        }
-
-        /* 当通过 JS 显示时触发动画 */
-        .alarm-countdown-inputs:not([style*="display: none"]),
-        .alarm-interval-inputs:not([style*="display: none"]),
-        .alarm-input:not([style*="display: none"]):not(#alarmTaskName) {
-            animation: alarmSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-        }
-
-        .alarm-time-sep {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: var(--color-text-secondary);
-        }
-
-        .alarm-interval-text {
-            font-size: var(--font-size-sm);
-            color: var(--color-text-secondary);
-        }
-
-        /* 动态配置区域 */
-        .alarm-action-config {
-            min-height: 0;
-            transition: all 0.3s ease;
-        }
-
-        .alarm-action-config > div {
-            animation: alarmPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-        }
-
-        .alarm-action-config:empty {
-            display: none;
-        }
-
-        /* 音频列表样式 */
-        .alarm-audio-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: 300px;
-            overflow-y: auto;
-            padding: 4px;
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-md);
-            background: var(--color-bg-tertiary);
-        }
-
-        .alarm-audio-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            border: 2px solid transparent;
-            border-radius: var(--radius-md);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            background: white;
-        }
-
-        .alarm-audio-item:hover {
-            border-color: var(--color-primary);
-            background: #f8fafc;
-            transform: translateX(4px);
-        }
-
-        .alarm-audio-item.selected {
-            border-color: var(--color-primary);
-            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-        }
-
-        .alarm-audio-item:focus-visible,
-        .alarm-audio-preview-btn:focus-visible,
-        .alarm-open-folder-btn:focus-visible {
-            outline: 3px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-            outline-offset: 2px;
-        }
-
-        .alarm-audio-icon {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            border-radius: 10px;
-            flex-shrink: 0;
-        }
-
-        .alarm-audio-icon i {
-            font-size: 20px;
-            color: white;
-        }
-
-        .alarm-audio-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .alarm-audio-name {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--color-text-primary);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .alarm-audio-size {
-            font-size: 12px;
-            color: var(--color-text-tertiary);
-            margin-top: 2px;
-        }
-
-        .alarm-audio-preview-btn {
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            flex-shrink: 0;
-        }
-
-        .alarm-audio-preview-btn:hover {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            transform: scale(1.1);
-        }
-
-        .alarm-audio-preview-btn:hover i {
-            color: white;
-        }
-
-        .alarm-audio-preview-btn i {
-            font-size: 16px;
-            color: var(--color-primary);
-            transition: color 0.2s ease;
-        }
-
-        .alarm-no-audio {
-            padding: 40px 20px;
-            text-align: center;
-            color: var(--color-text-tertiary);
-        }
-
-        .alarm-no-audio p {
-            margin: 8px 0;
-        }
-
-        /* 打开文件夹按钮 */
-        .alarm-open-folder-btn {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            border: none;
-            border-radius: 6px;
-            color: white;
-            padding: 4px 8px;
-            cursor: pointer;
-            margin-left: 8px;
-            transition: all 0.2s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            font-size: 12px;
-        }
-
-        .alarm-open-folder-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
-        }
-
-        .alarm-open-folder-btn i {
-            font-size: 14px;
-        }
-
-        /* 文件选择器 */
-        .alarm-file-picker {
-            display: flex;
-            gap: var(--spacing-sm);
-            animation: alarmPopIn 0.3s ease forwards;
-        }
-
-        .alarm-file-path {
-            flex: 1;
-            padding: 12px 14px;
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-md);
-            background: var(--color-bg-tertiary);
-            color: var(--color-text-primary);
-            font-size: var(--font-size-xs);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            transition: all 0.2s ease;
-        }
-
-        .alarm-file-btn {
-            padding: 10px 16px;
-            background: var(--color-primary);
-            color: white;
-            border: none;
-            border-radius: var(--radius-md);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-xs);
-            transition: all 0.2s ease;
-            font-size: var(--font-size-sm);
-        }
-
-        .alarm-file-btn:hover {
-            background: var(--color-primary-hover);
-            transform: scale(1.05);
-        }
-
-        /* 重复设置 */
-        .alarm-repeat-options {
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-sm);
-            transition: all 0.3s ease;
-        }
-
-        .alarm-checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            cursor: pointer;
-            font-size: var(--font-size-sm);
-            color: var(--color-text-primary);
-            padding: 4px 0;
-        }
-
-        .alarm-checkbox-label input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--color-primary);
-            cursor: pointer;
-            transition: transform 0.2s ease;
-        }
-
-        .alarm-checkbox-label:hover input[type="checkbox"] {
-            transform: scale(1.1);
-        }
-
-        .alarm-repeat-days {
-            display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-            overflow: hidden;
-            padding: 0.5rem 0.25rem;
-            transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .alarm-repeat-days:not([style*="display: none"]) {
-            animation: alarmSlideIn 0.3s ease forwards;
-        }
-
-        .alarm-day-checkbox {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .alarm-day-checkbox input[type="checkbox"] {
-            display: none;
-        }
-
-        .alarm-day-checkbox span {
-            width: 34px;
-            height: 34px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            border: 1.5px solid var(--color-border);
-            background: white;
-            font-size: 0.8125rem;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            user-select: none;
-        }
-
-        .alarm-day-checkbox input:checked + span {
-            background: var(--color-primary);
-            border-color: var(--color-primary);
-            color: white;
-            transform: scale(1.15);
-            box-shadow: 0 4px 10px rgba(59, 130, 246, 0.35);
-        }
-
-        .alarm-day-checkbox:not(:has(input:checked)):hover span {
-            border-color: var(--color-primary);
-            color: var(--color-primary);
-            background: var(--color-bg-primary);
-            transform: translateY(-2px);
-        }
-
-        /* 针对周末的特殊样式（可选，增加视觉区分） */
-        .alarm-day-checkbox:nth-last-child(-n+2) span {
-            /* 周六周日如果未选中，颜色稍微淡一点或不同 */
-        }
-
-        /* 添加按钮 */
-        .alarm-btn-add {
-            margin-top: auto;
-            padding: 14px 20px;
-            background: linear-gradient(135deg, var(--color-primary) 0%, #6366f1 100%);
-            color: white;
-            border: none;
-            border-radius: var(--radius-md);
-            font-size: var(--font-size-md);
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: var(--spacing-sm);
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
-        }
-
-        .alarm-btn-add:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
-        }
-
-        .alarm-btn-add:active {
-            transform: translateY(0);
-        }
-
-        .alarm-btn-add:disabled {
-            cursor: not-allowed;
-            opacity: 0.55;
-            box-shadow: none;
-            filter: grayscale(0.35);
-        }
-
-        /* 停止所有闹钟按钮 */
-        .alarm-stop-all-btn {
-            padding: 12px 20px;
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            color: white;
-            border: none;
-            border-radius: var(--radius-md);
-            font-size: var(--font-size-sm);
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
-            white-space: nowrap;
-        }
-
-        .alarm-stop-all-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
-        }
-
-        .alarm-stop-all-btn:active {
-            transform: translateY(0);
-        }
-
-        .alarm-stop-all-btn i {
-            font-size: 1.2em;
-        }
-
-        /* 右侧任务列表 */
-        .alarm-list-panel {
-            background: var(--color-bg-secondary);
-            border-radius: var(--radius-lg);
-            padding: var(--spacing-lg);
-            box-shadow: var(--shadow-md);
-            border: 1px solid var(--color-border);
-
-            /* 核心修改： */
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-md);
-            height: 100%;        /* 强制等于父容器高度 */
-            overflow-y: auto;    /* 内容增多时出现滚动条 */
-            position: relative;
-        }
-
-        /* 优化滚动条样式（可选，增加美观度） */
-        .alarm-list-panel::-webkit-scrollbar {
-            width: 6px;
-        }
-        .alarm-list-panel::-webkit-scrollbar-thumb {
-            background: var(--color-border);
-            border-radius: 10px;
-        }
-
-        .alarm-list-empty {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: var(--color-text-tertiary);
-            text-align: center;
-        }
-
-        .alarm-list-empty i {
-            font-size: 4rem;
-            margin-bottom: var(--spacing-md);
-            opacity: 0.3;
-        }
-
-        .alarm-list-empty p {
-            margin: 0;
-            font-size: var(--font-size-md);
-        }
-
-        .alarm-list-empty-sub {
-            font-size: var(--font-size-sm);
-            opacity: 0.7;
-            margin-top: var(--spacing-xs);
-        }
-
-        /* 任务卡片 */
-        .alarm-task-card {
-            background: white;
-            border-radius: 1rem;
-            padding: 1rem 1.25rem;
-            border: 1px solid var(--color-border);
-            display: flex;
-            align-items: center;
-            gap: 1.25rem;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .alarm-task-card::before {
-            content: '';
-            position: absolute;
-            left: 6px;
-            top: 20%;
-            bottom: 20%;
-            width: 5px;
-            background: var(--color-primary);
-            border-radius: 10px;
-            opacity: 0;
-            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        .alarm-task-card:not(.disabled)::before {
-            opacity: 1;
-        }
-
-        /* 12种暖色调随机呈现 (通过 nth-child 模拟) */
-        .alarm-task-card:not(.disabled):nth-child(12n+1)::before { background: #ff5f6d; }
-        .alarm-task-card:not(.disabled):nth-child(12n+2)::before { background: #ff7e5f; }
-        .alarm-task-card:not(.disabled):nth-child(12n+3)::before { background: #feb47b; }
-        .alarm-task-card:not(.disabled):nth-child(12n+4)::before { background: #ff9a9e; }
-        .alarm-task-card:not(.disabled):nth-child(12n+5)::before { background: #fecfef; }
-        .alarm-task-card:not(.disabled):nth-child(12n+6)::before { background: #fda085; }
-        .alarm-task-card:not(.disabled):nth-child(12n+7)::before { background: #f6d365; }
-        .alarm-task-card:not(.disabled):nth-child(12n+8)::before { background: #f093fb; }
-        .alarm-task-card:not(.disabled):nth-child(12n+9)::before { background: #f5576c; }
-        .alarm-task-card:not(.disabled):nth-child(12n+10)::before { background: #fa709a; }
-        .alarm-task-card:not(.disabled):nth-child(12n+11)::before { background: #ee9ca7; }
-        .alarm-task-card:not(.disabled):nth-child(12n+12)::before { background: #ffecd2; }
-
-        .alarm-task-card:hover {
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
-            transform: translateX(6px);
-            border-color: var(--color-primary-light);
-        }
-
-        /* 拖拽手柄 */
-        .alarm-task-drag-handle {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 24px;
-            color: var(--color-text-tertiary);
-            cursor: grab;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-            font-size: 1.2rem;
-        }
-
-        .alarm-task-card:hover .alarm-task-drag-handle {
-            opacity: 1;
-        }
-
-        .alarm-task-drag-handle:active {
-            cursor: grabbing;
-        }
-
-        /* Sortable.js 拖拽样式 */
-        .sortable-drag {
-            opacity: 1 !important;
-            transform: scale(1.03) rotate(1.5deg) !important;
-            background: white !important;
-            border: 2px solid var(--color-primary) !important;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
-            z-index: 9999 !important;
-            cursor: grabbing !important;
-        }
-
-        /* 拖拽时的占位符 */
-        .sortable-ghost {
-            background: #eef2f7 !important;
-            border: 2px dashed #cbd5e1 !important;
-            border-radius: 1rem !important;
-            opacity: 0.5 !important;
-            box-shadow: inset 0 2px 8px rgba(0,0,0,0.06) !important;
-        }
-
-        .sortable-ghost * {
-            visibility: hidden;
-        }
-
-        /* 选中瞬间 */
-        .sortable-chosen {
-            transition: 0.2s;
-            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
-        }
-
-        /* 其他卡片的过渡动画 */
-        .alarm-task-card {
-            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
-                        box-shadow 0.3s ease;
-        }
-
-        .alarm-task-card.disabled {
-            background: #f1f5f9;
-            border-color: transparent;
-            filter: grayscale(0.8);
-            opacity: 0.7;
-        }
-
-        .alarm-task-card.disabled::before {
-            background: var(--color-text-tertiary);
-        }
-
-        /* 暂停状态样式 */
-        .alarm-task-card.paused {
-            background: #fef3c7;
-            border-color: #fbbf24;
-            position: relative;
-        }
-
-        .alarm-task-card.paused::before {
-            background: #fbbf24;
-        }
-
-        .alarm-task-card.paused .alarm-task-countdown {
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-            animation: none;
-        }
-
-        /* 暂停遮罩层 */
-        .alarm-task-paused-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(251, 191, 36, 0.1);
-            border-radius: 1rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            pointer-events: none;
-            z-index: 1;
-        }
-
-        .alarm-task-paused-overlay i {
-            font-size: 4rem;
-            color: rgba(251, 191, 36, 0.3);
-        }
-
-        /* 暂停徽章 */
-        .alarm-task-paused-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 2px 8px;
-            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-            color: white;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-left: 8px;
-        }
-
-        .alarm-task-countdown {
-            min-width: 110px;
-            padding: 0.75rem 1rem;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            border-radius: 0.75rem;
-            color: white;
-            text-align: center;
-            font-family: 'JetBrains Mono', 'Courier New', monospace;
-            font-size: 1.125rem;
-            font-weight: 700;
-            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-            transition: all 0.3s ease;
-            position: relative;
-        }
-
-        /* 为正在执行的任务添加多样性颜色 */
-        .alarm-task-card:not(.disabled):nth-child(3n+1) .alarm-task-countdown {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
-        }
-        .alarm-task-card:not(.disabled):nth-child(3n+2) .alarm-task-countdown {
-            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
-        }
-        .alarm-task-card:not(.disabled):nth-child(3n+3) .alarm-task-countdown {
-            background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
-            box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25);
-        }
-
-        /* 正在执行的任务呼吸灯效果 */
-        @keyframes countdownPulse {
-            0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
-        }
-
-        .alarm-task-card:not(.disabled) .alarm-task-countdown {
-            animation: countdownPulse 2s infinite;
-        }
-
-        .alarm-task-card.disabled .alarm-task-countdown {
-            background: #94a3b8;
-            box-shadow: none;
-            animation: none;
-        }
-
-        .alarm-task-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .alarm-task-name {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--color-text-primary);
-            margin-bottom: 0.25rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .alarm-task-meta {
-            display: flex;
-            gap: 1rem;
-            font-size: 0.75rem;
-            color: var(--color-text-tertiary);
-        }
-
-        .alarm-task-meta-item {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .alarm-task-meta-item i {
-            font-size: 0.875rem;
-            color: var(--color-primary);
-            opacity: 0.7;
-        }
-
-        .alarm-task-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .alarm-task-btn {
-            width: 34px;
-            height: 34px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid var(--color-border);
-            background: white;
-            border-radius: 0.5rem;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            font-size: 1rem;
-            color: var(--color-text-secondary);
-        }
-
-        .alarm-task-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-        }
-
-        .alarm-task-btn--toggle:hover {
-            border-color: #22c55e;
-            color: #22c55e;
-        }
-
-        .alarm-task-btn--toggle.active {
-            background: #22c55e;
-            border-color: #22c55e;
-            color: white;
-        }
-
-        .alarm-task-btn--delete:hover {
-            border-color: #ef4444;
-            color: #ef4444;
-        }
-
-        /* 响应式适配 */
-        @media (max-width: 900px) {
-            .alarm-main-container {
-                grid-template-columns: 1fr;
-            }
-
-            .alarm-header-stats {
-                flex-wrap: wrap;
-            }
-
-            .alarm-stat-card {
-                min-width: calc(50% - var(--spacing-md));
-            }
-        }
-/* Alarm notification overlay and toast */
-.alarm-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 999998;
-    background: rgba(0, 0, 0, 0.5);
-    cursor: pointer;
-    animation: overlayFadeIn 0.3s ease;
-}
-
-.alarm-overlay--closing {
-    animation: overlayFadeOut 0.3s ease forwards;
-}
-
-.dtkit-toast--alarm {
-    position: fixed;
-    top: 20px;
-    left: 50%;
-    z-index: 999999;
-    min-width: 400px;
-    max-width: 550px;
-    transform: translateX(-50%);
-    padding: 20px 24px;
-    color: white;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-radius: 16px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    font-size: 14px;
-    box-shadow: 0 16px 48px rgba(102, 126, 234, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.3);
-    animation: alarmToastIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), alarmGlow 1.5s infinite;
-}
-
-.dtkit-toast--alarm-closing {
-    animation: alarmToastOut 0.3s ease forwards;
-}
-
-.alarm-toast__content {
+/* A quiet workspace: clear time, deliberate controls, and room to focus. */
+.view-container.alarm-clock-view {
+    --alarm-bg: #f7f7f5;
+    --alarm-surface: #fff;
+    --alarm-inset: #f3f3f1;
+    --alarm-text: #1d1d1f;
+    --alarm-secondary: #68686d;
+    --alarm-muted: #707075;
+    --alarm-border: #e8e8e5;
+    --alarm-border-strong: #d5d5d2;
+    --alarm-accent: #e98532;
+    --alarm-accent-soft: #fff3e6;
+    --alarm-blue: #0071e3;
+    --alarm-blue-soft: #eef5ff;
+    --alarm-green: #248343;
+    --alarm-danger: #c54036;
+    --alarm-shadow: 0 3px 14px rgba(0, 0, 0, .025);
     display: flex;
-    align-items: center;
-    gap: 16px;
+    flex-direction: column;
+    gap: 28px;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    min-height: 0;
+    padding: clamp(24px, 3.2vw, 48px);
+    margin: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: var(--alarm-bg);
+    color: var(--alarm-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    color-scheme: light;
+    container: alarm-workspace / inline-size;
+    scrollbar-gutter: stable;
 }
 
-.alarm-toast__icon {
-    font-size: 36px;
-    animation: alarmPulse 0.8s infinite;
-}
+.alarm-clock-view button,
+.alarm-clock-view input,
+.alarm-clock-view select { font-family: inherit; }
+.alarm-clock-view button { cursor: pointer; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease; }
+.alarm-clock-view button:focus-visible,
+.alarm-clock-view .alarm-audio-item:focus-visible,
+.alarm-clock-view .alarm-task-drag-handle:focus-visible,
+.alarm-dismiss-btn:focus-visible { outline: 3px solid #79b5f4; outline-offset: 3px; }
+.alarm-clock-view button:disabled { opacity: .45; cursor: not-allowed; }
 
-.alarm-toast__body {
-    flex: 1;
-}
+.alarm-workspace-header { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; gap: 24px; }
+.alarm-clock-view .alarm-eyebrow { margin: 0 0 9px; color: var(--alarm-muted); font-size: 9px; font-weight: 600; letter-spacing: .19em; line-height: 1.6; }
+.alarm-clock-view .alarm-title { margin: 0; color: var(--alarm-text); font-size: clamp(28px, 3vw, 36px); font-weight: 650; letter-spacing: -.055em; line-height: 1.2; }
+.alarm-clock-view .alarm-title > span { color: var(--alarm-accent); }
+.alarm-clock-view .alarm-subtitle { margin: 11px 0 0; color: var(--alarm-secondary); font-size: 12px; line-height: 1.7; }
+.alarm-header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.alarm-sync-status,
+.alarm-stop-all-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 35px; padding: 8px 12px; border: 1px solid var(--alarm-border); border-radius: 9px; background: var(--alarm-surface); color: var(--alarm-secondary); font-size: 11px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+.alarm-sync-status i { color: var(--alarm-green); font-size: 14px; }
+.alarm-sync-status[data-state="syncing"] i,
+.alarm-sync-status[data-state="retrying"] i { animation: alarm-sync-spin 1s linear infinite; }
+.alarm-sync-status[data-state="syncing"] i { color: var(--alarm-blue); }
+.alarm-sync-status[data-state="retrying"] i { color: var(--alarm-accent); }
+.alarm-sync-status[data-state="failed"] { color: var(--alarm-danger); }
+.alarm-sync-status[data-state="failed"] i { color: currentColor; }
+.alarm-stop-all-btn { color: var(--alarm-danger); }
+.alarm-stop-all-btn:hover:not(:disabled) { border-color: #edc7c3; background: #fff5f3; }
 
-.alarm-toast__title {
-    font-size: 20px;
-    font-weight: 700;
-}
+.alarm-overview { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 20px; flex: 0 0 auto; }
+.alarm-next-card,
+.alarm-overview-side { min-width: 0; border: 1px solid var(--alarm-border); border-radius: 22px; background: var(--alarm-surface); box-shadow: var(--alarm-shadow); }
+.alarm-next-card { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 230px; padding: 25px 32px; }
+.alarm-next-label { display: inline-flex; align-items: center; gap: 7px; color: var(--alarm-secondary); font-size: 11px; font-weight: 500; }
+.alarm-next-label i { color: var(--alarm-accent); font-size: 16px; }
+.alarm-next-title { max-width: 100%; margin-top: 15px; overflow: hidden; color: var(--alarm-text); font-size: 15px; font-weight: 500; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-next-time { max-width: 100%; margin: 3px 0 5px; color: var(--alarm-text); font-size: clamp(48px, 6.6vw, 82px); font-weight: 250; font-variant-numeric: tabular-nums; letter-spacing: -.065em; line-height: 1.15; white-space: nowrap; }
+.alarm-clock-view .alarm-next-detail { margin: 4px 0 0; color: var(--alarm-muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.alarm-overview-side { display: flex; flex-direction: column; padding: 25px 28px 0; }
+.alarm-clock-face { display: flex; flex: 1; flex-direction: column; justify-content: center; align-items: center; padding: 0 0 22px; }
+.alarm-current-time { color: var(--alarm-text); font-size: 48px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.06em; line-height: 1.2; }
+.alarm-clock-view .alarm-current-date { margin: 7px 0 0; color: var(--alarm-secondary); font-size: 11px; }
+.alarm-header-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--alarm-border); }
+.alarm-stat-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 73px; padding: 12px 6px; }
+.alarm-stat-card + .alarm-stat-card { border-left: 1px solid var(--alarm-border); }
+.alarm-stat-label { color: var(--alarm-muted); font-size: 10px; }
+.alarm-stat-value { color: var(--alarm-text); font-size: 21px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
-.alarm-toast__task {
-    margin-top: 6px;
-    font-size: 16px;
-    opacity: 0.95;
-}
+.alarm-main-container { display: grid; grid-template-columns: 344px minmax(0, 1fr); align-items: start; gap: 28px; flex: 0 0 auto; min-height: 0; padding-bottom: 4px; }
+.alarm-config-panel { min-width: 0; padding: 25px; border: 1px solid var(--alarm-border); border-radius: 22px; background: var(--alarm-surface); box-shadow: var(--alarm-shadow); }
+.alarm-panel-heading { margin-bottom: 25px; }
+.alarm-panel-title { margin: 0; color: var(--alarm-text); font-size: 17px; font-weight: 600; letter-spacing: -.025em; line-height: 1.5; }
+.alarm-clock-view .alarm-panel-subtitle { margin: 6px 0 0; color: var(--alarm-muted); font-size: 11px; line-height: 1.6; }
+.alarm-clock-view #alarmTaskForm { display: flex; flex-direction: column; gap: 21px; }
+.alarm-input-group,
+.alarm-repeat-options { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.alarm-label { color: var(--alarm-secondary); font-size: 11px; font-weight: 500; line-height: 1.5; }
+.alarm-input,
+.alarm-select { display: block; width: 100%; min-width: 0; min-height: 41px; padding: 11px 12px; border: 1px solid var(--alarm-border); border-radius: 9px; outline: none; background: var(--alarm-surface); color: var(--alarm-text); font-size: 12px; line-height: 1.5; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.alarm-input::placeholder { color: var(--alarm-muted); opacity: .85; }
+.alarm-input:hover, .alarm-select:hover { border-color: var(--alarm-border-strong); }
+.alarm-input:focus, .alarm-select:focus { border-color: var(--alarm-blue); box-shadow: 0 0 0 3px rgba(0, 113, 227, .13); }
+.alarm-input[aria-invalid="true"] { border-color: var(--alarm-danger); }
+.alarm-select { cursor: pointer; }
+.alarm-input[type="time"] { min-height: 68px; font-size: 31px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.alarm-type-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; padding: 4px; border: 1px solid transparent; border-radius: 10px; background: var(--alarm-inset); }
+.alarm-type-switch button { min-height: 31px; padding: 5px 2px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--alarm-secondary); font-size: 10px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
+.alarm-type-switch button:hover { color: var(--alarm-text); }
+.alarm-type-switch button[aria-pressed="true"] { border-color: rgba(0, 0, 0, .035); background: var(--alarm-surface); color: var(--alarm-text); box-shadow: 0 1px 4px rgba(0, 0, 0, .09); }
+.alarm-countdown-inputs { display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; }
+.alarm-duration-field { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 7px; min-width: 0; }
+.alarm-duration-field .alarm-input { width: 100%; min-height: 66px; padding: 9px 3px; border-color: transparent; background: var(--alarm-inset); text-align: center; font-size: 34px; font-weight: 300; font-variant-numeric: tabular-nums; line-height: 1; appearance: textfield; -moz-appearance: textfield; }
+.alarm-duration-field .alarm-input::-webkit-inner-spin-button,
+.alarm-duration-field .alarm-input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
+.alarm-duration-field .alarm-input:focus { border-color: var(--alarm-blue); }
+.alarm-duration-field > span { color: var(--alarm-muted); font-size: 10px; }
+.alarm-time-sep { align-self: flex-start; padding-top: 12px; color: var(--alarm-muted); font-size: 26px; font-weight: 300; }
+.alarm-quick-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 5px; }
+.alarm-quick-presets button { min-height: 29px; padding: 5px 2px; border: 1px solid var(--alarm-border); border-radius: 7px; background: transparent; color: var(--alarm-secondary); font-size: 10px; white-space: nowrap; }
+.alarm-quick-presets button:hover,
+.alarm-quick-presets button[aria-pressed="true"] { border-color: #f2d1b0; background: var(--alarm-accent-soft); color: #a45a1e; }
+.alarm-interval-inputs { display: flex; align-items: center; gap: 8px; }
+.alarm-input--small { width: 66px; padding: 9px 7px; text-align: center; }
+.alarm-select--small { width: auto; padding: 9px 8px; }
+.alarm-interval-text { color: var(--alarm-secondary); font-size: 11px; white-space: nowrap; }
+.alarm-clock-view .alarm-helper { margin: 0; padding: 11px 12px; border-radius: 9px; background: var(--alarm-inset); color: var(--alarm-secondary); font-size: 11px; line-height: 1.8; }
+.alarm-action-config:empty { display: none; }
 
-.alarm-dismiss-btn {
-    padding: 16px 32px;
-    color: white;
-    border: none;
-    border-radius: 12px;
-    background: #ff4757;
-    box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
-    cursor: pointer;
-    font-size: 16px;
-    font-weight: 700;
-    white-space: nowrap;
-    transition: all 0.2s;
-}
+.alarm-checkbox-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 25px; color: var(--alarm-secondary); font-size: 11px; cursor: pointer; }
+.alarm-checkbox-label input[type="checkbox"] { position: relative; width: 33px; height: 20px; flex: 0 0 auto; border: 1px solid rgba(0, 0, 0, .04); border-radius: 20px; appearance: none; background: var(--alarm-border-strong); cursor: pointer; transition: background-color 160ms ease; }
+.alarm-checkbox-label input[type="checkbox"]::before { content: ""; position: absolute; top: 1px; left: 1px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .18); transition: transform 160ms ease; }
+.alarm-checkbox-label input[type="checkbox"]:checked { background: #34c759; }
+.alarm-checkbox-label input[type="checkbox"]:checked::before { transform: translateX(13px); }
+.alarm-checkbox-label input[type="checkbox"]:focus-visible { outline: 3px solid #79b5f4; outline-offset: 3px; }
+.alarm-repeat-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; padding-top: 4px; }
+.alarm-day-checkbox { position: relative; display: block; cursor: pointer; }
+.alarm-day-checkbox input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.alarm-day-checkbox span { display: grid; place-items: center; min-height: 32px; border: 1px solid var(--alarm-border); border-radius: 50%; color: var(--alarm-secondary); font-size: 11px; transition: background-color 160ms ease, color 160ms ease; }
+.alarm-day-checkbox input:checked + span { border-color: var(--alarm-blue); background: var(--alarm-blue); color: white; }
+.alarm-day-checkbox input:focus-visible + span { outline: 3px solid #79b5f4; outline-offset: 2px; }
+.alarm-day-checkbox:hover span { border-color: var(--alarm-blue); }
+.alarm-clock-view .alarm-form-status { margin: -6px 0; color: var(--alarm-danger); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.alarm-clock-view .alarm-form-status:empty { display: none; }
+.alarm-form-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.alarm-btn-add { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 43px; padding: 11px 16px; border: 1px solid transparent; border-radius: 10px; background: var(--alarm-text); color: var(--alarm-surface); font-size: 12px; font-weight: 500; }
+.alarm-btn-add:hover:not(:disabled) { background: #38383a; box-shadow: 0 3px 8px rgba(0, 0, 0, .09); }
+.alarm-btn-add i { font-size: 17px; }
+.alarm-cancel-edit { min-height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--alarm-secondary); font-size: 11px; }
+.alarm-cancel-edit:hover { background: var(--alarm-inset); }
 
-.alarm-dismiss-btn:hover {
-    background: #ff6b7a;
-    transform: scale(1.05);
-}
+.alarm-list-section { display: flex; flex-direction: column; min-width: 0; min-height: 100%; }
+.alarm-list-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; min-height: 58px; margin-bottom: 17px; }
+.alarm-filter-tabs { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.alarm-filter-tabs button { min-height: 29px; padding: 5px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--alarm-muted); font-size: 11px; white-space: nowrap; }
+.alarm-filter-tabs button:hover { color: var(--alarm-text); }
+.alarm-filter-tabs button[aria-pressed="true"] { border-color: var(--alarm-border); background: var(--alarm-surface); color: var(--alarm-text); box-shadow: 0 1px 3px rgba(0, 0, 0, .025); }
+.alarm-list-panel { display: flex; flex: 1; flex-direction: column; gap: 12px; min-width: 0; min-height: 300px; }
+.alarm-clock-view .alarm-list-footnote { margin: 18px 2px 0; color: var(--alarm-muted); font-size: 10px; line-height: 1.7; }
+.alarm-list-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 300px; padding: 36px 24px; border: 1px dashed var(--alarm-border-strong); border-radius: 20px; text-align: center; color: var(--alarm-secondary); }
+.alarm-list-empty > i { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 10px; border: 1px solid var(--alarm-border); border-radius: 18px; background: var(--alarm-surface); color: var(--alarm-muted); font-size: 27px; }
+.alarm-clock-view .alarm-list-empty p { margin: 0; font-size: 13px; }
+.alarm-clock-view .alarm-list-empty .alarm-list-empty-sub { max-width: 260px; color: var(--alarm-muted); font-size: 11px; line-height: 1.8; }
+.alarm-empty-create { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 35px; margin-top: 9px; padding: 8px 12px; border: 1px solid var(--alarm-border); border-radius: 8px; background: var(--alarm-surface); color: var(--alarm-blue); font-size: 11px; }
+.alarm-empty-create:hover { border-color: var(--alarm-blue); background: var(--alarm-blue-soft); }
 
-@keyframes alarmToastIn {
-    from { opacity: 0; transform: translate(-50%, -30px) scale(0.9); }
-    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
-}
+.alarm-task-card { position: relative; display: flex; align-items: center; gap: 17px; min-width: 0; min-height: 112px; padding: 20px 18px 20px 12px; border: 1px solid var(--alarm-border); border-radius: 17px; background: var(--alarm-surface); box-shadow: var(--alarm-shadow); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.alarm-task-card:hover { border-color: var(--alarm-border-strong); box-shadow: 0 4px 16px rgba(0, 0, 0, .035); }
+.alarm-task-card:focus-within { border-color: #bdd7f4; }
+.alarm-clock-view .alarm-task-drag-handle { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 17px; min-height: 34px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--alarm-muted); opacity: .45; cursor: grab; font-size: 16px; touch-action: none; }
+.alarm-clock-view .alarm-task-drag-handle[hidden] { display: none; }
+.alarm-task-card:hover .alarm-task-drag-handle, .alarm-task-drag-handle:focus-visible { opacity: 1; }
+.alarm-clock-view .alarm-task-drag-handle:active { cursor: grabbing; }
+.alarm-task-time-block { flex: 0 0 auto; min-width: 113px; }
+.alarm-task-countdown { color: var(--alarm-text); font-size: 29px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.055em; line-height: 1.25; white-space: nowrap; }
+.alarm-task-status { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--alarm-green); font-size: 9px; }
+.alarm-task-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.alarm-task-info { flex: 1; min-width: 0; }
+.alarm-task-name { overflow: hidden; color: var(--alarm-text); font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; margin-top: 7px; color: var(--alarm-muted); font-size: 10px; line-height: 1.5; }
+.alarm-task-meta-item { display: inline-flex; align-items: center; gap: 4px; }
+.alarm-task-meta-item i { font-size: 12px; }
+.alarm-task-schedule { display: block; margin-top: 6px; overflow: hidden; color: var(--alarm-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-task-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.alarm-task-btn { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--alarm-border); border-radius: 8px; background: var(--alarm-surface); color: var(--alarm-secondary); font-size: 14px; }
+.alarm-task-btn:hover { border-color: var(--alarm-border-strong); background: var(--alarm-inset); color: var(--alarm-text); }
+.alarm-task-btn--pause { border-color: #f2d9be; background: var(--alarm-accent-soft); color: #b86a25; }
+.alarm-task-btn--resume, .alarm-task-btn--start, .alarm-task-btn--restart { border-color: #d4e4f9; background: var(--alarm-blue-soft); color: var(--alarm-blue); }
+.alarm-task-btn--delete:hover { border-color: #edc7c3; background: #fff5f3; color: var(--alarm-danger); }
+.alarm-task-card.paused .alarm-task-countdown { color: var(--alarm-secondary); }
+.alarm-task-card.paused .alarm-task-status { color: #b5752d; }
+.alarm-task-card.disabled .alarm-task-countdown, .alarm-task-card.disabled .alarm-task-status { color: var(--alarm-muted); }
+.alarm-task-card.disabled .alarm-task-name { color: var(--alarm-secondary); }
+.alarm-task-paused-overlay { display: none; }
+.alarm-task-paused-badge { display: inline-flex; align-items: center; gap: 4px; color: #b5752d; font-size: 10px; }
+.alarm-task-card.sortable-drag { z-index: 20; border-color: var(--alarm-blue); background: var(--alarm-surface); box-shadow: 0 12px 30px rgba(0, 0, 0, .12); opacity: .9; cursor: grabbing; }
+.alarm-task-card.sortable-ghost { border-style: dashed; border-color: var(--alarm-blue); background: var(--alarm-blue-soft); }
+.alarm-task-card.sortable-chosen { box-shadow: 0 0 0 3px rgba(0, 113, 227, .1); }
 
-@keyframes alarmToastOut {
-    from { opacity: 1; transform: translate(-50%, 0) scale(1); }
-    to { opacity: 0; transform: translate(-50%, -30px) scale(0.9); }
-}
+/* The optional audio and application pickers share the form's visual language. */
+.alarm-audio-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; padding: 4px; overflow-y: auto; border: 1px solid var(--alarm-border); border-radius: 11px; background: var(--alarm-inset); }
+.alarm-audio-item { display: flex; align-items: center; gap: 9px; padding: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; }
+.alarm-audio-item:hover { background: var(--alarm-surface); }
+.alarm-audio-item.selected { border-color: #c3dbf6; background: var(--alarm-blue-soft); }
+.alarm-audio-icon { display: grid; place-items: center; flex: 0 0 auto; width: 31px; height: 34px; border-radius: 7px; background: var(--alarm-surface); color: var(--alarm-blue); font-size: 17px; }
+.alarm-audio-info { flex: 1; min-width: 0; }
+.alarm-audio-name { overflow: hidden; color: var(--alarm-text); font-size: 11px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-audio-size { margin-top: 3px; color: var(--alarm-muted); font-size: 9px; }
+.alarm-audio-preview-btn { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border: 1px solid var(--alarm-border); border-radius: 50%; background: var(--alarm-surface); color: var(--alarm-blue); font-size: 14px; }
+.alarm-audio-preview-btn:hover { background: var(--alarm-blue); color: white; }
+.alarm-open-folder-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-left: 6px; padding: 0; border: 0; border-radius: 5px; background: var(--alarm-inset); color: var(--alarm-secondary); font-size: 13px; vertical-align: middle; }
+.alarm-open-folder-btn:hover { color: var(--alarm-blue); }
+.alarm-no-audio { padding: 22px 10px; text-align: center; color: var(--alarm-secondary); font-size: 11px; }
+.alarm-clock-view .alarm-no-audio p { margin: 6px 0 0; }
+.alarm-audio-empty__icon { color: var(--alarm-muted); font-size: 28px; }
+.alarm-no-audio .alarm-audio-empty__hint { color: var(--alarm-muted); font-size: 10px; line-height: 1.7; }
+.alarm-file-picker { display: flex; gap: 7px; min-width: 0; }
+.alarm-file-path { flex: 1; min-width: 0; padding: 11px 10px; overflow: hidden; border: 1px solid var(--alarm-border); border-radius: 9px; background: var(--alarm-inset); color: var(--alarm-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-file-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: 0 0 auto; padding: 9px 10px; border: 1px solid var(--alarm-border); border-radius: 9px; background: var(--alarm-surface); color: var(--alarm-blue); font-size: 11px; }
+.alarm-file-btn:hover { background: var(--alarm-blue-soft); }
 
-@keyframes alarmPulse {
-    0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.2); opacity: 0.7; }
-}
+/* Alarm overlays are mounted at the document root, outside the workspace. */
+.alarm-overlay { position: fixed; inset: 0; z-index: 999998; background: rgba(24, 24, 27, .26); backdrop-filter: blur(6px); cursor: pointer; animation: alarm-overlay-in 180ms ease; }
+.alarm-overlay--closing { animation: alarm-overlay-out 180ms ease forwards; }
+.dtkit-toast--alarm { position: fixed; top: 28px; bottom: auto; left: 50%; z-index: 999999; width: min(520px, calc(100% - 32px)); min-width: 0; max-width: 520px; padding: 23px; transform: translateX(-50%); border: 1px solid rgba(255, 255, 255, .7); border-radius: 21px; background: rgba(255, 255, 255, .97); color: #1d1d1f; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; box-shadow: 0 18px 70px rgba(0, 0, 0, .2); animation: alarm-toast-in 220ms ease; }
+.dtkit-toast--alarm-closing { animation: alarm-toast-out 180ms ease forwards; }
+.alarm-toast__content { display: flex; align-items: center; gap: 15px; }
+.alarm-toast__icon { display: grid; place-items: center; flex: 0 0 auto; width: 49px; height: 49px; border-radius: 14px; background: #fff3e6; color: #d37c2e; font-size: 28px; }
+.alarm-toast__body { flex: 1; min-width: 0; }
+.alarm-toast__title { font-size: 17px; font-weight: 600; }
+.alarm-toast__task { margin-top: 5px; color: #727275; font-size: 12px; overflow-wrap: anywhere; }
+.alarm-dismiss-btn { flex: 0 0 auto; min-height: 36px; padding: 9px 15px; border: 0; border-radius: 9px; background: #1d1d1f; color: white; font-family: inherit; font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.alarm-dismiss-btn:hover { background: #38383a; }
 
-@keyframes alarmGlow {
-    0%, 100% {
-        box-shadow: 0 16px 48px rgba(102, 126, 234, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.3);
+@keyframes alarm-sync-spin { to { transform: rotate(360deg); } }
+@keyframes alarm-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes alarm-overlay-out { to { opacity: 0; } }
+@keyframes alarm-toast-in { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes alarm-toast-out { to { opacity: 0; transform: translate(-50%, -12px); } }
+
+@container alarm-workspace (max-width: 1000px) {
+    .alarm-main-container { grid-template-columns: 320px minmax(0, 1fr); gap: 20px; }
+    .alarm-config-panel { padding: 22px; }
+    .alarm-task-card { flex-wrap: wrap; gap: 12px; padding: 17px 14px; }
+    .alarm-task-time-block { min-width: 112px; }
+    .alarm-task-info { flex-basis: calc(100% - 160px); }
+    .alarm-task-actions { margin-left: auto; }
+    .alarm-task-countdown { font-size: 29px; }
+}
+@container alarm-workspace (max-width: 760px) {
+    .alarm-main-container { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    .alarm-workspace-header { align-items: flex-start; }
+    .alarm-header-actions { flex-direction: column; align-items: flex-end; gap: 7px; }
+    .alarm-overview { grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); gap: 14px; }
+    .alarm-next-card { min-height: 215px; padding: 23px; }
+    .alarm-next-time { font-size: 59px; }
+    .alarm-overview-side { padding: 22px 19px 0; }
+    .alarm-config-panel { padding: 25px; }
+    .alarm-type-switch button { font-size: 12px; }
+    .alarm-quick-presets button { font-size: 11px; }
+    .alarm-task-card { flex-wrap: nowrap; }
+    .alarm-task-info { flex-basis: auto; }
+    .alarm-task-actions { margin-left: 0; }
+    .alarm-list-panel, .alarm-list-empty { min-height: 235px; }
+}
+@container alarm-workspace (max-width: 510px) {
+    .alarm-workspace-header { flex-wrap: wrap; gap: 17px; }
+    .alarm-header-actions { flex-direction: row; justify-content: flex-start; align-items: center; }
+    .alarm-clock-view .alarm-eyebrow { font-size: 8px; }
+    .alarm-overview { grid-template-columns: minmax(0, 1fr); }
+    .alarm-next-card { min-height: 210px; padding: 25px; }
+    .alarm-next-time { font-size: clamp(48px, 13vw, 74px); }
+    .alarm-overview-side { flex-direction: row; align-items: center; gap: 20px; padding: 19px 22px; }
+    .alarm-clock-face { align-items: flex-start; padding: 0; }
+    .alarm-current-time { font-size: 33px; }
+    .alarm-clock-view .alarm-current-date { font-size: 9px; }
+    .alarm-header-stats { flex: 1; border: 0; }
+    .alarm-stat-card { min-height: 53px; padding: 4px 8px; }
+    .alarm-stat-label { font-size: 9px; }
+    .alarm-stat-value { font-size: 20px; }
+    .alarm-config-panel { padding: 22px; }
+    .alarm-task-card { flex-wrap: wrap; gap: 12px; }
+    .alarm-task-info { flex-basis: calc(100% - 160px); }
+    .alarm-task-actions { margin-left: auto; }
+    .alarm-list-toolbar { gap: 14px; }
+    .alarm-task-meta { gap: 4px 8px; }
+    .alarm-clock-view .alarm-list-footnote { max-width: 290px; }
+}
+@media (max-width: 600px) {
+    .view-container.alarm-clock-view { gap: 23px; padding: 22px 16px; }
+    .alarm-toast__content { flex-wrap: wrap; gap: 12px; }
+    .alarm-toast__body { flex-basis: calc(100% - 70px); }
+    .alarm-dismiss-btn { width: 100%; margin-top: 3px; }
+}
+@media (prefers-color-scheme: dark) {
+    .view-container.alarm-clock-view {
+        --alarm-bg: #171719;
+        --alarm-surface: #222224;
+        --alarm-inset: #2c2c2e;
+        --alarm-text: #f5f5f7;
+        --alarm-secondary: #b1b1b7;
+        --alarm-muted: #94949c;
+        --alarm-border: #353537;
+        --alarm-border-strong: #505053;
+        --alarm-accent: #f1a155;
+        --alarm-accent-soft: #382b21;
+        --alarm-blue: #70b1ff;
+        --alarm-blue-soft: #263548;
+        --alarm-green: #77cd92;
+        --alarm-danger: #f38b80;
+        --alarm-shadow: none;
+        color-scheme: dark;
     }
-    50% {
-        box-shadow: 0 16px 48px rgba(102, 126, 234, 0.7), 0 0 20px rgba(255, 71, 87, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.5);
+    .alarm-btn-add:hover:not(:disabled) { background: #d4d4d8; }
+    .alarm-quick-presets button:hover, .alarm-quick-presets button[aria-pressed="true"], .alarm-task-btn--pause { border-color: #6b4b2e; color: #f1b277; }
+    .alarm-stop-all-btn:hover:not(:disabled), .alarm-task-btn--delete:hover { border-color: #73433d; background: #3b2725; }
+    .alarm-task-btn--resume, .alarm-task-btn--start, .alarm-task-btn--restart, .alarm-audio-item.selected { border-color: #3b5579; }
+    .alarm-task-card.paused .alarm-task-status, .alarm-task-paused-badge { color: #e7b576; }
+    .alarm-type-switch button[aria-pressed="true"] { border-color: #46464a; }
+    .dtkit-toast--alarm { border-color: #48484b; background: #272729; color: #f5f5f7; }
+    .alarm-toast__icon { background: #3d2f22; color: #f1a155; }
+    .alarm-toast__task { color: #b1b1b7; }
+    .alarm-dismiss-btn { background: #f5f5f7; color: #1d1d1f; }
+    .alarm-dismiss-btn:hover { background: #d4d4d8; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .alarm-clock-view *, .alarm-clock-view *::before, .alarm-clock-view *::after,
+    .alarm-overlay, .dtkit-toast--alarm, .alarm-toast__icon, .alarm-dismiss-btn {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
     }
-}
-
-@keyframes overlayFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-@keyframes overlayFadeOut {
-    from { opacity: 1; }
-    to { opacity: 0; }
-}
-.alarm-audio-empty__icon {
-    font-size: 48px;
-    opacity: 0.3;
-}
-
-.alarm-audio-empty__hint {
-    font-size: 12px;
-    opacity: 0.6;
 }

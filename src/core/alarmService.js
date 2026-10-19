@@ -168,6 +168,8 @@ export function getAlarmRemainingSeconds(task, now = Date.now(), { includePaused
         const targetDayDistance = (target.getDay() - current.getDay() + 7) % 7;
         const extraDays = (dayDistance - targetDayDistance + 7) % 7;
         target.setDate(target.getDate() + extraDays);
+        // Every hour of an enabled day is eligible, starting at midnight.
+        if (task.type === 'hourly' && extraDays > 0) target.setHours(0, 0, 0, 0);
     }
 
     return Math.max(0, Math.ceil((target.getTime() - now) / 1000));

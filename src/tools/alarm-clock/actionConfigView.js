@@ -51,9 +51,26 @@ function createAudioItem(audio, selected, getItems, { signal, onPreview }) {
         void onPreview(item.dataset.audioPath);
     }, { signal });
 
-    const select = () => selectAudioItem(getItems(), item);
+    const select = () => {
+        selectAudioItem(getItems(), item);
+        item.dispatchEvent(new Event('input', { bubbles: true }));
+    };
     item.addEventListener('click', select, { signal });
     item.addEventListener('keydown', event => {
+        if (event.target !== item) return;
+        const items = getItems();
+        const index = items.indexOf(item);
+        const offset = ['ArrowDown', 'ArrowRight'].includes(event.key) ? 1
+            : ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 0;
+        if (offset || event.key === 'Home' || event.key === 'End') {
+            event.preventDefault();
+            const next = event.key === 'Home' ? items[0] : event.key === 'End' ? items.at(-1)
+                : items[(index + offset + items.length) % items.length];
+            selectAudioItem(items, next);
+            next.dispatchEvent(new Event('input', { bubbles: true }));
+            next.focus();
+            return;
+        }
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
         select();
@@ -79,6 +96,16 @@ function renderSoundConfig(container, audioFiles, handlers) {
         signal: handlers.signal
     });
     label.appendChild(openFolderButton);
+    if (handlers.onReload) {
+        const reload = document.createElement('button');
+        reload.className = 'alarm-open-folder-btn';
+        reload.type = 'button';
+        reload.title = '刷新提示音列表';
+        reload.setAttribute('aria-label', '刷新提示音列表');
+        reload.innerHTML = '<i class="ri-refresh-line" aria-hidden="true"></i>';
+        reload.addEventListener('click', () => void handlers.onReload(), { signal: handlers.signal });
+        label.appendChild(reload);
+    }
 
     const list = document.createElement('div');
     list.className = 'alarm-audio-list';

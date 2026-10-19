@@ -81,6 +81,10 @@ use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
 use infrastructure::snippets::{delete_snippet, save_snippet, search_snippets, SnippetManager};
+use infrastructure::software_analysis::{
+    analyze_software_space, cancel_software_analysis, list_installed_software,
+    release_software_analysis, reveal_software_location, SoftwareAnalysisManager,
+};
 use infrastructure::sticky_notes::{
     close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note, list_sticky_notes,
     open_sticky_note, restore_sticky_note, save_sticky_note, trash_sticky_note, StickyNoteManager,
@@ -125,6 +129,9 @@ fn main_window_close_behavior(mode: MinimizeMode) -> MainWindowCloseBehavior {
 }
 
 fn emit_main_power_state(app: &AppHandle, suspended: bool, closing: bool) {
+    if suspended {
+        app.state::<SoftwareAnalysisManager>().cancel_window("main");
+    }
     let mode = app.state::<ResourceGovernor>().mode();
     let _ = app.emit_to(
         "main",
@@ -892,6 +899,7 @@ pub fn run() {
         .manage(SnippetManager::default())
         .manage(StickyNoteManager::default())
         .manage(SystemAssistantManager::default())
+        .manage(SoftwareAnalysisManager::default())
         .manage(ContextMenuManager::default())
         .manage(ToolModuleManager::default())
         .plugin(tauri_plugin_dialog::init())
@@ -953,6 +961,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<SoftwareAnalysisManager>().cancel_window(window.label());
                 window.state::<PuzzleManager>().release_window(window.label());
                 window
                     .state::<WhiteboardEditManager>()
@@ -962,6 +971,9 @@ pub fn run() {
             }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
                 let minimized = window.is_minimized().unwrap_or(false);
+                if minimized {
+                    window.state::<SoftwareAnalysisManager>().cancel_window("main");
+                }
                 let mode = window.state::<ResourceGovernor>().mode();
                 let suspended = minimized && mode != MinimizeMode::Standard;
                 let was_suspended = APP_SUSPENDED.swap(suspended, Ordering::Relaxed);
@@ -999,6 +1011,7 @@ pub fn run() {
 
             // 右上角关闭只进入托盘；真正退出只允许由托盘菜单触发。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.state::<SoftwareAnalysisManager>().cancel_window(window.label());
                 if window.label() == "desktop-organizer" {
                     desktop::hotzone::set_user_interacting(false);
                 }
@@ -1157,6 +1170,11 @@ pub fn run() {
             set_password_settings,
             scan_system_startup_items,
             scan_context_menu_items,
+            list_installed_software,
+            analyze_software_space,
+            cancel_software_analysis,
+            release_software_analysis,
+            reveal_software_location,
             set_context_menu_enabled,
             set_system_startup_enabled,
             reveal_system_startup_item,
