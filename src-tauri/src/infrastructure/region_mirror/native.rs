@@ -1,6 +1,6 @@
 //! Each live mirror owns a small native message loop, which ends with the window.
 //! A 1 Hz timer only checks window metadata; DWM independently presents pixels.
-use super::{fit_content, source_crop, Rect, RegionMirrorManager};
+use super::{crop_fits, fit_content, source_crop, Rect, RegionMirrorManager};
 use std::sync::OnceLock;
 use tauri::{AppHandle, WebviewWindow};
 use windows::core::{w, PCWSTR};
@@ -21,6 +21,7 @@ struct State {
     app: AppHandle,
     manager: RegionMirrorManager,
     id: u64,
+    replace_id: Option<u64>,
     owner: Option<WebviewWindow>,
     selecting: bool,
     dragging: bool,
@@ -31,12 +32,14 @@ struct State {
     source_pid: u32,
     thumbnail: isize,
     crop: Rect,
-    source_size: (i32, i32),
     title: String,
     hint: String,
     status: &'static str,
     pinned: bool,
     compact: bool,
+    click_through: bool,
+    opacity: i32,
+    error: Option<String>,
     dpi: u32,
     font: HFONT,
 }
@@ -71,6 +74,10 @@ impl State {
                 entry.height = self.crop.height();
                 entry.status = self.status.into();
                 entry.pinned = self.pinned;
+                entry.compact = self.compact;
+                entry.click_through = self.click_through;
+                entry.opacity = self.opacity;
+                entry.error = self.error.clone();
             }
         }
         self.manager.emit(&self.app);
@@ -83,6 +90,11 @@ impl State {
                 let _ = owner.set_focus();
             }
         }
+    }
+
+    fn report(&mut self, hwnd: HWND, result: Result<(), String>) {
+        self.error = result.err();
+        self.publish(hwnd);
     }
 }
 
@@ -123,18 +135,26 @@ fn rgb(r: u32, g: u32, b: u32) -> COLORREF {
     COLORREF(r | (g << 8) | (b << 16))
 }
 
-pub(super) fn post(hwnd: usize, action: usize) -> Result<(), String> {
+pub(super) fn post(hwnd: usize, action: usize, value: i32) -> Result<(), String> {
     if hwnd == 0 {
         return Err("悬浮窗口正在启动，请稍后重试".into());
     }
-    unsafe { PostMessageW(HWND(hwnd as *mut _), CONTROL, WPARAM(action), LPARAM(0)) }
-        .map_err(|e| format!("窗口操作失败: {e}"))
+    unsafe {
+        PostMessageW(
+            HWND(hwnd as *mut _),
+            CONTROL,
+            WPARAM(action),
+            LPARAM(value as isize),
+        )
+    }
+    .map_err(|e| format!("窗口操作失败: {e}"))
 }
 
 pub(super) fn run(
     app: AppHandle,
     manager: RegionMirrorManager,
     id: u64,
+    replace_id: Option<u64>,
     owner: WebviewWindow,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
@@ -144,6 +164,7 @@ pub(super) fn run(
             app,
             manager,
             id,
+            replace_id,
             owner: Some(owner),
             selecting: true,
             dragging: false,
@@ -159,12 +180,14 @@ pub(super) fn run(
                 right: 0,
                 bottom: 0,
             },
-            source_size: (0, 0),
             title: "正在选择区域…".into(),
             hint: "拖动框选窗口中的区域 · Enter 确认 · Esc / 右键取消".into(),
             status: "selecting",
             pinned: true,
             compact: false,
+            click_through: false,
+            opacity: 100,
+            error: None,
             dpi: 96,
             font: HFONT::default(),
         });
@@ -229,7 +252,10 @@ unsafe fn create_picker(state: &mut State) -> Result<HWND, String> {
     )
     .map_err(|e| format!("创建区域选择器失败: {e}"))?;
     // Keep the desktop live beneath a lightweight native selection overlay.
-    if let Err(e) = SetLayeredWindowAttributes(hwnd, rgb(1, 1, 1), 165, LWA_ALPHA | LWA_COLORKEY) {
+    // Color-key holes also pass mouse input to the source. Keep a translucent
+    // surface across the whole desktop so clicking inside a previous selection
+    // can start a new one without losing focus or activating the source app.
+    if let Err(e) = SetLayeredWindowAttributes(hwnd, COLORREF(0), 110, LWA_ALPHA) {
         let _ = DestroyWindow(hwnd);
         return Err(format!("无法显示区域选择器: {e}"));
     }
@@ -276,9 +302,7 @@ struct Hit {
 
 unsafe extern "system" fn find_source(hwnd: HWND, parameter: LPARAM) -> BOOL {
     let hit = &mut *(parameter.0 as *mut Hit);
-    let mut pid = 0;
-    GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == std::process::id() || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+    if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
         return BOOL(1);
     }
     let mut cloaked = 0u32;
@@ -291,7 +315,7 @@ unsafe extern "system" fn find_source(hwnd: HWND, parameter: LPARAM) -> BOOL {
     let class = String::from_utf16_lossy(&name[..count.max(0) as usize]);
     if matches!(
         class.as_str(),
-        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        "DtKitRegionMirror" | "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
     ) {
         return BOOL(1);
     }
@@ -326,28 +350,17 @@ unsafe fn begin_mirror(hwnd: HWND) -> Result<(), String> {
     GetWindowRect(source, &mut bounds).map_err(|_| "无法读取源窗口")?;
     let thumbnail =
         DwmRegisterThumbnail(hwnd, source).map_err(|e| format!("此窗口无法实时映射: {e}"))?;
-    let setup = (|| -> Result<(Rect, (i32, i32)), String> {
+    let setup = (|| -> Result<Rect, String> {
         let size = DwmQueryThumbnailSourceSize(thumbnail).map_err(|_| "无法读取源窗口尺寸")?;
-        let mut frame = RECT::default();
-        if DwmGetWindowAttribute(
-            source,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            (&mut frame as *mut RECT).cast(),
-            std::mem::size_of::<RECT>() as u32,
-        )
-        .is_ok()
-            && frame.right - frame.left == size.cx
-            && frame.bottom - frame.top == size.cy
-        {
-            bounds = frame;
+        if size.cx <= 0 || size.cy <= 0 {
+            return Err("源窗口当前没有可显示的画面".into());
         }
-        let crop = source_crop(selection, rect(bounds))?;
-        if size.cx != bounds.right - bounds.left || size.cy != bounds.bottom - bounds.top {
-            return Err("源窗口显示比例已变化，请移动到同一显示器后重新框选".into());
-        }
-        Ok((crop, (size.cx, size.cy)))
+        // rcSource uses GetWindowRect coordinates, including invisible resize
+        // borders. DwmQueryThumbnailSourceSize may exclude those borders, so
+        // neither its size nor EXTENDED_FRAME_BOUNDS can choose the crop origin.
+        source_crop(selection, rect(bounds))
     })();
-    let (crop, size) = match setup {
+    let crop = match setup {
         Ok(value) => value,
         Err(error) => {
             let _ = DwmUnregisterThumbnail(thumbnail);
@@ -358,7 +371,6 @@ unsafe fn begin_mirror(hwnd: HWND) -> Result<(), String> {
         let s = &mut *pointer;
         s.thumbnail = thumbnail;
         s.crop = crop;
-        s.source_size = size;
         s.selecting = false;
         s.dragging = false;
         s.status = "live";
@@ -414,16 +426,36 @@ unsafe fn begin_mirror(hwnd: HWND) -> Result<(), String> {
     (*pointer).restore_owner(false);
     let _ = ShowWindow(hwnd, SW_SHOW);
     let _ = SetForegroundWindow(hwnd);
-    update_thumbnail(hwnd);
+    if let Err(error) = update_thumbnail(hwnd) {
+        (*pointer).error = Some(error.clone());
+        (*pointer).publish(hwnd);
+        let _ = DestroyWindow(hwnd);
+        return Err(error);
+    }
     (*pointer).publish(hwnd);
     SetTimer(hwnd, STATUS_TIMER, 1000, None);
+    // Keep the previous live region until its replacement is fully displayed.
+    if let Some(replace_id) = (*pointer).replace_id.take() {
+        let sessions = (*pointer)
+            .manager
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = sessions.entries.get(&replace_id) {
+            if let Err(error) = post(entry.hwnd, 2, 0) {
+                drop(sessions);
+                (*pointer).error = Some(format!("新区域已创建，关闭旧区域失败: {error}"));
+                (*pointer).publish(hwnd);
+            }
+        }
+    }
     Ok(())
 }
 
-unsafe fn update_thumbnail(hwnd: HWND) {
+unsafe fn update_thumbnail(hwnd: HWND) -> Result<(), String> {
     let s = &*state_ptr(hwnd);
     if s.selecting || s.thumbnail == 0 {
-        return;
+        return Ok(());
     }
     let mut bounds = RECT::default();
     let _ = GetClientRect(hwnd, &mut bounds);
@@ -446,31 +478,67 @@ unsafe fn update_thumbnail(hwnd: HWND) {
         fVisible: BOOL((s.status == "live" && !IsIconic(hwnd).as_bool()) as i32),
         fSourceClientAreaOnly: BOOL(0),
     };
-    let _ = DwmUpdateThumbnailProperties(s.thumbnail, &props);
+    DwmUpdateThumbnailProperties(s.thumbnail, &props)
+        .map_err(|e| format!("无法更新实时画面: {e}"))?;
     let _ = InvalidateRect(hwnd, None, false);
+    Ok(())
 }
 
 unsafe fn check_source(hwnd: HWND) {
     let pointer = state_ptr(hwnd);
     let mut pid = 0;
     GetWindowThreadProcessId((*pointer).source, Some(&mut pid));
+    let mut cloaked = 0u32;
+    let _ = DwmGetWindowAttribute(
+        (*pointer).source,
+        DWMWA_CLOAKED,
+        (&mut cloaked as *mut u32).cast(),
+        4,
+    );
+    let mut source_bounds = RECT::default();
+    let bounds = GetWindowRect((*pointer).source, &mut source_bounds);
     let status = if !IsWindow((*pointer).source).as_bool() || pid != (*pointer).source_pid {
         "closed"
     } else if IsIconic((*pointer).source).as_bool() {
         "minimized"
-    } else if !IsWindowVisible((*pointer).source).as_bool() {
+    } else if !IsWindowVisible((*pointer).source).as_bool() || cloaked != 0 {
         "hidden"
-    } else if DwmQueryThumbnailSourceSize((*pointer).thumbnail)
-        .map(|size| (size.cx, size.cy) != (*pointer).source_size)
+    } else if bounds
+        .map(|_| {
+            !crop_fits(
+                (*pointer).crop,
+                source_bounds.right - source_bounds.left,
+                source_bounds.bottom - source_bounds.top,
+            )
+        })
         .unwrap_or(true)
     {
         "resized"
     } else {
         "live"
     };
-    if status != (*pointer).status {
+    let mut title_changed = false;
+    if status != "closed" {
+        let mut title = [0u16; 512];
+        let count = GetWindowTextW((*pointer).source, &mut title);
+        let title = String::from_utf16_lossy(&title[..count.max(0) as usize]);
+        let title = if title.is_empty() {
+            "未命名窗口".into()
+        } else {
+            title
+        };
+        if title != (*pointer).title {
+            (*pointer).title = title;
+            let value = wide(&format!("区域悬浮 · {}", (*pointer).title));
+            let _ = SetWindowTextW(hwnd, PCWSTR(value.as_ptr()));
+            title_changed = true;
+        }
+    }
+    if status != (*pointer).status || title_changed {
         (*pointer).status = status;
-        update_thumbnail(hwnd);
+        if let Err(error) = update_thumbnail(hwnd) {
+            (*pointer).error = Some(error);
+        }
         (*pointer).publish(hwnd);
     }
     if status == "closed" {
@@ -510,7 +578,7 @@ unsafe fn paint(hwnd: HWND) {
         );
         if selected.width() > 0 && selected.height() > 0 {
             let selection = native_rect(selected);
-            fill(dc, &selection, rgb(1, 1, 1));
+            fill(dc, &selection, rgb(58, 77, 68));
             let brush = CreateSolidBrush(rgb(129, 233, 194));
             FrameRect(dc, &selection, brush);
             let _ = DeleteObject(brush);
@@ -602,8 +670,9 @@ unsafe fn paint(hwnd: HWND) {
         let hint = match s.status {
             "minimized" => "源窗口已最小化\n按 Enter 恢复源窗口后继续播放",
             "hidden" => "源窗口当前不可见\n按 Enter 返回源窗口",
-            "resized" => "源窗口尺寸已改变\n恢复原尺寸，或在工具页重新框选",
+            "resized" => "选区超出源窗口边界\n放大源窗口，或在工具页重新框选",
             "closed" => "源窗口已关闭\n请关闭此悬浮窗并重新框选",
+            _ if s.error.is_some() => "操作未完成\n请在工具页查看详情或重试",
             _ => "",
         };
         if !hint.is_empty() {
@@ -620,28 +689,29 @@ unsafe fn paint(hwnd: HWND) {
     let _ = EndPaint(hwnd, &ps);
 }
 
-unsafe fn activate_source(hwnd: HWND) {
+unsafe fn activate_source(hwnd: HWND) -> Result<(), String> {
     let source = (*state_ptr(hwnd)).source;
     let mut pid = 0;
     GetWindowThreadProcessId(source, Some(&mut pid));
     if pid != (*state_ptr(hwnd)).source_pid || !IsWindow(source).as_bool() {
-        return;
+        return Err("源窗口已关闭，请重新框选".into());
     }
     if IsIconic(source).as_bool() {
         let _ = ShowWindowAsync(source, SW_RESTORE);
+    } else if !IsWindowVisible(source).as_bool() {
+        let _ = ShowWindowAsync(source, SW_SHOW);
     }
-    let _ = SetForegroundWindow(source);
+    if !SetForegroundWindow(source).as_bool() {
+        return Err("系统未允许切换到源窗口，请从任务栏打开它".into());
+    }
+    Ok(())
 }
 
-unsafe fn toggle_pin(hwnd: HWND) {
+unsafe fn toggle_pin(hwnd: HWND) -> Result<(), String> {
     let pointer = state_ptr(hwnd);
-    (*pointer).pinned = !(*pointer).pinned;
-    let z = if (*pointer).pinned {
-        HWND_TOPMOST
-    } else {
-        HWND_NOTOPMOST
-    };
-    let _ = SetWindowPos(
+    let pinned = !(*pointer).pinned;
+    let z = if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    SetWindowPos(
         hwnd,
         z,
         0,
@@ -649,15 +719,148 @@ unsafe fn toggle_pin(hwnd: HWND) {
         0,
         0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-    );
-    (*pointer).publish(hwnd);
+    )
+    .map_err(|e| format!("无法更改置顶状态: {e}"))?;
+    (*pointer).pinned = pinned;
     let _ = InvalidateRect(hwnd, None, false);
+    Ok(())
 }
 
-unsafe fn toggle_compact(hwnd: HWND) {
+unsafe fn toggle_compact(hwnd: HWND) -> Result<(), String> {
     let pointer = state_ptr(hwnd);
     (*pointer).compact = !(*pointer).compact;
-    update_thumbnail(hwnd);
+    place_mirror(hwnd, None)
+}
+
+unsafe fn work_area(hwnd: HWND) -> RECT {
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+        info.rcWork
+    } else {
+        RECT {
+            left: 0,
+            top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN),
+        }
+    }
+}
+
+unsafe fn place_mirror(hwnd: HWND, scale: Option<i32>) -> Result<(), String> {
+    let pointer = state_ptr(hwnd);
+    let work = work_area(hwnd);
+    let mut bounds = RECT::default();
+    GetWindowRect(hwnd, &mut bounds).map_err(|e| format!("无法读取悬浮窗位置: {e}"))?;
+    let max_w = (work.right - work.left - 16).max(1);
+    let max_h = (work.bottom - work.top - 16).max(1);
+    let (width, height) = if let Some(percent) = scale {
+        let factor = if percent == 0 {
+            (640.0 / (*pointer).crop.width() as f64).min(1.0)
+        } else {
+            percent as f64 / 100.0
+        };
+        let factor = factor
+            .min((max_w - 2).max(1) as f64 / (*pointer).crop.width() as f64)
+            .min((max_h - (*pointer).header() - 1).max(1) as f64 / (*pointer).crop.height() as f64);
+        (
+            ((*pointer).crop.width() as f64 * factor).round() as i32 + 2,
+            ((*pointer).crop.height() as f64 * factor).round() as i32 + (*pointer).header() + 1,
+        )
+    } else {
+        (bounds.right - bounds.left, bounds.bottom - bounds.top)
+    };
+    let minimum_width = if (*pointer).compact { 120 } else { 180 };
+    let width = width.max((*pointer).px(minimum_width)).min(max_w);
+    let height = height
+        .max((*pointer).header() + (*pointer).px(48))
+        .min(max_h);
+    let x = bounds.left.clamp(work.left, work.right - width);
+    let y = bounds.top.clamp(work.top, work.bottom - height);
+    SetWindowPos(
+        hwnd,
+        None,
+        x,
+        y,
+        width,
+        height,
+        SWP_NOZORDER | SWP_NOACTIVATE,
+    )
+    .map_err(|e| format!("无法调整悬浮窗大小或位置: {e}"))?;
+    update_thumbnail(hwnd)
+}
+
+unsafe fn apply_visuals(hwnd: HWND, click_through: bool, opacity: i32) -> Result<(), String> {
+    let pointer = state_ptr(hwnd);
+    let old_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    let mut style = old_style as u32 & !(WS_EX_LAYERED | WS_EX_TRANSPARENT).0;
+    if click_through || opacity < 100 {
+        style |= WS_EX_LAYERED.0;
+    }
+    if click_through {
+        style |= WS_EX_TRANSPARENT.0;
+    }
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize);
+    if style & WS_EX_LAYERED.0 != 0 {
+        if let Err(error) =
+            SetLayeredWindowAttributes(hwnd, COLORREF(0), (opacity * 255 / 100) as u8, LWA_ALPHA)
+        {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, old_style);
+            return Err(format!("无法应用透明度或鼠标穿透: {error}"));
+        }
+    }
+    (*pointer).click_through = click_through;
+    (*pointer).opacity = opacity;
+    update_thumbnail(hwnd)
+}
+
+unsafe fn control(hwnd: HWND, action: usize, value: i32) {
+    let pointer = state_ptr(hwnd);
+    if (*pointer).selecting {
+        match action {
+            1 => {
+                let _ = ShowWindow(hwnd, SW_SHOW);
+                let _ = SetForegroundWindow(hwnd);
+            }
+            2 => {
+                let _ = DestroyWindow(hwnd);
+            }
+            _ => {}
+        }
+        return;
+    }
+    let result = match action {
+        1 => {
+            let visuals = apply_visuals(hwnd, false, (*pointer).opacity);
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+            let placement = place_mirror(hwnd, None);
+            let _ = SetForegroundWindow(hwnd);
+            visuals.and(placement)
+        }
+        2 => {
+            let _ = DestroyWindow(hwnd);
+            return;
+        }
+        3 => activate_source(hwnd),
+        4 => toggle_pin(hwnd),
+        5 => toggle_compact(hwnd),
+        6 => apply_visuals(hwnd, !(*pointer).click_through, (*pointer).opacity),
+        7 if (30..=100).contains(&value) => apply_visuals(hwnd, (*pointer).click_through, value),
+        8 if matches!(value, 50 | 100 | 150 | 200) => place_mirror(hwnd, Some(value)),
+        9 => {
+            (*pointer).compact = false;
+            let result = apply_visuals(hwnd, false, 100);
+            if result.is_ok() {
+                place_mirror(hwnd, Some(0))
+            } else {
+                result
+            }
+        }
+        _ => Err("不支持的悬浮窗口操作".into()),
+    };
+    (*pointer).report(hwnd, result);
 }
 
 unsafe fn menu(hwnd: HWND) {
@@ -679,6 +882,22 @@ unsafe fn menu(hwnd: HWND) {
         w!("纯画面模式\tC"),
     );
     let _ = AppendMenuW(menu, MF_STRING, 3, w!("返回源窗口\tEnter / 双击"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING
+            | if s.click_through {
+                MF_CHECKED
+            } else {
+                MF_UNCHECKED
+            },
+        6,
+        w!("鼠标穿透（从工具页恢复）\tT"),
+    );
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    let _ = AppendMenuW(menu, MF_STRING, 50, w!("缩放 50%\t1"));
+    let _ = AppendMenuW(menu, MF_STRING, 100, w!("缩放 100%\t2"));
+    let _ = AppendMenuW(menu, MF_STRING, 150, w!("缩放 150%\t3"));
+    let _ = AppendMenuW(menu, MF_STRING, 9, w!("恢复默认外观\tR"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let _ = AppendMenuW(menu, MF_STRING, 4, w!("关闭悬浮窗\tEsc"));
     let mut point = POINT::default();
@@ -696,9 +915,12 @@ unsafe fn menu(hwnd: HWND) {
     .0;
     let _ = DestroyMenu(menu);
     match command {
-        1 => toggle_pin(hwnd),
-        2 => toggle_compact(hwnd),
-        3 => activate_source(hwnd),
+        1 => control(hwnd, 4, 0),
+        2 => control(hwnd, 5, 0),
+        3 => control(hwnd, 3, 0),
+        6 => control(hwnd, 6, 0),
+        9 => control(hwnd, 9, 0),
+        50 | 100 | 150 => control(hwnd, 8, command as i32),
         4 => {
             let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
@@ -710,6 +932,9 @@ unsafe fn hit_test(hwnd: HWND, parameter: LPARAM) -> LRESULT {
     let s = &*state_ptr(hwnd);
     if s.selecting {
         return LRESULT(HTCLIENT as isize);
+    }
+    if s.click_through {
+        return LRESULT(HTTRANSPARENT as isize);
     }
     let mut point = POINT {
         x: parameter.0 as i16 as i32,
@@ -765,8 +990,8 @@ unsafe extern "system" fn window_proc(
         WM_GETMINMAXINFO if !(*pointer).selecting => {
             let limits = &mut *(lparam.0 as *mut MINMAXINFO);
             limits.ptMinTrackSize = POINT {
-                x: (*pointer).px(260),
-                y: (*pointer).px(140),
+                x: (*pointer).px(if (*pointer).compact { 120 } else { 180 }),
+                y: (*pointer).header() + (*pointer).px(48),
             };
             return LRESULT(0);
         }
@@ -818,15 +1043,15 @@ unsafe extern "system" fn window_proc(
                 if x >= bounds.right - button {
                     let _ = DestroyWindow(hwnd);
                 } else if x >= bounds.right - button * 2 {
-                    activate_source(hwnd);
+                    control(hwnd, 3, 0);
                 } else if x >= bounds.right - button * 3 {
-                    toggle_pin(hwnd);
+                    control(hwnd, 4, 0);
                 }
             }
             return LRESULT(0);
         }
         WM_NCLBUTTONDBLCLK if !(*pointer).selecting => {
-            activate_source(hwnd);
+            control(hwnd, 3, 0);
             return LRESULT(0);
         }
         WM_KEYDOWN => {
@@ -840,9 +1065,16 @@ unsafe extern "system" fn window_proc(
                         let _ = InvalidateRect(hwnd, None, false);
                     }
                 }
-                13 => activate_source(hwnd),
-                80 if !(*pointer).selecting => toggle_pin(hwnd),
-                67 if !(*pointer).selecting => toggle_compact(hwnd),
+                13 => control(hwnd, 3, 0),
+                80 if !(*pointer).selecting => control(hwnd, 4, 0),
+                67 if !(*pointer).selecting => control(hwnd, 5, 0),
+                84 if !(*pointer).selecting => control(hwnd, 6, 0),
+                82 if !(*pointer).selecting => control(hwnd, 9, 0),
+                49 if !(*pointer).selecting => control(hwnd, 8, 50),
+                50 if !(*pointer).selecting => control(hwnd, 8, 100),
+                51 if !(*pointer).selecting => control(hwnd, 8, 150),
+                107 | 187 if !(*pointer).selecting => control(hwnd, 8, 150),
+                109 | 189 if !(*pointer).selecting => control(hwnd, 8, 50),
                 _ => {}
             }
             return LRESULT(0);
@@ -868,12 +1100,20 @@ unsafe extern "system" fn window_proc(
                     area.bottom - area.top,
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 );
+                if let Err(error) = place_mirror(hwnd, None) {
+                    (*pointer).error = Some(error);
+                    (*pointer).publish(hwnd);
+                }
             }
             return LRESULT(0);
         }
         WM_SIZE => {
             if !(*pointer).selecting {
-                update_thumbnail(hwnd);
+                let result = update_thumbnail(hwnd);
+                if let Err(error) = result {
+                    (*pointer).error = Some(error);
+                    (*pointer).publish(hwnd);
+                }
             }
         }
         WM_TIMER if wparam.0 == STATUS_TIMER => {
@@ -885,18 +1125,7 @@ unsafe extern "system" fn window_proc(
             return LRESULT(0);
         }
         CONTROL => {
-            match wparam.0 {
-                1 => {
-                    let _ = ShowWindow(hwnd, SW_SHOW);
-                    let _ = SetForegroundWindow(hwnd);
-                }
-                2 => {
-                    let _ = DestroyWindow(hwnd);
-                }
-                3 if !(*pointer).selecting => activate_source(hwnd),
-                4 if !(*pointer).selecting => toggle_pin(hwnd),
-                _ => {}
-            }
+            control(hwnd, wparam.0, lparam.0 as i32);
             return LRESULT(0);
         }
         WM_CLOSE => {

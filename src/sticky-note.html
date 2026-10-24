@@ -6,60 +6,70 @@
     <title>便签 · DtKit</title>
     <link rel="stylesheet" href="./sticky-note/style.css">
 </head>
-<body data-note-theme="yellow">
+<body data-note-theme="yellow" data-font-size="medium" data-view="edit">
     <main class="note-shell" aria-label="桌面便签">
         <header class="note-header" id="noteDragHandle">
-            <span class="note-brand" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="M4 3.5h12v9l-4 4H4zM12 16.5v-4h4M7 7h6M7 10h4"/></svg>便签</span>
-            <span class="note-drag-hint" aria-hidden="true">拖动移动</span>
+            <span class="note-brand" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="M4 3.5h12v9l-4 4H4zM12 16.5v-4h4M7 7h6M7 10h4"/></svg><span id="noteHeaderTitle">便签</span></span>
             <div class="note-window-actions">
                 <button id="notePin" class="note-icon-button" type="button" aria-label="置顶便签" aria-pressed="false" title="置顶便签" disabled><svg viewBox="0 0 20 20" fill="none"><path d="m7 3 6 0-1 5 3 3v1H5v-1l3-3-1-5ZM10 12v5"/></svg></button>
+                <button id="noteCollapse" class="note-icon-button" type="button" aria-label="折叠便签" aria-expanded="true" title="折叠为标题条" disabled><svg viewBox="0 0 20 20" fill="none"><path d="m6 12 4-4 4 4"/></svg></button>
                 <button id="noteClose" class="note-icon-button note-close" type="button" aria-label="收起便签" title="保存并收起便签"><svg viewBox="0 0 20 20" fill="none"><path d="m6 6 8 8M14 6l-8 8"/></svg></button>
             </div>
         </header>
-
-        <section id="noteLoadError" class="note-message note-load-error" role="alert" hidden>
-            <strong>暂时无法打开便签</strong>
-            <p id="noteLoadMessage"></p>
-            <button id="noteLoadRetry" type="button">重新加载</button>
-        </section>
-
-        <section id="noteRecovery" class="note-message note-recovery" aria-label="恢复未保存草稿" hidden>
-            <strong>发现未保存的草稿</strong>
-            <p id="recoveryMessage">先查看草稿，再决定是否恢复。</p>
-            <textarea id="recoveryPreview" readonly aria-label="未保存草稿预览" spellcheck="false"></textarea>
-            <div class="note-message-actions">
-                <button id="recoveryRestore" type="button">恢复草稿</button>
-                <button id="recoveryDiscard" type="button" class="note-subtle-button">保留已保存版本</button>
-            </div>
-        </section>
-
-        <section class="note-writing-area" aria-label="便签内容">
-            <input id="noteTitle" class="note-title" type="text" maxlength="80" placeholder="无标题便签" aria-label="便签标题" autocomplete="off" spellcheck="false" disabled>
-            <textarea id="noteContent" class="note-content" maxlength="20000" placeholder="记下此刻的想法…" aria-label="便签正文" spellcheck="false" disabled></textarea>
-        </section>
-
-        <section id="noteSaveError" class="note-message note-save-error" role="alert" hidden>
-            <p id="noteSaveMessage"></p>
-            <div class="note-message-actions">
-                <button id="noteRetry" type="button">重试保存</button>
-                <button id="noteReload" type="button" class="note-subtle-button">查看已保存版本</button>
-            </div>
-        </section>
-
-        <footer class="note-footer">
-            <div class="note-colors" role="group" aria-label="便签颜色">
-                <button type="button" data-note-color="yellow" aria-label="暖黄" aria-pressed="true" title="暖黄" disabled></button>
-                <button type="button" data-note-color="green" aria-label="浅绿" aria-pressed="false" title="浅绿" disabled></button>
-                <button type="button" data-note-color="blue" aria-label="雾蓝" aria-pressed="false" title="雾蓝" disabled></button>
-                <button type="button" data-note-color="pink" aria-label="樱粉" aria-pressed="false" title="樱粉" disabled></button>
-                <button type="button" data-note-color="purple" aria-label="浅紫" aria-pressed="false" title="浅紫" disabled></button>
-                <button type="button" data-note-color="gray" aria-label="暖灰" aria-pressed="false" title="暖灰" disabled></button>
-            </div>
-            <div class="note-status-row">
-                <span id="noteSaveStatus" class="note-save-status" data-state="loading" role="status" aria-live="polite">正在打开…</span>
-                <span id="noteCharCount" class="note-char-count" title="正文字符数 / 20000">0 字</span>
-            </div>
-        </footer>
+        <div class="note-body" id="noteBody">
+            <section id="noteLoadError" class="note-message note-load-error" role="alert" hidden>
+                <strong>暂时无法打开便签</strong><p id="noteLoadMessage"></p><button id="noteLoadRetry" type="button">重新加载</button>
+            </section>
+            <section id="noteRecovery" class="note-message note-recovery" aria-label="恢复未保存草稿" hidden>
+                <strong>发现未保存的草稿</strong><p id="recoveryMessage">先查看草稿，再决定是否恢复。</p>
+                <textarea id="recoveryPreview" readonly aria-label="未保存草稿预览" spellcheck="false"></textarea>
+                <div class="note-message-actions"><button id="recoveryRestore" type="button">恢复草稿</button><button id="recoveryDiscard" type="button" class="note-subtle-button">保留已保存版本</button></div>
+            </section>
+            <section class="note-writing-area" aria-label="便签内容">
+                <input id="noteTitle" class="note-title" type="text" maxlength="80" placeholder="无标题便签" aria-label="便签标题" autocomplete="off" spellcheck="false" disabled>
+                <div class="note-editor-controls">
+                    <div class="note-view-switch" role="group" aria-label="编辑与预览">
+                        <span class="note-view-indicator" aria-hidden="true"></span>
+                        <button id="noteEditMode" type="button" aria-pressed="true" title="编辑 · Ctrl+Shift+P">编辑</button><button id="notePreviewMode" type="button" aria-pressed="false" title="Markdown 预览 · Ctrl+Shift+P">预览</button>
+                    </div>
+                    <button id="noteFindToggle" class="note-icon-button" type="button" aria-label="查找正文" title="查找 · Ctrl+F" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="4.8"/><path d="m12 12 4.2 4.2"/></svg></button>
+                </div>
+                <div class="note-format-toolbar" id="noteFormatToolbar" role="toolbar" aria-label="Markdown 格式">
+                    <button type="button" data-format="bold" aria-label="粗体" title="粗体 · Ctrl+B"><b>B</b></button>
+                    <button type="button" data-format="italic" aria-label="斜体" title="斜体 · Ctrl+I"><i>I</i></button>
+                    <button type="button" data-format="heading" aria-label="标题" title="标题"><span>H</span></button>
+                    <span class="note-toolbar-divider" aria-hidden="true"></span>
+                    <button type="button" data-format="list" aria-label="列表" title="项目列表"><svg viewBox="0 0 20 20" fill="none"><path d="M8 5h8M8 10h8M8 15h8"/><circle cx="4" cy="5" r=".5"/><circle cx="4" cy="10" r=".5"/><circle cx="4" cy="15" r=".5"/></svg></button>
+                    <button type="button" data-format="checklist" aria-label="待办清单" title="待办清单"><svg viewBox="0 0 20 20" fill="none"><path d="m3 9 3 3 6-7M11 12h6M11 16h6"/></svg></button>
+                    <button type="button" data-format="code" aria-label="行内代码" title="行内代码"><svg viewBox="0 0 20 20" fill="none"><path d="m7 6-4 4 4 4m6-8 4 4-4 4"/></svg></button>
+                    <button id="noteInsertDate" type="button" aria-label="插入日期" title="插入当前日期"><svg viewBox="0 0 20 20" fill="none"><rect x="3.5" y="5" width="13" height="12" rx="2"/><path d="M6.5 3v4M13.5 3v4M4 9h12M7 12h2"/></svg></button>
+                </div>
+                <div id="noteFind" class="note-find" hidden>
+                    <input id="noteFindInput" type="search" aria-label="查找文字" placeholder="查找文字…" autocomplete="off" spellcheck="false"><span id="noteFindCount" role="status">0/0</span>
+                    <button id="noteFindPrevious" type="button" aria-label="上一个匹配" title="上一个 · Shift+Enter">↑</button><button id="noteFindNext" type="button" aria-label="下一个匹配" title="下一个 · Enter">↓</button><button id="noteFindClose" type="button" aria-label="关闭查找">×</button>
+                </div>
+                <div class="note-editor-stage" id="noteEditorStage">
+                    <textarea id="noteContent" class="note-content" maxlength="20000" placeholder="记下此刻的想法…&#10;&#10;也可以用 - [ ] 开始一份待办清单" aria-label="便签正文" spellcheck="false" disabled></textarea>
+                    <article id="notePreview" class="note-preview" aria-label="便签预览" tabindex="0" inert></article>
+                </div>
+            </section>
+            <section id="noteSaveError" class="note-message note-save-error" role="alert" hidden><p id="noteSaveMessage"></p><div class="note-message-actions"><button id="noteRetry" type="button">重试保存</button><button id="noteReload" type="button" class="note-subtle-button">查看已保存版本</button></div></section>
+            <footer class="note-footer">
+                <div class="note-footer-main">
+                    <div class="note-save-wrap"><span id="noteSaveStatus" class="note-save-status" data-state="loading" role="status" aria-live="polite">正在打开…</span><span id="noteCharCount" class="note-char-count" title="正文字符数 / 20000">0 字</span></div>
+                    <button id="noteAppearance" class="note-appearance-button" type="button" aria-label="颜色与字号" aria-expanded="false" title="颜色与字号"><span class="note-current-color" aria-hidden="true"></span><span>Aa</span></button>
+                </div>
+                <div class="note-task-progress" id="noteTaskProgress" hidden><progress id="noteTaskBar" max="1" value="0" aria-label="待办完成进度"></progress><span id="noteTaskCount">0/0 项</span></div>
+                <div class="note-appearance-panel" id="noteAppearancePanel" hidden>
+                    <div class="note-settings-label">便签颜色</div>
+                    <div class="note-colors" role="group" aria-label="便签颜色">
+                        <button type="button" data-note-color="yellow" aria-label="暖黄" aria-pressed="true" title="暖黄" disabled></button><button type="button" data-note-color="green" aria-label="浅绿" aria-pressed="false" title="浅绿" disabled></button><button type="button" data-note-color="blue" aria-label="雾蓝" aria-pressed="false" title="雾蓝" disabled></button><button type="button" data-note-color="pink" aria-label="樱粉" aria-pressed="false" title="樱粉" disabled></button><button type="button" data-note-color="purple" aria-label="浅紫" aria-pressed="false" title="浅紫" disabled></button><button type="button" data-note-color="gray" aria-label="暖灰" aria-pressed="false" title="暖灰" disabled></button>
+                    </div>
+                    <div class="note-font-row"><span class="note-settings-label">正文字号</span><div class="note-font-options" role="group" aria-label="正文字号"><button type="button" data-font-size="small" aria-pressed="false">小</button><button type="button" data-font-size="medium" aria-pressed="true">中</button><button type="button" data-font-size="large" aria-pressed="false">大</button></div></div>
+                    <p class="note-shortcut-hint">Ctrl+S 保存 · Ctrl+F 查找<br>Ctrl+Shift+P 切换预览</p>
+                </div>
+            </footer>
+        </div>
     </main>
     <script type="module" src="./sticky-note/main.js"></script>
 </body>

@@ -1,4 +1,4 @@
-import { newId, parseWeeks, validateCourse } from './model.js';
+import { DAYS, conflicts, formatWeeks, newId, parseWeeks, validateCourse } from './model.js';
 
 export function linkedEnd(previousStart, previousEnd, nextStart, count) {
     return Math.min(count, nextStart + Math.max(0, previousEnd - previousStart));
@@ -26,4 +26,43 @@ export function prepareCourseEdits(fields, schedules, originals, semester) {
 export function replaceArrangements(state, originalIds, courses) {
     if (originalIds.some(id => !state.semester.courses.some(course => course.id === id))) throw new Error('课程已被删除，请重新打开课表');
     state.semester.courses = [...state.semester.courses.filter(course => !originalIds.includes(course.id)), ...courses];
+}
+
+/** Uses the same validation as saving, without mutating saved courses or allocating IDs. */
+export function analyzeCourseDraft(fields, schedules, semester, originalIds = []) {
+    const courses = [], errors = [], collisions = [], summaries = [];
+    const excluded = new Set(originalIds);
+    const existing = semester.courses.filter(course => !excluded.has(course.id));
+    for (const [index, schedule] of schedules.entries()) {
+        try {
+            const course = validateCourse({ id: `draft-${index}`, name: fields.name?.trim() || '未命名课程',
+                teacher: fields.teacher || '', notes: fields.notes || '', color: fields.color || 'blue',
+                day: Number(schedule.day), start: Number(schedule.start), end: Number(schedule.end),
+                room: schedule.room?.trim() || '', weeks: parseWeeks(schedule.weeks, semester.totalWeeks, schedule.parity || 'all') }, semester);
+            for (const other of conflicts(course, [...existing, ...courses])) {
+                collisions.push({ index, other, day: course.day, start: Math.max(course.start, other.start),
+                    end: Math.min(course.end, other.end), weeks: course.weeks.filter(week => other.weeks.includes(week)) });
+            }
+            courses.push(course);
+            const first = semester.periods[course.start - 1], last = semester.periods[course.end - 1];
+            summaries[index] = `${DAYS[course.day - 1]} · ${first.start}–${last.end} · ${course.start}–${course.end} 节 · ${course.weeks.length} 周${course.room ? ` · ${course.room}` : ''}`;
+        } catch (error) { errors.push({ index, message: error.message }); summaries[index] = error.message; }
+    }
+    return { courses, errors, collisions, summaries,
+        meetings: courses.reduce((total, course) => total + course.weeks.length, 0),
+        periods: courses.reduce((total, course) => total + course.weeks.length * (course.end - course.start + 1), 0) };
+}
+
+export function collisionMessage(collision) {
+    const { day, start, end, weeks, other } = collision;
+    return `${DAYS[day - 1]}第 ${start}${start === end ? '' : `–${end}`} 节 · 第 ${formatWeeks(weeks)} 周，与「${other.name}」冲突${other.room ? `（${other.room}）` : ''}`;
+}
+
+export function toggleWeekSelection(expression, totalWeeks, parity, week) {
+    if (!Number.isInteger(week) || week < 1 || week > totalWeeks) throw new Error('周次超出本学期范围');
+    let selected;
+    try { selected = parseWeeks(expression, totalWeeks, parity); } catch { selected = []; }
+    const weeks = new Set(selected);
+    if (weeks.has(week)) weeks.delete(week); else weeks.add(week);
+    return formatWeeks([...weeks].sort((a, b) => a - b));
 }

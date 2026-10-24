@@ -51,6 +51,35 @@ pub(crate) struct StickyNoteDraft {
     revision: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct StickyNoteSeed {
+    title: String,
+    content: String,
+    color: String,
+    pinned: bool,
+}
+
+impl Default for StickyNoteSeed {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            content: String::new(),
+            color: "yellow".into(),
+            pinned: true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StickyNoteImport {
+    #[serde(flatten)]
+    seed: StickyNoteSeed,
+    #[serde(default)]
+    trashed_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 struct Geometry {
     // Position and size are physical pixels; the current monitor supplies DPI.
@@ -94,6 +123,10 @@ enum Session {
 struct Inner {
     cache: Option<(PathBuf, Store)>,
     sessions: HashMap<String, Session>,
+    // Collapsing is a window presentation state, not a change to note contents.
+    // Keep the full physical size so closing a rolled-up note never saves 54px.
+    collapsed_sizes: HashMap<String, (u32, u32)>,
+    window_transitions: HashSet<String>,
 }
 
 #[derive(Default, Clone)]
@@ -140,6 +173,8 @@ impl StickyNoteManager {
     fn remove_session(&self, id: &str) {
         if let Ok(mut inner) = self.0.lock() {
             inner.sessions.remove(id);
+            inner.collapsed_sizes.remove(id);
+            inner.window_transitions.remove(id);
         }
     }
 }
@@ -360,23 +395,32 @@ pub(crate) async fn get_sticky_note(
     .await
 }
 
-fn create_note(manager: &StickyNoteManager, path: &Path) -> Result<StickyNote, String> {
+fn seeded_note(seed: StickyNoteSeed, now: i64, trashed: bool) -> NoteData {
+    NoteData {
+        id: Uuid::new_v4().to_string(),
+        title: seed.title,
+        content: seed.content,
+        color: seed.color,
+        pinned: seed.pinned,
+        created_at: now,
+        updated_at: now,
+        revision: 1,
+        trashed_at: trashed.then_some(now),
+    }
+}
+
+fn create_seeded_note(
+    manager: &StickyNoteManager,
+    path: &Path,
+    seed: StickyNoteSeed,
+) -> Result<StickyNote, String> {
+    validate_fields(&seed.title, &seed.content, &seed.color, 1)?;
     manager.mutate(path, |store, inner| {
         if store.notes.len() >= MAX_NOTES {
             return Err("最多保存 200 张便签，请先从回收站永久删除不需要的便签".into());
         }
         let now = Utc::now().timestamp_millis();
-        let note = NoteData {
-            id: Uuid::new_v4().to_string(),
-            title: String::new(),
-            content: String::new(),
-            color: "yellow".into(),
-            pinned: true,
-            created_at: now,
-            updated_at: now,
-            revision: 1,
-            trashed_at: None,
-        };
+        let note = seeded_note(seed, now, false);
         let result = view(&note, inner);
         store.notes.push(StoredNote {
             note,
@@ -386,16 +430,76 @@ fn create_note(manager: &StickyNoteManager, path: &Path) -> Result<StickyNote, S
     })
 }
 
+#[cfg(test)]
+fn create_note(manager: &StickyNoteManager, path: &Path) -> Result<StickyNote, String> {
+    create_seeded_note(manager, path, StickyNoteSeed::default())
+}
+
 #[tauri::command]
-pub(crate) async fn create_sticky_note(window: WebviewWindow) -> Result<StickyNote, String> {
+pub(crate) async fn create_sticky_note(
+    window: WebviewWindow,
+    seed: Option<StickyNoteSeed>,
+) -> Result<StickyNote, String> {
     authorize_manager(&window)?;
     require_enabled(window.app_handle())?;
-    let note = io(window.app_handle(), |manager, path| {
-        create_note(&manager, &path)
+    let note = io(window.app_handle(), move |manager, path| {
+        create_seeded_note(&manager, &path, seed.unwrap_or_default())
     })
     .await?;
     emit_changed(window.app_handle(), &note.note.id);
     Ok(note)
+}
+
+fn import_notes(
+    manager: &StickyNoteManager,
+    path: &Path,
+    notes: Vec<StickyNoteImport>,
+) -> Result<Vec<StickyNote>, String> {
+    if notes.is_empty() || notes.len() > MAX_NOTES {
+        return Err("一次可导入 1 至 200 张便签".into());
+    }
+    // Validate the entire batch before entering the write transaction.
+    for note in &notes {
+        validate_fields(&note.seed.title, &note.seed.content, &note.seed.color, 1)?;
+        if note.trashed_at.is_some_and(|timestamp| timestamp < 0) {
+            return Err("导入文件包含无效的回收站时间".into());
+        }
+    }
+    manager.mutate(path, |store, inner| {
+        if store.notes.len() + notes.len() > MAX_NOTES {
+            return Err(format!(
+                "最多保存 200 张便签，当前还可导入 {} 张",
+                MAX_NOTES.saturating_sub(store.notes.len())
+            ));
+        }
+        let now = Utc::now().timestamp_millis();
+        let mut imported = Vec::with_capacity(notes.len());
+        for entry in notes {
+            let note = seeded_note(entry.seed, now, entry.trashed_at.is_some());
+            imported.push(view(&note, inner));
+            store.notes.push(StoredNote {
+                note,
+                geometry: None,
+            });
+        }
+        Ok(imported)
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn import_sticky_notes(
+    window: WebviewWindow,
+    notes: Vec<StickyNoteImport>,
+) -> Result<Vec<StickyNote>, String> {
+    authorize_manager(&window)?;
+    require_enabled(window.app_handle())?;
+    let imported = io(window.app_handle(), move |manager, path| {
+        import_notes(&manager, &path, notes)
+    })
+    .await?;
+    // A single invalidation is enough; observers always read the committed list.
+    emit_changed(window.app_handle(), "");
+    Ok(imported)
 }
 
 fn save_note(
@@ -637,6 +741,193 @@ pub(crate) async fn open_sticky_note(window: WebviewWindow, id: String) -> Resul
     Ok(())
 }
 
+async fn animate_window_size(
+    window: &WebviewWindow,
+    from: tauri::PhysicalSize<u32>,
+    to: tauri::PhysicalSize<u32>,
+    animate: bool,
+) -> Result<(), String> {
+    if !animate || from == to {
+        return window.set_size(to).map_err(|e| e.to_string());
+    }
+    let start = std::time::Instant::now();
+    let duration = std::time::Duration::from_millis(180);
+    loop {
+        let progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let interpolate = |first: u32, last: u32| {
+            (f64::from(first) + (f64::from(last) - f64::from(first)) * eased).round() as u32
+        };
+        window
+            .set_size(tauri::PhysicalSize::new(
+                interpolate(from.width, to.width),
+                interpolate(from.height, to.height),
+            ))
+            .map_err(|e| e.to_string())?;
+        if progress >= 1.0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn set_sticky_note_collapsed(
+    window: WebviewWindow,
+    id: String,
+    collapsed: bool,
+    animate: Option<bool>,
+) -> Result<bool, String> {
+    let _work = super::launch::keep_native_work(window.app_handle());
+    authorize_note(&window, &id, false)?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let position = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let manager = window.app_handle().state::<StickyNoteManager>();
+    let previous = {
+        let mut inner = manager.0.lock().map_err(|_| "便签状态不可用")?;
+        if inner.sessions.get(&id) != Some(&Session::Open) {
+            return Err("便签窗口正在打开或关闭，请稍后重试".into());
+        }
+        if inner.window_transitions.contains(&id) {
+            return Err("便签窗口正在调整，请稍后重试".into());
+        }
+        let previous = inner.collapsed_sizes.get(&id).copied();
+        if previous.is_some() == collapsed {
+            return Ok(collapsed);
+        }
+        inner.window_transitions.insert(id.clone());
+        previous
+    };
+    // Never hold the storage mutex while dispatching native window operations.
+    let result = async {
+        window
+            .set_min_size(Some(tauri::LogicalSize::new(250.0, 54.0)))
+            .map_err(|e| e.to_string())?;
+        window.set_resizable(false).map_err(|e| e.to_string())?;
+        if collapsed {
+            animate_window_size(
+                &window,
+                size,
+                tauri::PhysicalSize::new(size.width, (54.0 * scale).round().max(1.0) as u32),
+                animate.unwrap_or(true),
+            )
+            .await?;
+        } else if let Some((width, height)) = previous {
+            let saved = Geometry {
+                x: position.x,
+                y: position.y,
+                width,
+                height,
+            };
+            let areas: Vec<_> = window
+                .available_monitors()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .map(|monitor| {
+                    let area = monitor.work_area();
+                    (
+                        Geometry {
+                            x: area.position.x,
+                            y: area.position.y,
+                            width: area.size.width,
+                            height: area.size.height,
+                        },
+                        monitor.scale_factor(),
+                    )
+                })
+                .collect();
+            let geometry = clamp_geometry(saved, &areas).unwrap_or(saved);
+            window
+                .set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y))
+                .map_err(|e| e.to_string())?;
+            animate_window_size(
+                &window,
+                size,
+                tauri::PhysicalSize::new(geometry.width, geometry.height),
+                animate.unwrap_or(true),
+            )
+            .await?;
+            window
+                .set_min_size(Some(tauri::LogicalSize::new(250.0, 240.0)))
+                .map_err(|e| e.to_string())?;
+            window.set_resizable(true).map_err(|e| e.to_string())?;
+        }
+        Ok::<_, String>(())
+    }
+    .await;
+    if result.is_err() {
+        // Roll back both geometry and limits when a platform operation fails.
+        let _ = window.set_min_size(Some(tauri::LogicalSize::new(
+            250.0,
+            if previous.is_some() { 54.0 } else { 240.0 },
+        )));
+        let _ = window.set_size(size);
+        let _ = window.set_position(position);
+        let _ = window.set_resizable(previous.is_none());
+    }
+    {
+        let mut inner = manager.0.lock().map_err(|_| "便签状态不可用")?;
+        inner.window_transitions.remove(&id);
+        if result.is_ok() && inner.sessions.get(&id) == Some(&Session::Open) {
+            if collapsed {
+                inner.collapsed_sizes.insert(id, (size.width, size.height));
+            } else {
+                inner.collapsed_sizes.remove(&id);
+            }
+        }
+    }
+    result.map(|_| collapsed)
+}
+
+#[tauri::command]
+pub(crate) async fn set_sticky_notes_visible(
+    window: WebviewWindow,
+    visible: bool,
+) -> Result<usize, String> {
+    let _work = super::launch::keep_native_work(window.app_handle());
+    authorize_manager(&window)?;
+    let app = window.app_handle();
+    let ids: Vec<_> = app
+        .state::<StickyNoteManager>()
+        .0
+        .lock()
+        .map_err(|_| "便签状态不可用")?
+        .sessions
+        .iter()
+        .filter(|(_, session)| **session == Session::Open)
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut changed = 0;
+    for id in ids {
+        if let Some(note_window) = app.get_webview_window(&format!("{LABEL_PREFIX}{id}")) {
+            if visible {
+                note_window.unminimize().map_err(|e| e.to_string())?;
+                note_window.show().map_err(|e| e.to_string())?;
+            } else {
+                note_window.hide().map_err(|e| e.to_string())?;
+            }
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+fn close_geometry(
+    position: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    expanded_size: Option<(u32, u32)>,
+) -> Geometry {
+    let (width, height) = expanded_size.unwrap_or((size.width, size.height));
+    Geometry {
+        x: position.x,
+        y: position.y,
+        width,
+        height,
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn close_sticky_note(window: WebviewWindow, id: String) -> Result<(), String> {
     let _work = super::launch::keep_native_work(window.app_handle());
@@ -650,17 +941,37 @@ pub(crate) async fn close_sticky_note(window: WebviewWindow, id: String) -> Resu
         }
         return Ok(());
     }
-    let position = window.outer_position().map_err(|e| e.to_string())?;
-    let size = window.inner_size().map_err(|e| e.to_string())?;
-    let geometry = (!window.is_minimized().unwrap_or(false) && size.width > 0 && size.height > 0)
-        .then_some(Geometry {
-            x: position.x,
-            y: position.y,
-            width: size.width,
-            height: size.height,
-        });
+    let expanded_size = {
+        let manager = app.state::<StickyNoteManager>();
+        let mut inner = manager.0.lock().map_err(|_| "便签状态不可用")?;
+        if inner.window_transitions.contains(&id) {
+            return Err("便签窗口正在调整，请稍后重试".into());
+        }
+        if inner.sessions.get(&id) != Some(&Session::Open) {
+            return Err("便签窗口正在打开或关闭，请稍后重试".into());
+        }
+        inner.window_transitions.insert(id.clone());
+        inner.collapsed_sizes.get(&id).copied()
+    };
+    let geometry = (|| {
+        let position = window.outer_position().map_err(|e| e.to_string())?;
+        let size = window.inner_size().map_err(|e| e.to_string())?;
+        Ok::<_, String>(
+            (!window.is_minimized().unwrap_or(false) && size.width > 0 && size.height > 0)
+                .then(|| close_geometry(position, size, expanded_size)),
+        )
+    })();
+    let geometry = match geometry {
+        Ok(geometry) => geometry,
+        Err(error) => {
+            if let Ok(mut inner) = app.state::<StickyNoteManager>().0.lock() {
+                inner.window_transitions.remove(&id);
+            }
+            return Err(error);
+        }
+    };
     let note_id = id.clone();
-    io(app, move |manager, path| {
+    let persisted = io(app, move |manager, path| {
         let mut inner = manager.0.lock().map_err(|_| "便签状态不可用")?;
         ensure_loaded(&mut inner, &path)?;
         let mut store = inner.cache.as_ref().expect("loaded").1.clone();
@@ -677,10 +988,17 @@ pub(crate) async fn close_sticky_note(window: WebviewWindow, id: String) -> Resu
         inner.sessions.insert(note_id, Session::Closing);
         Ok(())
     })
-    .await?;
+    .await;
+    if let Err(error) = persisted {
+        if let Ok(mut inner) = app.state::<StickyNoteManager>().0.lock() {
+            inner.window_transitions.remove(&id);
+        }
+        return Err(error);
+    }
     if let Err(error) = window.destroy() {
         if let Ok(mut inner) = app.state::<StickyNoteManager>().0.lock() {
-            inner.sessions.insert(id, Session::Open);
+            inner.sessions.insert(id.clone(), Session::Open);
+            inner.window_transitions.remove(&id);
         }
         return Err(format!("无法关闭便签: {error}"));
     }
@@ -788,6 +1106,138 @@ mod tests {
             pinned: false,
             revision: note.note.revision,
         }
+    }
+
+    fn imported(title: &str) -> StickyNoteImport {
+        StickyNoteImport {
+            seed: StickyNoteSeed {
+                title: title.into(),
+                content: "- [ ] 待办\n多行内容 📝".into(),
+                color: "blue".into(),
+                pinned: false,
+            },
+            trashed_at: None,
+        }
+    }
+
+    #[test]
+    fn optional_create_seed_preserves_defaults_and_validates_before_write() {
+        let seed: StickyNoteSeed = serde_json::from_str(r#"{"title":"今日计划"}"#).unwrap();
+        assert_eq!(seed.color, "yellow");
+        assert!(seed.pinned);
+        assert!(seed.content.is_empty());
+        let dir = TestDir::new();
+        let manager = StickyNoteManager::default();
+        let note = create_seeded_note(&manager, &dir.path(), seed).unwrap();
+        assert_eq!(note.note.title, "今日计划");
+        assert_eq!(note.note.revision, 1);
+        assert!(!note.opened);
+        assert!(note.note.trashed_at.is_none());
+        let before = fs::read(dir.path()).unwrap();
+        let invalid = StickyNoteSeed {
+            content: "bad\0content".into(),
+            ..StickyNoteSeed::default()
+        };
+        assert!(create_seeded_note(&manager, &dir.path(), invalid).is_err());
+        assert_eq!(fs::read(dir.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn import_regenerates_identifiers_and_versions_without_overwriting_existing_notes() {
+        let dir = TestDir::new();
+        let manager = StickyNoteManager::default();
+        let existing = create_note(&manager, &dir.path()).unwrap();
+        let entries: Vec<StickyNoteImport> = serde_json::from_value(serde_json::json!([
+            {
+                "id": existing.note.id,
+                "title": "恢复副本",
+                "content": "line one\nline two 📝",
+                "color": "purple",
+                "pinned": false,
+                "revision": 999,
+                "createdAt": 1,
+                "updatedAt": 2,
+                "trashedAt": null,
+                "geometry": { "x": 9999999, "y": 9999999, "width": 1, "height": 1 }
+            },
+            { "title": "回收站副本", "trashedAt": 123 }
+        ]))
+        .unwrap();
+        let result = import_notes(&manager, &dir.path(), entries).unwrap();
+        assert_eq!(result.len(), 2);
+        let ids: HashSet<_> = result.iter().map(|note| &note.note.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(result.iter().all(|note| note.note.id != existing.note.id));
+        assert!(result
+            .iter()
+            .all(|note| note.note.revision == 1 && !note.opened));
+        assert!(result.iter().all(|note| note.note.created_at > 2));
+        assert_eq!(result[0].note.content, "line one\nline two 📝");
+        assert_eq!(result[0].note.color, "purple");
+        assert!(!result[0].note.pinned);
+        assert!(result[0].note.trashed_at.is_none());
+        assert_eq!(result[1].note.trashed_at, Some(result[1].note.created_at));
+        assert_eq!(result[1].note.color, "yellow");
+        let store = read_store(&dir.path()).unwrap();
+        assert_eq!(store.notes.len(), 3);
+        assert_eq!(store.notes[0].note.id, existing.note.id);
+        assert!(store.notes.iter().all(|record| record.geometry.is_none()));
+    }
+
+    #[test]
+    fn import_batch_is_atomic_for_bad_entries_capacity_and_write_errors() {
+        let dir = TestDir::new();
+        let manager = StickyNoteManager::default();
+        create_note(&manager, &dir.path()).unwrap();
+        let before = fs::read(dir.path()).unwrap();
+        let mut invalid = imported("invalid");
+        invalid.seed.content = "📝".repeat(10_001);
+        assert!(import_notes(&manager, &dir.path(), vec![imported("valid"), invalid]).is_err());
+        let mut invalid_trash = imported("bad timestamp");
+        invalid_trash.trashed_at = Some(-1);
+        assert!(import_notes(&manager, &dir.path(), vec![invalid_trash]).is_err());
+        assert!(import_notes(&manager, &dir.path(), Vec::new()).is_err());
+        let too_many = (0..MAX_NOTES).map(|_| imported("capacity")).collect();
+        assert!(import_notes(&manager, &dir.path(), too_many).is_err());
+        assert_eq!(fs::read(dir.path()).unwrap(), before);
+        fs::create_dir(dir.path().with_extension("json.tmp")).unwrap();
+        assert!(import_notes(&manager, &dir.path(), vec![imported("write failure")]).is_err());
+        manager
+            .read(&dir.path(), |store, _| {
+                assert_eq!(store.notes.len(), 1);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(fs::read(dir.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn collapsed_close_keeps_expanded_size_and_session_cleanup_releases_window_state() {
+        let position = tauri::PhysicalPosition::new(-450, 300);
+        let collapsed_size = tauri::PhysicalSize::new(500, 81);
+        assert_eq!(
+            close_geometry(position, collapsed_size, Some((500, 570))),
+            Geometry {
+                x: -450,
+                y: 300,
+                width: 500,
+                height: 570
+            }
+        );
+        assert_eq!(close_geometry(position, collapsed_size, None).height, 81);
+        let manager = StickyNoteManager::default();
+        let id = Uuid::new_v4().to_string();
+        {
+            let mut inner = manager.0.lock().unwrap();
+            inner.sessions.insert(id.clone(), Session::Open);
+            inner.collapsed_sizes.insert(id.clone(), (500, 570));
+            inner.window_transitions.insert(id.clone());
+        }
+        manager.remove_session(&id);
+        let inner = manager.0.lock().unwrap();
+        assert!(!inner.sessions.contains_key(&id));
+        assert!(!inner.collapsed_sizes.contains_key(&id));
+        assert!(!inner.window_transitions.contains(&id));
     }
 
     #[test]

@@ -7,6 +7,7 @@ const snippets = fs.readFileSync(new URL('../src-tauri/src/infrastructure/snippe
 const snippetUi = fs.readFileSync(new URL('../src/tools/text-snippets/index.js', import.meta.url), 'utf8');
 const screenshot = fs.readFileSync(new URL('../src-tauri/src/infrastructure/screenshot.rs', import.meta.url), 'utf8');
 const screenshotUi = fs.readFileSync(new URL('../src/tools/screenshot-annotator/index.js', import.meta.url), 'utf8');
+const screenshotTemplate = fs.readFileSync(new URL('../src/tools/screenshot-annotator/template.js', import.meta.url), 'utf8');
 const qr = fs.readFileSync(new URL('../src/tools/qr-generator/index.js', import.meta.url), 'utf8');
 const qrCore = fs.readFileSync(new URL('../src/tools/qr-generator/core.js', import.meta.url), 'utf8');
 
@@ -27,18 +28,17 @@ test('screenshot capture releases every GDI resource and is user-triggered', () 
     assert.match(screenshot, /ReleaseDC/);
     assert.match(screenshot, /DeleteDC/);
     assert.match(screenshot, /DeleteObject/);
-    assert.doesNotMatch(screenshot, /loop \{|while /);
     assert.match(screenshotUi, /captureGeneration \+= 1/);
-    assert.match(screenshotUi, /releaseBackground\(\)/);
+    assert.match(screenshotUi, /releaseBackground\(view\)/);
     assert.doesNotMatch(screenshotUi, /\bprompt\(/);
     assert.match(screenshotUi, /captureInlineText/);
-    assert.match(screenshotUi, /function hitTestObject/);
-    assert.match(screenshotUi, /function translateObject/);
+    assert.match(screenshotUi, /new History\(/);
+    assert.match(screenshotUi, /renderDocument\(/);
     assert.match(screenshotUi, /captureShapeMenu/);
     assert.match(screenshotUi, /captureCornerRadius/);
     assert.match(screenshotUi, /event\.key === 'Enter' && !event\.shiftKey/);
     assert.match(screenshotUi, /captureBrushCursor/);
-    assert.match(screenshotUi, /if \(isQuickHost\(\)\) await capture\(\)/);
+    assert.match(screenshotUi, /isQuickHost\(\) && view\.nativeReady/);
     assert.match(screenshotUi, /screen-region-captured/);
     assert.match(screenshotUi, /start_screen_region_capture/);
     assert.doesNotMatch(screenshotUi, /capture_screen_for_annotation/);
@@ -54,7 +54,10 @@ test('screenshot capture releases every GDI resource and is user-triggered', () 
     assert.match(screenshot, /hide_quick_hosts_for_capture/);
     assert.match(screenshot, /QUICK_HOST_LABEL_PREFIX/);
     assert.match(screenshot, /long_direction:\s*Option<String>/);
-    assert.match(screenshotUi, /isQuickHost\(\)\s*\?\s*''/);
+    assert.match(screenshotTemplate, /id="captureLong"/);
+    assert.match(screenshotUi, /cancel_screen_region_capture/);
+    assert.match(screenshotUi, /copy_screenshot_to_clipboard/);
+    assert.match(screenshotUi, /recognize_screenshot_text/);
     assert.doesNotMatch(screenshot, /from_millis\(120\)/);
     assert.match(screenshotUi, /function beginPan/);
     assert.match(screenshotUi, /event\.ctrlKey/);

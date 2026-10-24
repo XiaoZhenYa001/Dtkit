@@ -2,6 +2,8 @@ mod clipboard;
 mod images;
 mod repository;
 
+pub(crate) use clipboard::write_png as write_png_to_clipboard;
+
 use base64::Engine;
 use repository::{Operation, Repository, Task};
 use serde::{Deserialize, Serialize};
@@ -222,10 +224,17 @@ pub(crate) async fn puzzle_edit(
     app: AppHandle,
     task_id: String,
     operations: Vec<Operation>,
+    expected_revision: Option<u64>,
 ) -> Result<Task, String> {
     work(app, move |app| {
         let manager = app.state::<PuzzleManager>();
-        let task = manager.repository(&app)?.edit(&task_id, operations)?;
+        let mut repository = manager.repository(&app)?;
+        if let Some(revision) = expected_revision {
+            if repository.load(&task_id)?.meta.revision != revision {
+                return Err("拼图已在其他窗口更新，请重新框选区域".into());
+            }
+        }
+        let task = repository.edit(&task_id, operations)?;
         notify(&app, Some(&task));
         Ok(task)
     })

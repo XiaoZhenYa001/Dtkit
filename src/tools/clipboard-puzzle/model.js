@@ -1,5 +1,6 @@
 export const MAX_OBJECTS = 1000;
 export const MAX_EXPORT_PIXELS = 40_000_000;
+export const MAX_HISTORY_DATA = 3_000_000;
 export const DEFAULT_FRAME = Object.freeze({ x: 60, y: 86, w: 824, h: 580 });
 export const TOOLS = Object.freeze([
     ['select', 'cursor', '选择', 'V'], ['scissors', 'scissors', '区域截取', 'C'],
@@ -22,6 +23,22 @@ export function bounds(nodes) {
 export function containsArea(node, area) {
     return node.x < area.x + area.w && node.x + node.w > area.x
         && node.y < area.y + area.h && node.y + node.h > area.y;
+}
+// Axis-aligned painted bounds, including rotated corners and shape stroke edges.
+export function visualBounds(node) {
+    const radians = (node.rotation || 0) * Math.PI / 180;
+    const w = Math.abs(node.w * Math.cos(radians)) + Math.abs(node.h * Math.sin(radians));
+    const h = Math.abs(node.w * Math.sin(radians)) + Math.abs(node.h * Math.cos(radians));
+    const pad = node.type === 'arrow' ? 16 : node.type === 'pen' ? 2 : 0;
+    // Avoid an extra transparent row/column from floating point sin/cos at 90°.
+    const left = Math.floor(node.x + (node.w - w) / 2 - pad + 1e-9), top = Math.floor(node.y + (node.h - h) / 2 - pad + 1e-9);
+    return { x: left, y: top, w: Math.ceil(node.x + (node.w + w) / 2 + pad - 1e-9) - left,
+        h: Math.ceil(node.y + (node.h + h) / 2 + pad - 1e-9) - top };
+}
+export function penGeometry(points) {
+    const x = Math.min(...points.map(p => p.x)) - 3, y = Math.min(...points.map(p => p.y)) - 3;
+    const w = Math.max(...points.map(p => p.x)) - x + 3, h = Math.max(...points.map(p => p.y)) - y + 3;
+    return { x, y, w: Math.max(6, w), h: Math.max(6, h), points: points.map(p => ({ x: p.x - x, y: p.y - y })) };
 }
 export function toWorld(client, rect, camera) {
     return { x: (client.x - rect.left - camera.x) / camera.z, y: (client.y - rect.top - camera.y) / camera.z };
@@ -57,6 +74,18 @@ export function diffOperations(before, after) {
     const remove = [...a.keys()].filter(id => !b.has(id));
     const nodes = [...b.values()].filter(n => JSON.stringify(a.get(n.id)) !== JSON.stringify(n));
     return [...(remove.length ? [{ type: 'remove', ids: remove }] : []), ...(nodes.length ? [{ type: 'upsert', nodes: clone(nodes) }] : [])];
+}
+export function editHistory(before, after, operations) {
+    // Only undo objects touched by this edit, preserving simultaneous clipboard captures.
+    const touched = new Set(operations.flatMap(op => op.ids || op.nodes?.map(node => node.id) || []));
+    const inverse = diffOperations(after,before).map(op => op.type === 'remove'
+        ? { ...op,ids:op.ids.filter(id=>touched.has(id)) }
+        : { ...op,nodes:op.nodes.filter(node=>touched.has(node.id)) })
+        .filter(op=>op.ids?.length || op.nodes?.length);
+    return { forward:clone(operations),inverse };
+}
+export function fitsHistory(entry) {
+    return JSON.stringify([entry]).length <= MAX_HISTORY_DATA;
 }
 export function exportArea(task, selectedIds, scope) {
     if (scope === 'frame') return { ...task.frame };

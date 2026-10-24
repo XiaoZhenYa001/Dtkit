@@ -1,6 +1,7 @@
 import { registerTool } from '../toolRegistry.js';
 import { mountSegmentedControl, revealContent, transitionLayout } from '../../core/toolMotion.js';
 import { DEFAULT_STYLE, normalizeStyle, contrastRatio, payloadMetrics, validateQrPayload, applyQrPrefix, createQrFilename } from './core.js';
+import { QR_DIRECTORY_KEY, readQrDirectoryPreference, writeQrDirectoryPreference } from './preferences.js';
 import '../../css/tools/developer-workbench.css';
 import '../../css/tools/qr-generator.css';
 
@@ -152,19 +153,22 @@ async function chooseDirectory(view) {
     try { const layout = await invoke('get_storage_layout'); if (!active(view) || token !== view.directoryGeneration) return;
         const selected = await window.__TAURI__.dialog.open({ directory: true, multiple: false, title: '选择二维码保存文件夹', defaultPath: view.directory || layout?.downloads });
         if (!active(view) || token !== view.directoryGeneration || typeof selected !== 'string' || !selected) return;
-        view.directory = selected; updateForm(view); setStatus(view, '保存文件夹已更新。');
+        view.directory = selected; const saved = writeQrDirectoryPreference(selected); view.directoryUnsaved = !saved; updateForm(view);
+        setStatus(view, saved ? '保存文件夹已更新，并会在下次打开时保留。' : '本次保存文件夹已更新，但无法记住设置；下次打开时可能需要重新选择。', saved ? '' : 'error');
     } catch (error) { if (active(view) && token === view.directoryGeneration) setStatus(view, `无法选择文件夹：${error?.message || error}`, 'error'); }
     finally { if (active(view) && token === view.directoryGeneration) { view.directoryBusy = false; updateActions(view); } }
 }
 async function download(view, format) {
     if (view.phase !== 'ready' || !view.qr || view.exporting || view.logoBusy || view.directoryBusy) return;
+    syncDirectoryPreference(view);
+    const selectedDirectory = view.directory;
     const generation = view.qrGeneration, candidate = view.qr, job = {}; view.exportJob = job; view.exporting = true; updateActions(view);
     const exportCurrent = () => current(view, generation) && view.exportJob === job;
     try { const blob = await candidate.getRawData(format); if (!exportCurrent()) return; if (!blob?.size) throw new Error('导出内容为空，请重新生成。'); const filename = createQrFilename(format);
         if (native()) {
             const buffer = await blob.arrayBuffer(); if (!exportCurrent()) return;
-            const layout = view.directory ? null : await invoke('get_storage_layout'); if (!exportCurrent()) return;
-            const directory = view.directory || layout?.downloads; if (typeof directory !== 'string' || !directory) throw new Error('无法读取下载目录，请先选择保存文件夹。');
+            const layout = selectedDirectory ? null : await invoke('get_storage_layout'); if (!exportCurrent()) return;
+            const directory = selectedDirectory || layout?.downloads; if (typeof directory !== 'string' || !directory) throw new Error('无法读取下载目录，请先选择保存文件夹。');
             const path = await invoke('write_qr_code', { directory, filename, data: Array.from(new Uint8Array(buffer)) }); if (!exportCurrent()) return;
             if (typeof path !== 'string' || !path) throw new Error('保存未返回有效路径，请重试。'); setStatus(view, `已保存到 ${path}`, 'success');
         } else {
@@ -195,9 +199,16 @@ async function loadLogo(view, file) {
     } catch (error) { if (active(view) && generation === view.logoGeneration && error?.name !== 'AbortError') { node(view, 'qrLogo').value = ''; setStatus(view, '图标无法读取，请选择有效的图片。', 'error'); } }
     finally { if (active(view) && generation === view.logoGeneration) { view.reader = null; view.logoBusy = false; updateForm(view); } }
 }
+function syncDirectoryPreference(view) {
+    if (view.directoryUnsaved) return;
+    const directory = readQrDirectoryPreference();
+    if (directory === null || directory === view.directory) return;
+    view.directory = directory; updateForm(view);
+}
 function init() {
     destroy(); const root = document.querySelector('.qr-workspace'); if (!root) return;
     const view = { root, controller: new AbortController(), tab: 'create', createData: 'https://example.com', style: { ...DEFAULT_STYLE }, image: null, qr: null, qrGeneration: 0, phase: 'loading', timer: null, pending: false, exporting: false, exportJob: null, directory: '', directoryBusy: false, directoryGeneration: 0, logoGeneration: 0, logoBusy: false, reader: null, share: null, shareRevision: 0, shareQuery: 0, shareBusy: false, unlisten: null, urls: new Set(), urlTimers: new Set(), suspended: document.documentElement.classList.contains('app-is-suspended') };
+    view.directory = readQrDirectoryPreference() ?? ''; view.directoryUnsaved = false;
     state = view; const { signal } = view.controller; const on = (target, name, handler) => target.addEventListener(name, handler, { signal });
     root.querySelectorAll('[data-qr-tab]').forEach(button => on(button, 'click', () => { if (view.tab === button.dataset.qrTab) return; view.tab = button.dataset.qrTab; transitionLayout(node(view, 'qrModePanels'), () => updateForm(view), { signal }); scheduleQr(view, true); revealContent(node(view, view.tab === 'create' ? 'qrCreatePanel' : 'qrTemporaryPanel'), { signal }); }));
     root.querySelectorAll('[data-qr-prefix]').forEach(button => on(button, 'click', () => { view.createData = applyQrPrefix(node(view, 'qrDataInput').value, button.dataset.qrPrefix); node(view, 'qrDataInput').value = view.createData; updateForm(view); scheduleQr(view); node(view, 'qrDataInput').focus({ preventScroll: true }); }));
@@ -205,8 +216,9 @@ function init() {
     for (const [id, key, event] of [['qrDots', 'dots', 'change'], ['qrCorners', 'corners', 'change'], ['qrForeground', 'foreground', 'input'], ['qrBackground', 'background', 'input'], ['qrSize', 'size', 'input']]) on(node(view, id), event, change => { view.style = normalizeStyle({ ...view.style, [key]: key === 'size' ? Number(change.target.value) : change.target.value }); updateForm(view); scheduleQr(view); });
     on(node(view, 'qrChooseLogo'), 'click', () => node(view, 'qrLogo').click()); on(node(view, 'qrLogo'), 'change', event => { void loadLogo(view, event.target.files?.[0]); }); on(node(view, 'qrClearLogo'), 'click', () => clearLogo(view)); on(node(view, 'qrResetStyle'), 'click', () => { view.style = { ...DEFAULT_STYLE }; clearLogo(view); });
     on(node(view, 'qrChooseFile'), 'click', () => { void chooseTemporaryFile(view); }); on(node(view, 'qrStopShare'), 'click', () => { void stopShare(view); }); on(node(view, 'qrChooseDirectory'), 'click', () => { void chooseDirectory(view); });
-    on(node(view, 'qrDefaultDirectory'), 'click', () => { view.directory = ''; updateForm(view); setStatus(view, '已恢复默认下载目录。'); }); root.querySelectorAll('[data-qr-download]').forEach(button => on(button, 'click', () => { void download(view, button.dataset.qrDownload); })); on(node(view, 'qrCopyContent'), 'click', () => { void copyContent(view); });
-    on(window, 'dtkit:power-state', event => { view.suspended = event.detail?.suspended === true; if (view.suspended) { clearTimeout(view.timer); view.timer = null; if (view.pending) view.qrGeneration += 1; view.exportJob = null; view.exporting = false; updateActions(view); } else { if (view.pending) scheduleQr(view, true); void refreshShare(view); } });
+    on(node(view, 'qrDefaultDirectory'), 'click', () => { view.directory = ''; const saved = writeQrDirectoryPreference(''); view.directoryUnsaved = !saved; updateForm(view); setStatus(view, saved ? '已恢复默认下载目录，并记住此设置。' : '本次已恢复默认下载目录，但无法记住设置。', saved ? '' : 'error'); }); root.querySelectorAll('[data-qr-download]').forEach(button => on(button, 'click', () => { void download(view, button.dataset.qrDownload); })); on(node(view, 'qrCopyContent'), 'click', () => { void copyContent(view); });
+    on(window, 'storage', event => { if (event.key === QR_DIRECTORY_KEY || event.key === null) { view.directoryUnsaved = false; view.directory = readQrDirectoryPreference() ?? ''; updateForm(view); } });
+    on(window, 'dtkit:power-state', event => { view.suspended = event.detail?.suspended === true; if (view.suspended) { clearTimeout(view.timer); view.timer = null; if (view.pending) view.qrGeneration += 1; view.exportJob = null; view.exporting = false; updateActions(view); } else { syncDirectoryPreference(view); if (view.pending) scheduleQr(view, true); void refreshShare(view); } });
     root.querySelectorAll('.dw-segmented').forEach(group => mountSegmentedControl(group, { signal })); updateForm(view); renderShare(view); scheduleQr(view, true); void refreshShare(view); void listenShare(view); revealContent(root, { signal });
 }
 function serialize() {
@@ -217,7 +229,14 @@ function restore(snapshot) {
     view.logoGeneration++; view.reader?.abort(); view.reader = null; view.logoBusy = false; view.directoryGeneration++; view.directoryBusy = false; view.shareRevision++; view.shareBusy = false; node(view, 'qrChooseFile').disabled = false; node(view, 'qrStopShare').disabled = false;
     view.createData = typeof snapshot.createData === 'string' ? snapshot.createData.slice(0, 4000) : 'https://example.com'; view.style = normalizeStyle(snapshot.style && typeof snapshot.style === 'object' ? snapshot.style : {});
     view.image = typeof snapshot.image === 'string' && snapshot.image.length < 600000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(snapshot.image) ? snapshot.image : null;
-    view.tab = snapshot.tab === 'temporary' ? 'temporary' : 'create'; view.directory = typeof snapshot.directory === 'string' ? snapshot.directory.slice(0, 4096) : ''; const input = node(view, 'qrDataInput'); input.value = view.createData; node(view, 'qrLogo').value = '';
+    view.tab = snapshot.tab === 'temporary' ? 'temporary' : 'create';
+    const savedDirectory = readQrDirectoryPreference();
+    if (!view.directoryUnsaved && savedDirectory !== null) view.directory = savedDirectory;
+    else if (!view.directoryUnsaved && typeof snapshot.directory === 'string' && snapshot.directory.length <= 4096 && !snapshot.directory.includes('\0')) {
+        view.directory = snapshot.directory;
+        if (view.directory) view.directoryUnsaved = !writeQrDirectoryPreference(view.directory);
+    }
+    const input = node(view, 'qrDataInput'); input.value = view.createData; node(view, 'qrLogo').value = '';
     updateForm(view); renderShare(view); scheduleQr(view, true); void refreshShare(view); if (Number.isInteger(snapshot.selectionStart) && Number.isInteger(snapshot.selectionEnd)) input.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd, snapshot.selectionDirection); input.scrollTop = Number(snapshot.scrollTop) || 0; input.scrollLeft = Number(snapshot.scrollLeft) || 0;
     if (snapshot.focusedField === 'qrDataInput' && document.hasFocus() && !view.suspended) input.focus({ preventScroll: true });
 }

@@ -1,5 +1,16 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>DtKit 课表小部件</title><link rel="stylesheet" href="./assets/remixicon-subset.css"><link rel="stylesheet" href="./css/tools/timetable.css"></head>
-<body class="tt-widget"><header class="tt-widget-header"><div id="ttWidgetDrag"><strong id="ttWidgetTitle">我的课表</strong><small id="ttWidgetDate"></small></div><div class="tt-actions"><button id="ttWidgetMode" class="tt-button" type="button" aria-label="切换今日与本周课表">本周</button><button id="ttWidgetPin" class="tt-button" type="button" aria-label="置顶小部件" aria-pressed="false"><i class="ri-pushpin-line"></i></button><button id="ttWidgetClose" class="tt-button" type="button" aria-label="关闭小部件">✕</button></div></header><main><p id="ttWidgetNotice" class="tt-notice" role="status" aria-live="polite"></p><div class="tt-today"><p id="ttWidgetSummary"></p></div><div id="ttWidgetAgenda" class="tt-agenda"></div><section id="ttWidgetBoard" class="tt-board" hidden><div class="tt-board-scroll"><div id="ttWidgetGrid" class="tt-grid"></div></div></section></main><script type="module" src="./timetable-widget/main.js"></script></body>
+<body class="tt-widget">
+    <header class="tt-widget-header">
+        <div id="ttWidgetDrag"><span class="tt-widget-eyebrow">课表</span><strong id="ttWidgetTitle">我的学期</strong><small id="ttWidgetDate"></small></div>
+        <div class="tt-actions"><button id="ttWidgetMode" class="tt-button" type="button" aria-label="切换为本周课表">本周</button><button id="ttWidgetPin" class="tt-button" type="button" aria-label="置顶小部件" aria-pressed="false"><i class="ri-pushpin-line" aria-hidden="true"></i></button><button id="ttWidgetClose" class="tt-button" type="button" aria-label="关闭小部件"><i class="ri-close-line" aria-hidden="true"></i></button></div>
+    </header>
+    <main>
+        <p id="ttWidgetNotice" class="tt-notice" role="status" aria-live="polite"></p>
+        <section id="ttWidgetFocus" class="tt-widget-focus tt-today" aria-label="今日课程状态"><div class="tt-widget-focus-heading"><span id="ttWidgetPhase">今天</span><span id="ttWidgetCount"></span></div><strong id="ttWidgetCurrent"></strong><p id="ttWidgetSummary"></p><small id="ttWidgetCountdown"></small><div id="ttWidgetProgress" class="tt-widget-progress" role="progressbar" aria-label="当前节次进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden></div></section>
+        <div id="ttWidgetViews" class="tt-widget-content"><div id="ttWidgetAgenda" class="tt-agenda"></div><section id="ttWidgetBoard" class="tt-board" aria-label="本周课表" hidden><div class="tt-board-scroll" tabindex="0" aria-label="滚动查看本周课表"><div id="ttWidgetGrid" class="tt-grid"></div></div></section></div>
+    </main>
+    <script type="module" src="./timetable-widget/main.js"></script>
+</body>
 </html>

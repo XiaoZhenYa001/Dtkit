@@ -18,7 +18,11 @@ pub(crate) struct MirrorInfo {
     width: i32,
     height: i32,
     pinned: bool,
+    compact: bool,
+    click_through: bool,
+    opacity: i32,
     status: String,
+    error: Option<String>,
     #[serde(skip)]
     hwnd: usize,
 }
@@ -31,7 +35,7 @@ struct Sessions {
 }
 
 #[derive(Default, Clone)]
-pub(crate) struct RegionMirrorManager(Arc<Mutex<Sessions>>);
+pub(crate) struct RegionMirrorManager(Arc<Mutex<Sessions>>, Arc<Mutex<()>>);
 
 impl RegionMirrorManager {
     pub(crate) fn has_active_mirrors(&self) -> bool {
@@ -52,15 +56,30 @@ impl RegionMirrorManager {
     }
 
     fn emit(&self, app: &AppHandle) {
+        // Each mirror owns a thread. Serialize taking and sending snapshots so
+        // an older event cannot arrive after a newer close or state change.
+        let _emission = self.1.lock().unwrap_or_else(|e| e.into_inner());
         let _ = app.emit("region-mirrors-changed", self.snapshot());
     }
 
-    fn reserve(&self) -> Result<u64, String> {
+    fn reserve(&self, replace_id: Option<u64>) -> Result<u64, String> {
         let mut sessions = self.0.lock().map_err(|_| "悬浮窗口状态不可用")?;
         if sessions.selecting {
             return Err("请先完成当前选区，或按 Esc 取消".into());
         }
-        if sessions.entries.len() >= MAX_MIRRORS {
+        if let Some(id) = replace_id {
+            let entry = sessions
+                .entries
+                .get(&id)
+                .ok_or("要重新框选的悬浮窗口已关闭")?;
+            if entry.status == "selecting" || entry.hwnd == 0 {
+                return Err("请先完成当前选区".into());
+            }
+        }
+        if sessions.entries.len() > MAX_MIRRORS {
+            return Err("正在完成上一个选区，请稍后重试".into());
+        }
+        if sessions.entries.len() >= MAX_MIRRORS && replace_id.is_none() {
             return Err("最多同时打开 6 个悬浮窗口，请先关闭不需要的窗口".into());
         }
         sessions.next_id += 1;
@@ -74,7 +93,11 @@ impl RegionMirrorManager {
                 width: 0,
                 height: 0,
                 pinned: true,
+                compact: false,
+                click_through: false,
+                opacity: 100,
                 status: "selecting".into(),
+                error: None,
                 hwnd: 0,
             },
         );
@@ -115,6 +138,7 @@ pub(crate) fn list_region_mirrors(
 pub(crate) async fn start_region_mirror(
     window: WebviewWindow,
     manager: tauri::State<'_, RegionMirrorManager>,
+    replace_id: Option<u64>,
 ) -> Result<(), String> {
     authorize(&window)?;
     if !window
@@ -126,7 +150,7 @@ pub(crate) async fn start_region_mirror(
     }
     #[cfg(target_os = "windows")]
     {
-        let id = manager.reserve()?;
+        let id = manager.reserve(replace_id)?;
         let app = window.app_handle().clone();
         if let Err(error) = window.hide() {
             manager.remove(id, &app);
@@ -140,7 +164,14 @@ pub(crate) async fn start_region_mirror(
         if let Err(error) = std::thread::Builder::new()
             .name(format!("region-mirror-{id}"))
             .spawn(move || {
-                native::run(thread_app.clone(), manager_clone.clone(), id, owner, ready);
+                native::run(
+                    thread_app.clone(),
+                    manager_clone.clone(),
+                    id,
+                    replace_id,
+                    owner,
+                    ready,
+                );
                 manager_clone.remove(id, &thread_app);
             })
         {
@@ -162,6 +193,7 @@ pub(crate) fn control_region_mirror(
     manager: tauri::State<'_, RegionMirrorManager>,
     id: u64,
     action: String,
+    value: Option<i32>,
 ) -> Result<(), String> {
     authorize(&window)?;
     let message = match action.as_str() {
@@ -169,6 +201,13 @@ pub(crate) fn control_region_mirror(
         "close" => 2,
         "source" => 3,
         "pin" => 4,
+        "compact" => 5,
+        "clickThrough" => 6,
+        "opacity" if matches!(value, Some(30..=100)) => 7,
+        "scale" if matches!(value, Some(50 | 100 | 150 | 200)) => 8,
+        "reset" => 9,
+        "opacity" => return Err("不透明度应在 30% 到 100% 之间".into()),
+        "scale" => return Err("不支持的缩放比例".into()),
         _ => return Err("不支持的悬浮窗口操作".into()),
     };
     // Hold the registry lock through PostMessage so WM_NCDESTROY cannot recycle
@@ -177,11 +216,11 @@ pub(crate) fn control_region_mirror(
     let entry = sessions.entries.get(&id).ok_or("悬浮窗口已关闭")?;
     #[cfg(target_os = "windows")]
     {
-        native::post(entry.hwnd, message)
+        native::post(entry.hwnd, message, value.unwrap_or_default())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (entry, message);
+        let _ = (entry, message, value);
         Err("区域悬浮当前仅支持 Windows".into())
     }
 }
@@ -231,6 +270,15 @@ fn source_crop(selection: Rect, source: Rect) -> Result<Rect, String> {
         right: selection.right - source.left,
         bottom: selection.bottom - source.top,
     })
+}
+
+fn crop_fits(crop: Rect, width: i32, height: i32) -> bool {
+    crop.left >= 0
+        && crop.top >= 0
+        && crop.right <= width
+        && crop.bottom <= height
+        && crop.width() > 0
+        && crop.height() > 0
 }
 
 fn fit_content(
@@ -316,13 +364,38 @@ mod tests {
     #[test]
     fn concurrent_selection_and_unbounded_windows_are_rejected() {
         let manager = RegionMirrorManager::default();
-        manager.reserve().unwrap();
-        assert!(manager.reserve().is_err());
+        manager.reserve(None).unwrap();
+        assert!(manager.reserve(None).is_err());
         for _ in 1..MAX_MIRRORS {
             manager.0.lock().unwrap().selecting = false;
-            manager.reserve().unwrap();
+            manager.reserve(None).unwrap();
         }
         manager.0.lock().unwrap().selecting = false;
-        assert!(manager.reserve().is_err());
+        assert!(manager.reserve(None).is_err());
+    }
+    #[test]
+    fn valid_crop_survives_source_resize_until_it_leaves_the_frame() {
+        let crop = Rect::from_points((100, 80), (500, 300));
+        assert!(crop_fits(crop, 800, 600));
+        assert!(crop_fits(crop, 500, 300));
+        assert!(!crop_fits(crop, 499, 600));
+        assert!(!crop_fits(crop, 800, 299));
+    }
+    #[test]
+    fn replacement_reservation_preserves_old_mirror_at_limit() {
+        let manager = RegionMirrorManager::default();
+        for _ in 0..MAX_MIRRORS {
+            let id = manager.reserve(None).unwrap();
+            let mut sessions = manager.0.lock().unwrap();
+            sessions.selecting = false;
+            let entry = sessions.entries.get_mut(&id).unwrap();
+            entry.hwnd = id as usize;
+            entry.status = "live".into();
+        }
+        assert!(manager.reserve(Some(999)).is_err());
+        assert!(manager.reserve(Some(1)).is_ok());
+        let sessions = manager.0.lock().unwrap();
+        assert!(sessions.entries.contains_key(&1));
+        assert_eq!(sessions.entries.len(), MAX_MIRRORS + 1);
     }
 }

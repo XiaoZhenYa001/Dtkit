@@ -8,8 +8,8 @@
 
 - 默认鼠标工具：拖动对象移动，左键在空白处拖动框选；Ctrl 点击增减选择。一次复制的混合内容默认组合在一起，可右键取消组合。
 - 将单个对象或框选的一组内容拖到其他窗口，会复制到松开鼠标的位置，并保留相对布局；原件和副本分别编辑。
-- 剪刀工具：框出任意区域，包括图片内部区域，生成图片副本。原件保留。
-- 底部工具栏：选择、剪刀、文字、图片、矩形、箭头、画笔；更多菜单可插入链接和便签。
+- 区域截取：悬浮或聚焦底部剪刀按钮，可选择「复制」或「剪切」。复制会保留原件；剪切将框内内容移成右侧的新图片，原区域留空，一次撤销即可恢复。被切到的文字和形状剩余部分会转为图片，撤销可恢复原本可编辑内容；未触及对象保持原样。
+- 底部工具栏：选择、剪刀、文字、图片、矩形、箭头、画笔；画笔拖动时实时显示笔迹，松开后才显示选择框。更多菜单可插入链接和便签。
 - 空格拖动画布；滚轮平移；Ctrl + 滚轮缩放。拖动对象靠近拼图框或其他对象时吸附到边缘或中心，Alt 临时关闭吸附。
 - 「对象属性」可以修改尺寸、名称、文字字号和形状颜色；支持对齐、组合、竖向和网格排列。
 - Ctrl + Z 撤销，Ctrl + Y 重做，Ctrl + S 保存，Ctrl + D 创建副本，Delete 删除，Esc 返回选择。
@@ -36,6 +36,7 @@
 node --test tests/clipboard-puzzle-model.test.js
 cargo test --manifest-path src-tauri/Cargo.toml --locked clipboard_puzzle
 npm run build
+python tests/clipboard-puzzle-interaction-ui-smoke.py
 npm run tauri build -- --debug --no-bundle --config tests/native-webview.config.json
 python tests/clipboard-puzzle-native-smoke.py
 ```

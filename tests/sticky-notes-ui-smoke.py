@@ -71,11 +71,21 @@ window.__TAURI__ = {
         }
         if (command === 'create_sticky_note') {
             const serial = String(window.__nextNoteNumber++).padStart(12,'0');
-            const note = window.__note({id:`aaaaaaaa-aaaa-4aaa-8aaa-${serial}`,title:'',content:''});
+            const note = window.__note({id:`aaaaaaaa-aaaa-4aaa-8aaa-${serial}`,title:'',content:'',...args.seed});
             window.__noteItems.unshift(note);
             window.__notesEmit(note.id);
             return structuredClone(note);
         }
+        if (command === 'import_sticky_notes') {
+            const imported = args.notes.map(seed => {
+                const serial = String(window.__nextNoteNumber++).padStart(12,'0');
+                return window.__note({...seed,id:`bbbbbbbb-bbbb-4bbb-8bbb-${serial}`});
+            });
+            window.__noteItems.push(...imported); window.__notesEmit('');
+            return structuredClone(imported);
+        }
+        if (command === 'set_sticky_note_collapsed') return args.collapsed;
+        if (command === 'set_sticky_notes_visible') return window.__noteItems.filter(note => note.opened).length;
         if (command === 'open_sticky_note') {
             window.__notesUpdate(args.id,{opened:true});
             return null;
@@ -170,7 +180,7 @@ def test_main_panel(browser, base_url, errors):
     expect(tool_view(page).locator("#notesCreate")).to_be_enabled()
 
     # Creation is persisted before opening its editor, and an open note cannot be archived.
-    tool_view(page).locator("#notesCreate").click()
+    tool_view(page).locator("#notesQuickCreate").click()
     expect(tool_view(page).locator(".notes-card")).to_have_count(1)
     wait_for_calls(page, "open_sticky_note", 1)
     commands = page.evaluate("window.__noteCalls.map(call => call.command)")
@@ -203,6 +213,7 @@ def test_main_panel(browser, base_url, errors):
     expect(note_card(page, NOTE_ID)).to_be_visible()
     page.evaluate("delete window.__noteFailure.open_sticky_note")
 
+    note_card(page, NOTE_ID).locator('summary').click()
     note_card(page, NOTE_ID).locator('[data-note-action="trash"]').click()
     expect(tool_view(page).locator(".notes-card")).to_have_count(1)
     tool_view(page).locator("#notesTrashTab").click()
@@ -211,15 +222,20 @@ def test_main_panel(browser, base_url, errors):
     expect(tool_view(page).locator(".notes-card")).to_have_count(0)
     tool_view(page).locator("#notesActiveTab").click()
     expect(tool_view(page).locator(".notes-card")).to_have_count(2)
+    note_card(page, NOTE_ID).locator('summary').click()
     note_card(page, NOTE_ID).locator('[data-note-action="trash"]').click()
     tool_view(page).locator("#notesTrashTab").click()
     expect(note_card(page, NOTE_ID)).to_be_visible()
-    page.once("dialog", lambda dialog: dialog.dismiss())
+    note_card(page, NOTE_ID).locator('summary').click()
     note_card(page, NOTE_ID).locator('[data-note-action="delete"]').click()
+    expect(tool_view(page).locator('#notesConfirm')).to_be_visible()
+    tool_view(page).locator('#notesConfirmCancel').click()
+    expect(tool_view(page).locator('#notesConfirm')).not_to_be_visible()
     expect(note_card(page, NOTE_ID)).to_be_visible()
     assert call_count(page, "delete_sticky_note") == 0
-    page.once("dialog", lambda dialog: dialog.accept())
+    note_card(page, NOTE_ID).locator('summary').click()
     note_card(page, NOTE_ID).locator('[data-note-action="delete"]').click()
+    tool_view(page).locator('#notesConfirmAccept').click()
     expect(tool_view(page).locator(".notes-card")).to_have_count(0)
     wait_for_calls(page, "delete_sticky_note", 1)
     tool_view(page).locator("#notesActiveTab").click()
@@ -254,6 +270,7 @@ def test_editor(browser, base_url, errors):
     expect(tool_view(page).locator("#noteSaveStatus")).to_have_attribute("data-state", "saved")
     page.wait_for_function("window.__noteItems[0].content.includes('第二行')")
     assert tool_view(page).locator("img").count() == 0
+    tool_view(page).locator('#noteAppearance').click()
     tool_view(page).locator('[data-note-color="blue"]').click()
     tool_view(page).locator("#notePin").click()
     expect(tool_view(page).locator("#notePin")).to_have_attribute("aria-pressed", "false")

@@ -7,19 +7,23 @@
     <link rel="stylesheet" href="./color-pick/style.css">
 </head>
 <body>
-    <canvas id="screenCanvas" aria-label="点击选择屏幕颜色"></canvas>
+    <canvas id="screenCanvas" tabindex="0" role="application" aria-label="屏幕颜色吸取器" aria-describedby="pickerInstructions"></canvas>
     <div id="pickCursor" class="pick-cursor" hidden aria-hidden="true">
         <span class="pick-cursor__horizontal"></span>
         <span class="pick-cursor__vertical"></span>
         <span class="pick-cursor__ring"></span>
     </div>
-    <aside id="magnifier" class="magnifier" hidden aria-hidden="true">
-        <canvas id="magnifierCanvas" width="132" height="132"></canvas>
-        <div class="magnifier__value"><i id="pickedSwatch"></i><strong id="pickedHex">#000000</strong></div>
-        <span id="pickedRgb">RGB 0, 0, 0</span>
-        <small>单击选择 · Esc 取消</small>
+    <aside id="magnifier" class="magnifier" hidden aria-label="当前像素颜色">
+        <canvas id="magnifierCanvas" width="132" height="132" aria-hidden="true"></canvas>
+        <div class="magnifier__value"><i id="pickedSwatch" aria-hidden="true"></i><strong id="pickedHex">#000000</strong></div>
+        <div class="magnifier__details"><span id="pickedRgb">RGB 0, 0, 0</span><small id="pickedCoordinate">0, 0 px</small></div>
     </aside>
-    <div id="loading" class="loading">正在准备屏幕取色…</div>
+    <div id="pickerInstructions" class="picker-hint" aria-hidden="true">
+        <span>单击取色</span><i></i><span><kbd>↵</kbd>确认</span><span><kbd>Esc</kbd>取消</span>
+        <i class="picker-hint__fine"></i><span class="picker-hint__fine"><kbd>↑ ↓ ← →</kbd>逐像素 · Shift 加速</span>
+    </div>
+    <div id="pickStatus" class="sr-only" role="status" aria-live="polite">方向键逐像素移动，按住 Shift 每次移动十像素，Enter 确认，Esc 取消。</div>
+    <div id="loading" class="loading" role="status">正在准备屏幕取色…</div>
     <script type="module" src="./color-pick/main.js"></script>
 </body>
 </html>

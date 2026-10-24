@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bounds, toWorld, snapPosition, layoutNodes, diffOperations, validateExportSize, exportArea, selectionArea } from '../src/tools/clipboard-puzzle/model.js';
+import { bounds, visualBounds, penGeometry, editHistory, fitsHistory, toWorld, snapPosition, layoutNodes, diffOperations, validateExportSize, exportArea, selectionArea } from '../src/tools/clipboard-puzzle/model.js';
 
 const nodes = [{id:'a',x:100,y:120,w:200,h:150},{id:'b',x:350,y:300,w:80,h:40}];
 test('screen coordinates and region selection remain correct after pan and zoom',()=>{
@@ -28,4 +28,26 @@ test('exports exclude unused canvas space and reject oversized allocations',()=>
     assert.deepEqual(exportArea(task,new Set(['b']),'selected'),{x:334,y:284,w:112,h:72});
     assert.throws(()=>validateExportSize({w:8000,h:8000},1),/导出区域过大/);
     assert.deepEqual(validateExportSize({w:400,h:300},2),{w:800,h:600});
+});
+test('pen bounds include the whole closed or backward stroke rather than its endpoints',()=>{
+    const points=[{x:100,y:100},{x:160,y:80},{x:40,y:140},{x:100,y:100}];
+    const stroke=penGeometry(points);
+    assert.deepEqual({x:stroke.x,y:stroke.y,w:stroke.w,h:stroke.h},{x:37,y:77,w:126,h:66});
+    assert.deepEqual(stroke.points.map(p=>({x:p.x+stroke.x,y:p.y+stroke.y})),points);
+    assert.deepEqual(penGeometry([{x:10,y:20},{x:50,y:20}]).h,6);
+});
+test('visual bounds include rotated image corners without clipping or altering source geometry',()=>{
+    const image={type:'image',x:100,y:120,w:200,h:100,rotation:90};
+    assert.deepEqual(visualBounds(image),{x:150,y:70,w:100,h:200});
+    assert.equal(image.x,100);
+});
+test('cut history budget accounts for original editable content and ignores concurrent untouched captures',()=>{
+    const source={id:'large',type:'text',body:'字'.repeat(1_500_000),originalBody:'字'.repeat(1_500_000)};
+    const replacement={id:'large',type:'image',assetId:'residual'},region={id:'region',type:'image',assetId:'region-image'};
+    const operations=[{type:'upsert',nodes:[replacement,region]}];
+    const history=editHistory([source],[replacement,region,{id:'concurrent',type:'text',body:'其他窗口收集'}],operations);
+    assert.equal(fitsHistory(history),false);
+    assert.deepEqual(history.inverse.map(op=>op.ids||op.nodes.map(n=>n.id)),[['region'],['large']]);
+    source.body='字'.repeat(1_400_000);source.originalBody='字'.repeat(1_400_000);
+    assert.equal(fitsHistory(editHistory([source],[replacement,region],operations)),true);
 });

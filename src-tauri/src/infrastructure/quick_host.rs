@@ -231,6 +231,16 @@ impl QuickHostManager {
         Ok(())
     }
 
+    // Screenshot tools may leave their windows hidden until the user clicks the
+    // tray. Keep the original editor available through that existing entry point.
+    pub(crate) fn retain_for_manual_restore(&self, label: &str) {
+        if label.starts_with(QUICK_HOST_LABEL_PREFIX) {
+            if let Ok(mut retained) = self.retained_labels.write() {
+                retained.insert(label.to_string());
+            }
+        }
+    }
+
     pub(crate) fn restore_retained(&self, app: &AppHandle) {
         let labels = self
             .retained_labels

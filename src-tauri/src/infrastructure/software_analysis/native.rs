@@ -134,7 +134,7 @@ fn software(key: &RegKey, system: bool, bits: u32) -> Option<Software> {
 pub(super) fn enumerate() -> Result<SoftwareSnapshot, String> {
     let started = Instant::now();
     let mut catalog = Catalog::default();
-    let mut warnings = vec!["登记大小由软件安装程序提供；扫描大小按需计算，二者可能不同".into()];
+    let mut warnings = vec![super::REGISTRATION_SIZE_NOTE.into()];
     let mut unreadable = 0;
     let mut opened = 0;
     'views: for system in [false, true] {

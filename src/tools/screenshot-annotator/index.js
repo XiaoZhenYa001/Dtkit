@@ -1,820 +1,659 @@
 import '../../css/tools/screenshot-annotator.css';
 import { registerTool } from '../toolRegistry.js';
+import { template } from './template.js';
+import { clamp, normalizeRect, objectBounds, hitTestObject, translateObject, resizeObject, sanitizeDocument, History, nextStepNumber, createId, hitTestHandle, constrainPoint, LIMITS } from './core.js';
+import { drawObject, drawSelection, renderDocument } from './renderer.js';
+import { storeImage, readImage } from './assets.js';
 
-const invoke = (...args) => globalThis.window?.__TAURI__?.core?.invoke?.(...args);
-const listen = (...args) => globalThis.window?.__TAURI__?.event?.listen?.(...args);
-const byId = id => document.getElementById(id);
+const invoke = (command, args = {}) => window.__TAURI__?.core?.invoke?.(command, args);
 const isQuickHost = () => location.pathname.toLowerCase().endsWith('/quick.html');
-const SHAPE_MODES = new Set(['rect', 'ellipse', 'line', 'arrow']);
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 4;
+const MAX_PIXELS = 32_000_000;
+const MODES = new Set(['select', 'pen', 'highlight', 'rect', 'ellipse', 'line', 'arrow', 'text', 'step', 'mosaic', 'redact', 'crop']);
+const KEYS = { v: 'select', p: 'pen', h: 'highlight', r: 'rect', e: 'ellipse', l: 'line', a: 'arrow', t: 'text', n: 'step', m: 'mosaic', b: 'redact', c: 'crop' };
+let currentView;
+const node = (view, id) => view.root.querySelector('#' + id);
+const alive = view => currentView === view && !view.controller.signal.aborted;
+const clone = value => structuredClone(value);
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-let controller;
-let canvas;
-let context;
-let background;
-let objects = [];
-let active = null;
-let selectedIndex = -1;
-let dragState = null;
-let mode = 'pen';
-let currentShape = 'rect';
-let color = '#ef6f3c';
-let size = 5;
-let shapeStyle = 'outline';
-let cornerRadius = 0;
-let frame = 0;
-let captureGeneration = 0;
-let captureBusy = false;
-let saveBusy = false;
-let zoom = 1;
-let zoomMode = 'fit';
-let stageResizeObserver = null;
-let pan = null;
-let pendingRegionCapture = null;
-let unlistenRegionCapture = null;
-let editingTextIndex = -1;
-
-function template() {
-    const footerStatus = isQuickHost() ? '支持原位文字、形状、圆角与截图调整。' : '支持原位文字、形状、圆角与自动长截图。';
-    const longCaptureAction = isQuickHost() ? '' : '<button id="captureLong" type="button" title="选择固定区域并自动滚动拼接" disabled><i class="ri-layout-row-line"></i><span>长截图</span></button>';
-    const longCaptureDialog = isQuickHost() ? '' : `<dialog id="captureLongDialog" class="capture-long-dialog"><form method="dialog">
-        <header><span><i class="ri-layout-row-line"></i></span><div><strong>自动长截图</strong><small>只需选择一次范围，DtKit 会自动滚动并拼接</small></div></header>
-        <div class="capture-long-directions" role="group" aria-label="拼接方向">
-          <button class="is-active" data-long-direction="vertical" type="button" aria-pressed="true"><i class="ri-arrow-down-line"></i><span>纵向拼接</span></button>
-          <button data-long-direction="horizontal" type="button" aria-pressed="false"><i class="ri-arrow-right-line"></i><span>横向拼接</span></button>
-        </div>
-        <label>最多采集 <span><input id="captureLongSegments" type="number" min="2" max="20" value="12"> 段</span></label>
-        <p>选区会显示高亮边框。DtKit 将向目标窗口发送滚动并自动识别重叠位置；到达页面末端或内容不再变化时会自动结束。</p>
-        <footer><button id="captureLongCancel" type="button">取消</button><button id="captureLongStart" class="capture-long-primary" type="button">选择范围并开始</button></footer>
-      </form></dialog>`;
-    return `<div class="capture-shell">
-      <header class="capture-toolbar">
-        <div class="capture-identity"><span><i class="ri-screenshot-2-line"></i></span><div><strong>截图标注</strong><small id="captureDimensions">等待截图</small></div></div>
-        <div class="capture-tools" role="toolbar" aria-label="截图标注工具">
-          <button data-capture-mode="select" aria-pressed="false" title="选择、移动或双击编辑"><i class="ri-cursor-line"></i><span>选择</span></button>
-          <button class="is-active" data-capture-mode="pen" aria-pressed="true"><i class="ri-pencil-line"></i><span>画笔</span></button>
-          <div class="capture-tool-group">
-            <button id="captureShapeTrigger" data-capture-mode="rect" aria-pressed="false" aria-haspopup="true" aria-expanded="false"><i class="ri-checkbox-blank-line"></i><span>矩形</span><i class="ri-arrow-down-s-line capture-menu-chevron"></i></button>
-            <div id="captureShapeMenu" class="capture-tool-menu" role="menu" hidden>
-              <div class="capture-tool-menu__title"><strong>形状</strong><small>选择后直接在截图上拖动</small></div>
-              <div class="capture-shape-grid">
-                <button class="is-active" data-shape-mode="rect" type="button"><i class="ri-checkbox-blank-line"></i><span>矩形</span></button>
-                <button data-shape-mode="ellipse" type="button"><i class="ri-circle-line"></i><span>椭圆</span></button>
-                <button data-shape-mode="line" type="button"><i class="ri-subtract-line"></i><span>直线</span></button>
-                <button data-shape-mode="arrow" type="button"><i class="ri-arrow-right-up-line"></i><span>箭头</span></button>
-              </div>
-              <div class="capture-tool-menu__row"><span>外观</span><div class="capture-style-toggle" role="group" aria-label="形状样式">
-                <button class="is-active" data-shape-style="outline" aria-pressed="true" title="仅描边"><i class="ri-checkbox-blank-line"></i><span>框</span></button>
-                <button data-shape-style="fill" aria-pressed="false" title="填充"><i class="ri-checkbox-fill"></i><span>填充</span></button>
-              </div></div>
-            </div>
-          </div>
-          <button data-capture-mode="text" aria-pressed="false"><i class="ri-text"></i><span>文字</span></button>
-          <span class="capture-divider"></span>
-          <input id="captureColor" type="color" value="#ef6f3c" aria-label="标注颜色">
-          <input id="captureSize" type="range" min="2" max="24" value="5" aria-label="标注粗细">
-          <output id="captureSizeValue" for="captureSize">5 px</output>
-          <button id="captureUndo" disabled><i class="ri-arrow-go-back-line"></i><span>撤销</span></button>
-        </div>
-        <div class="capture-actions">
-          <div class="capture-zoom" role="group" aria-label="截图缩放">
-            <button id="captureZoomOut" type="button" title="缩小" disabled><i class="ri-subtract-line"></i></button>
-            <output id="captureZoomValue">100%</output>
-            <button id="captureZoomIn" type="button" title="放大" disabled><i class="ri-add-line"></i></button>
-            <button id="captureZoomFit" type="button" title="适合窗口" disabled><i class="ri-focus-3-line"></i></button>
-          </div>
-          <button id="captureDelete" class="capture-delete" type="button" title="删除当前截图" disabled><i class="ri-delete-bin-6-line"></i><span>删除</span></button>
-          <div class="capture-tool-group capture-canvas-group">
-            <button id="captureCanvasTrigger" type="button" title="调整截图外观" disabled aria-haspopup="true" aria-expanded="false"><i class="ri-rounded-corner"></i><span>圆角</span><i class="ri-arrow-down-s-line capture-menu-chevron"></i></button>
-            <div id="captureCanvasMenu" class="capture-tool-menu capture-canvas-menu" hidden>
-              <div class="capture-tool-menu__title"><strong>截图外观</strong><small>圆角会同时应用于预览与 PNG</small></div>
-              <label for="captureCornerRadius"><span>圆角</span><output id="captureCornerRadiusValue">0 px</output></label>
-              <input id="captureCornerRadius" type="range" min="0" max="64" value="0">
-            </div>
-          </div>
-          ${longCaptureAction}
-          <button id="captureAgain"><i class="ri-screenshot-2-line"></i> <span id="captureAgainLabel">开始截图</span></button>
-          <button id="captureSave" class="capture-save" disabled><i class="ri-save-3-line"></i> 保存 PNG</button>
-        </div>
-      </header>
-      <div id="captureStage" class="capture-stage">
-        <div id="captureLoading" class="capture-loading" data-state="ready"><i class="ri-screenshot-2-line"></i><strong>准备截图</strong><span>点击“开始截图”，然后在屏幕上拖动选择需要标注的范围。</span></div>
-        <canvas id="captureCanvas" hidden></canvas>
-        <div id="captureBrushCursor" class="capture-brush-cursor" hidden aria-hidden="true"></div>
-        <textarea id="captureInlineText" class="capture-inline-text" maxlength="500" rows="1" hidden aria-label="输入文字标注" spellcheck="false"></textarea>
-      </div>
-      <footer><span id="captureStatus"><i class="ri-information-line"></i> ${footerStatus}</span><span class="capture-shortcuts"><kbd>Ctrl</kbd> + <kbd>Z</kbd> 撤销　<kbd>Delete</kbd> 删除选中标注</span></footer>
-      ${longCaptureDialog}
-    </div>`;
+function status(view, text, tone = 'neutral') {
+    if (!alive(view)) return;
+    const output = node(view, 'captureStatus'); output.textContent = text; output.dataset.tone = tone;
 }
 
-function canvasPoint(event) {
-    const rect = canvas.getBoundingClientRect();
-    return {
-        x: (event.clientX - rect.left) * canvas.width / rect.width,
-        y: (event.clientY - rect.top) * canvas.height / rect.height
-    };
-}
-
-function line(a, b) {
-    context.beginPath();
-    context.moveTo(a.x, a.y);
-    context.lineTo(b.x, b.y);
-    context.stroke();
-}
-
-function textMetrics(object) {
-    const fontSize = object.fontSize || Math.max(18, object.size * 4);
-    context.font = `600 ${fontSize}px system-ui`;
-    const lines = String(object.text || '').split('\n');
-    return {
-        fontSize,
-        lines,
-        width: Math.max(fontSize, ...lines.map(value => context.measureText(value || ' ').width)),
-        height: Math.max(fontSize * 1.3, lines.length * fontSize * 1.3)
-    };
-}
-
-function objectBounds(object) {
-    if (object.type === 'pen') {
-        const xs = object.points.map(point => point.x);
-        const ys = object.points.map(point => point.y);
-        return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) };
+function updateControls(view) {
+    if (!alive(view)) return;
+    const ready = Boolean(view.image), blocked = view.captureBusy || view.loading;
+    view.root.querySelectorAll('[data-action="capture"]').forEach(button => { button.disabled = blocked || !view.nativeReady; });
+    view.root.querySelectorAll('[data-action="import"]').forEach(button => { button.disabled = blocked; });
+    if (!ready) {
+        const loading = node(view, 'captureLoading'); loading.dataset.state = blocked ? 'loading' : 'ready';
+        loading.querySelector('strong').textContent = view.captureBusy ? '正在截取屏幕…' : view.loading ? '正在载入图片…' : '清晰表达，从一张截图开始';
+        loading.querySelector('span').textContent = view.captureBusy ? '在屏幕上拖动选择范围，Esc 取消。' : view.loading ? '正在准备画布，请稍候。' : '截取屏幕，或拖入一张图片。标记重点，随时分享。';
     }
-    if (object.type === 'text') {
-        const metrics = textMetrics(object);
-        return { left: object.start.x, top: object.start.y, right: object.start.x + metrics.width, bottom: object.start.y + metrics.height };
+    for (const id of ['captureSave', 'captureCopy', 'captureOcr', 'captureZoomOut', 'captureZoomIn', 'captureZoomFit', 'captureCanvasTrigger', 'captureClear']) {
+        node(view, id).disabled = !ready || blocked || view.outputBusy || (['captureSave', 'captureCopy', 'captureOcr'].includes(id) && view.mode === 'crop') || (id === 'captureOcr' && view.ocrBusy);
     }
-    return {
-        left: Math.min(object.start.x, object.end.x),
-        top: Math.min(object.start.y, object.end.y),
-        right: Math.max(object.start.x, object.end.x),
-        bottom: Math.max(object.start.y, object.end.y)
-    };
+    node(view, 'captureUndo').disabled = !ready || blocked || !view.history?.canUndo;
+    node(view, 'captureRedo').disabled = !ready || blocked || !view.history?.canRedo;
+    node(view, 'captureDelete').disabled = !view.doc.objects.some(object => object.id === view.selectedId) || blocked;
+    node(view, 'captureAgain').disabled = view.captureBusy || view.loading || !view.nativeReady;
+    node(view, 'captureImport').disabled = blocked;
+    node(view, 'captureLong').disabled = blocked || !view.nativeReady;
+    node(view, 'captureAgainLabel').textContent = view.captureBusy ? '截图中…' : ready ? '重新截图' : '开始截图';
+    node(view, 'captureSelectionActions').hidden = !view.selectedId || view.mode === 'crop';
+    node(view, 'captureCropActions').hidden = view.mode !== 'crop' || !ready;
+    node(view, 'captureCropApply').disabled = !view.cropDraft || view.cropDraft.width < 2 || view.cropDraft.height < 2;
+    node(view, 'captureDimensions').textContent = ready ? `${Math.round(view.doc.crop.width)} × ${Math.round(view.doc.crop.height)} px · ${view.doc.objects.length} 个标注` : '截图 · 标注 · 轻松分享';
+    node(view, 'captureCornerRadius').value = String(view.doc.cornerRadius);
+    node(view, 'captureCornerRadiusValue').textContent = `${view.doc.cornerRadius} px`;
+    node(view, 'captureCanvas').dataset.annotationCount = String(view.doc.objects.length);
+    node(view, 'captureCanvas').dataset.selectedIndex = String(view.doc.objects.findIndex(object => object.id === view.selectedId));
+    node(view, 'captureCanvas').dataset.cornerRadius = String(view.doc.cornerRadius);
+    view.root.dataset.busy = String(blocked);
+    view.root.querySelectorAll('[data-capture-color]').forEach(button => {
+        const selected = button.dataset.captureColor.toLowerCase() === view.color.toLowerCase(); button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', String(selected));
+    });
+    view.root.querySelectorAll('[data-shape-style]').forEach(button => {
+        const selected = button.dataset.shapeStyle === view.fill; button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', String(selected));
+    });
 }
 
-function drawShape(object) {
-    const left = Math.min(object.start.x, object.end.x);
-    const top = Math.min(object.start.y, object.end.y);
-    const width = Math.abs(object.end.x - object.start.x);
-    const height = Math.abs(object.end.y - object.start.y);
-    if (object.type === 'rect') {
-        if (object.style === 'fill') context.fillRect(left, top, width, height);
-        else context.strokeRect(left, top, width, height);
-    } else if (object.type === 'ellipse') {
-        context.beginPath();
-        context.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
-        if (object.style === 'fill') context.fill(); else context.stroke();
-    } else if (object.type === 'line') {
-        line(object.start, object.end);
-    } else if (object.type === 'arrow') {
-        line(object.start, object.end);
-        const angle = Math.atan2(object.end.y - object.start.y, object.end.x - object.start.x);
-        const head = Math.max(14, object.size * 4);
-        line(object.end, { x: object.end.x - head * Math.cos(angle - Math.PI / 6), y: object.end.y - head * Math.sin(angle - Math.PI / 6) });
-        line(object.end, { x: object.end.x - head * Math.cos(angle + Math.PI / 6), y: object.end.y - head * Math.sin(angle + Math.PI / 6) });
+function visibleRect(view) {
+    return view.mode === 'crop' ? { x: 0, y: 0, width: view.image.width, height: view.image.height } : view.doc.crop;
+}
+
+function renderBase(view) {
+    if (!alive(view) || !view.image) return;
+    const crop = visibleRect(view), canvas = node(view, 'captureCanvas'), overlay = node(view, 'captureOverlay');
+    if (canvas.width !== crop.width || canvas.height !== crop.height) {
+        canvas.width = crop.width; canvas.height = crop.height; overlay.width = crop.width; overlay.height = crop.height;
     }
-}
-
-function drawObject(object) {
-    context.save();
-    context.strokeStyle = object.color;
-    context.fillStyle = object.color;
-    context.lineWidth = object.size;
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-    if (object.type === 'pen') {
-        context.beginPath();
-        object.points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
-        context.stroke();
-    } else if (SHAPE_MODES.has(object.type)) {
-        drawShape(object);
-    } else if (object.type === 'text') {
-        const metrics = textMetrics(object);
-        context.font = `600 ${metrics.fontSize}px system-ui`;
-        context.textBaseline = 'alphabetic';
-        metrics.lines.forEach((value, index) => context.fillText(value, object.start.x, object.start.y + metrics.fontSize + index * metrics.fontSize * 1.3));
-    }
-    context.restore();
-}
-
-function drawSelection() {
-    if (selectedIndex < 0 || !objects[selectedIndex] || editingTextIndex === selectedIndex) return;
-    const bounds = objectBounds(objects[selectedIndex]);
-    const padding = Math.max(5, 5 / zoom);
-    context.save();
-    context.strokeStyle = '#2f7de1';
-    context.lineWidth = Math.max(1, 1.5 / zoom);
-    context.setLineDash([6 / zoom, 4 / zoom]);
-    context.strokeRect(bounds.left - padding, bounds.top - padding, bounds.right - bounds.left + padding * 2, bounds.bottom - bounds.top + padding * 2);
-    context.restore();
-}
-
-function render() {
-    frame = 0;
-    if (!background || !context) return;
+    const context = canvas.getContext('2d');
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.save();
-    roundedRectPath(context, 0, 0, canvas.width, canvas.height, cornerRadius);
-    context.clip();
-    context.drawImage(background, 0, 0, canvas.width, canvas.height);
-    objects.forEach((object, index) => { if (index !== editingTextIndex) drawObject(object); });
-    if (active) drawObject(active);
-    drawSelection();
+    if (view.mode !== 'crop') { context.beginPath(); context.roundRect(0, 0, crop.width, crop.height, Math.min(view.doc.cornerRadius, crop.width / 2, crop.height / 2)); context.clip(); }
+    context.translate(-crop.x, -crop.y); context.drawImage(view.image, 0, 0);
+    for (const object of view.doc.objects) {
+        if (object.id === view.textEdit?.id || object.id === view.drag?.object?.id) continue;
+        drawObject(context, object, view.image);
+    }
     context.restore();
-    canvas.dataset.annotationCount = String(objects.length);
-    canvas.dataset.selectedIndex = String(selectedIndex);
-    canvas.dataset.cornerRadius = String(cornerRadius);
+    renderOverlay(view); updateControls(view);
 }
 
-function roundedRectPath(target, x, y, width, height, radius) {
-    const bounded = Math.max(0, Math.min(radius, width / 2, height / 2));
-    target.beginPath();
-    target.roundRect(x, y, width, height, bounded);
-}
-
-function scheduleRender() {
-    if (!frame) frame = requestAnimationFrame(render);
-}
-
-function applyZoom() {
-    if (!canvas || !background) return;
-    canvas.style.width = `${Math.max(1, Math.round(canvas.width * zoom))}px`;
-    canvas.style.height = `${Math.max(1, Math.round(canvas.height * zoom))}px`;
-    byId('captureZoomValue').textContent = `${Math.round(zoom * 100)}%`;
-}
-
-function fitZoom() {
-    if (!canvas || !background) return;
-    const stage = byId('captureStage');
-    zoomMode = 'fit';
-    zoom = Math.max(MIN_ZOOM, Math.min(1, (stage.clientWidth - 32) / canvas.width, (stage.clientHeight - 32) / canvas.height));
-    applyZoom();
-}
-
-function changeZoom(delta) {
-    if (!background) return;
-    zoomMode = 'manual';
-    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 10) / 10));
-    applyZoom();
-}
-
-function showLoading(state, title, detail) {
-    const loading = byId('captureLoading');
-    if (!loading) return;
-    loading.dataset.state = state;
-    const icons = { ready: 'ri-screenshot-2-line', loading: 'ri-loader-4-line', error: 'ri-error-warning-line' };
-    loading.querySelector('i').className = icons[state] || icons.error;
-    loading.querySelector('strong').textContent = title;
-    loading.querySelector('span').textContent = detail;
-}
-
-function updateControls() {
-    byId('captureUndo').disabled = captureBusy || objects.length === 0;
-    byId('captureSave').disabled = captureBusy || saveBusy || !background;
-    byId('captureAgain').disabled = captureBusy;
-    ['captureZoomOut', 'captureZoomIn', 'captureZoomFit', 'captureDelete', 'captureLong', 'captureCanvasTrigger'].forEach(id => {
-        const control = byId(id);
-        if (control) control.disabled = captureBusy || !background;
-    });
-    byId('captureAgainLabel').textContent = captureBusy
-        ? '选择范围中'
-        : (background ? '重新截图' : '开始截图');
-}
-
-function releaseBackground() {
-    if (background) {
-        background.onload = null;
-        background.onerror = null;
-        background.src = '';
-    }
-    background = null;
-}
-
-function imageFromUrl(dataUrl) {
-    return new Promise((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => reject(new Error('无法读取截图图像'));
-        image.src = dataUrl;
-    });
-}
-
-async function applyCapture(result, current, resetAnnotations = true) {
-    const image = await imageFromUrl(result.dataUrl);
-    if (current !== captureGeneration || !canvas) {
-        image.src = '';
-        return;
-    }
-    releaseBackground();
-    background = image;
-    canvas.width = result.width;
-    canvas.height = result.height;
-    if (resetAnnotations) {
-        objects = [];
-        selectedIndex = -1;
-        active = null;
-    }
-    byId('captureLoading').hidden = true;
-    canvas.hidden = false;
-    captureBusy = false;
-    render();
-    requestAnimationFrame(fitZoom);
-    byId('captureDimensions').textContent = `${result.width} × ${result.height}`;
-    byId('captureStatus').textContent = `${result.width} × ${result.height} · 截图已进入本地标注画布`;
-    updateControls();
-}
-
-async function capture(options = {}) {
-    if (captureBusy) return;
-    commitInlineText();
-    const current = ++captureGeneration;
-    captureBusy = true;
-    if (!background) {
-        canvas.hidden = true;
-        byId('captureLoading').hidden = false;
-    }
-    showLoading('loading', '请选择截图范围', '在屏幕上拖动选择区域；按 Esc 或右键可以取消。');
-    byId('captureStatus').textContent = options.longDirection ? '请选择需要自动滚动的固定区域。' : '正在等待你选择截图范围。';
-    updateControls();
-    try {
-        let result = await new Promise((resolve, reject) => {
-            const requestId = crypto.randomUUID();
-            pendingRegionCapture = { current, resolve, requestId };
-            invoke('start_screen_region_capture', { ...options, requestId }).catch(error => {
-                if (pendingRegionCapture?.current === current) pendingRegionCapture = null;
-                reject(error);
-            });
-        });
-        if (!result) {
-            if (current !== captureGeneration) return;
-            captureBusy = false;
-            if (background) {
-                byId('captureLoading').hidden = true;
-                canvas.hidden = false;
-            } else {
-                showLoading('ready', '已取消截图', '点击“开始截图”可重新选择需要截取的屏幕范围。');
-            }
-            byId('captureStatus').textContent = '截图已取消，原有内容保持不变。';
-            updateControls();
-            return;
-        }
-        await applyCapture(result, current, true);
-        if (options.longDirection) byId('captureStatus').textContent = `${result.width} × ${result.height} · 自动长截图已完成`;
-    } catch (error) {
-        if (current !== captureGeneration) return;
-        captureBusy = false;
-        showLoading('error', '截图失败', String(error));
-        updateControls();
-    }
-}
-
-function hitTestObject(point) {
-    const padding = Math.max(8, 8 / zoom);
-    for (let index = objects.length - 1; index >= 0; index -= 1) {
-        const bounds = objectBounds(objects[index]);
-        if (point.x >= bounds.left - padding && point.x <= bounds.right + padding
-            && point.y >= bounds.top - padding && point.y <= bounds.bottom + padding) return index;
-    }
-    return -1;
-}
-
-function translateObject(object, original, dx, dy) {
-    if (object.type === 'pen') {
-        object.points = original.points.map(point => ({ x: point.x + dx, y: point.y + dy }));
-    } else if (object.type === 'text') {
-        object.start = { x: original.start.x + dx, y: original.start.y + dy };
+function renderOverlay(view) {
+    view.renderFrame = 0;
+    if (!alive(view) || !view.image) return;
+    const canvas = node(view, 'captureOverlay'), ctx = canvas.getContext('2d'), crop = visibleRect(view);
+    ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.save(); ctx.translate(-crop.x, -crop.y);
+    if (view.active) drawObject(ctx, view.active, view.image);
+    if (view.mode === 'crop') {
+        const selection = view.cropDraft || view.doc.crop;
+        ctx.fillStyle = 'rgba(9,15,25,.57)'; ctx.beginPath();
+        ctx.rect(0, 0, view.image.width, view.image.height); ctx.rect(selection.x, selection.y, selection.width, selection.height); ctx.fill('evenodd');
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / view.zoom; ctx.setLineDash([5 / view.zoom, 4 / view.zoom]); ctx.strokeRect(selection.x, selection.y, selection.width, selection.height); ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(255,255,255,.24)'; ctx.lineWidth = 1 / view.zoom;
+        for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(selection.x + selection.width * i / 3, selection.y); ctx.lineTo(selection.x + selection.width * i / 3, selection.y + selection.height); ctx.moveTo(selection.x, selection.y + selection.height * i / 3); ctx.lineTo(selection.x + selection.width, selection.y + selection.height * i / 3); ctx.stroke(); }
+        node(view, 'captureCropSize').textContent = `${Math.round(selection.width)} × ${Math.round(selection.height)} px`;
     } else {
-        object.start = { x: original.start.x + dx, y: original.start.y + dy };
-        object.end = { x: original.end.x + dx, y: original.end.y + dy };
+        const selected = view.active?.id === view.selectedId ? view.active : view.doc.objects.find(object => object.id === view.selectedId);
+        if (selected && !view.textEdit) drawSelection(ctx, selected, { zoom: view.zoom });
     }
+    ctx.restore();
 }
 
-function pointerDown(event) {
-    if (!background || event.button !== 0 || event.ctrlKey) return;
-    commitInlineText();
-    const start = canvasPoint(event);
-    canvas.setPointerCapture(event.pointerId);
-    if (mode === 'select') {
-        selectedIndex = hitTestObject(start);
-        dragState = selectedIndex >= 0
-            ? { index: selectedIndex, start, original: structuredClone(objects[selectedIndex]) }
-            : null;
-        render();
-        return;
-    }
-    selectedIndex = -1;
-    if (mode === 'text') {
-        event.preventDefault();
-        startInlineText(start);
-        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-        return;
-    }
-    active = mode === 'pen'
-        ? { type: 'pen', points: [start], color, size }
-        : { type: mode, start, end: start, color, size, style: shapeStyle };
+function scheduleOverlay(view) {
+    if (!view.renderFrame) view.renderFrame = requestAnimationFrame(() => renderOverlay(view));
 }
 
-function pointerMove(event) {
-    updateBrushCursor(event);
-    if (dragState && mode === 'select') {
-        const current = canvasPoint(event);
-        translateObject(objects[dragState.index], dragState.original, current.x - dragState.start.x, current.y - dragState.start.y);
-        scheduleRender();
-        return;
-    }
-    if (!active) return;
-    const current = canvasPoint(event);
-    if (active.type === 'pen') active.points.push(current); else active.end = current;
-    scheduleRender();
+function applyZoom(view) {
+    if (!alive(view) || !view.image) return;
+    const crop = visibleRect(view), viewport = node(view, 'captureViewport');
+    viewport.style.width = `${crop.width * view.zoom}px`; viewport.style.height = `${crop.height * view.zoom}px`;
+    node(view, 'captureZoomValue').textContent = `${Math.round(view.zoom * 100)}%`;
+    renderOverlay(view);
+    if (view.textEdit) positionText(view);
 }
 
-function pointerUp(event) {
-    if (dragState) {
-        dragState = null;
-        render();
-        return;
-    }
-    if (!active) return;
-    const finished = active;
-    active = null;
-    if (finished.type === 'pen' ? finished.points.length > 1 : Math.hypot(finished.end.x - finished.start.x, finished.end.y - finished.start.y) > 2) {
-        objects.push(finished);
-        selectedIndex = objects.length - 1;
-    }
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    render();
-    updateControls();
+function fitZoom(view, animate = false) {
+    if (!view.image) return;
+    cancelAnimationFrame(view.zoomFrame); view.zoomFrame = 0; view.zoomMode = 'fit';
+    const stage = node(view, 'captureStage'), crop = visibleRect(view);
+    const target = clamp(Math.min(1, (stage.clientWidth - 96) / crop.width, (stage.clientHeight - 96) / crop.height), .05, 4);
+    if (animate) { changeZoom(view, target); view.zoomMode = 'fit'; return; }
+    view.zoom = target;
+    applyZoom(view);
 }
 
-function startInlineText(point, index = -1) {
-    const editor = byId('captureInlineText');
-    const object = index >= 0 ? objects[index] : null;
-    editingTextIndex = index;
-    selectedIndex = index;
-    editor.value = object?.text || '';
-    editor.dataset.x = String(object?.start.x ?? point.x);
-    editor.dataset.y = String(object?.start.y ?? point.y);
-    editor.hidden = false;
-    const canvasRect = canvas.getBoundingClientRect();
-    const x = Number(editor.dataset.x);
-    const y = Number(editor.dataset.y);
-    const scale = canvasRect.width / canvas.width;
-    editor.style.left = `${canvas.offsetLeft + x * scale}px`;
-    editor.style.top = `${canvas.offsetTop + y * scale}px`;
-    editor.style.fontSize = `${Math.max(13, (object?.fontSize || Math.max(18, size * 4)) * scale)}px`;
-    editor.style.color = object?.color || color;
-    resizeInlineText();
-    editor.focus();
-    editor.select();
-    render();
+function changeZoom(view, target, anchor) {
+    if (!view.image || view.captureBusy) return;
+    cancelAnimationFrame(view.zoomFrame); view.zoomFrame = 0; view.zoomMode = 'manual';
+    const stage = node(view, 'captureStage'), rect = stage.getBoundingClientRect();
+    const anchorX = anchor?.clientX ?? rect.left + stage.clientWidth / 2, anchorY = anchor?.clientY ?? rect.top + stage.clientHeight / 2;
+    const before = node(view, 'captureViewport').getBoundingClientRect();
+    const imageX = (anchorX - before.left) / view.zoom, imageY = (anchorY - before.top) / view.zoom;
+    const from = view.zoom, to = clamp(target, .05, 4), start = performance.now();
+    const tick = now => {
+        if (!alive(view)) return;
+        const t = reducedMotion() || anchor ? 1 : Math.min(1, (now - start) / 160);
+        view.zoom = from + (to - from) * (1 - Math.pow(1 - t, 3)); applyZoom(view);
+        const after = node(view, 'captureViewport').getBoundingClientRect();
+        stage.scrollLeft += after.left + imageX * view.zoom - anchorX; stage.scrollTop += after.top + imageY * view.zoom - anchorY;
+        view.zoomFrame = t < 1 ? requestAnimationFrame(tick) : 0;
+    };
+    tick(start);
 }
 
-function resizeInlineText() {
-    const editor = byId('captureInlineText');
-    if (!editor || editor.hidden) return;
-    editor.style.width = '1px';
-    editor.style.height = '1px';
-    editor.style.width = `${Math.min(420, Math.max(72, editor.scrollWidth + 12))}px`;
-    editor.style.height = `${Math.min(220, Math.max(32, editor.scrollHeight + 4))}px`;
+function canvasPoint(view, event) {
+    const rect = node(view, 'captureOverlay').getBoundingClientRect(), crop = visibleRect(view);
+    return { x: clamp((event.clientX - rect.left) / view.zoom + crop.x, crop.x, crop.x + crop.width), y: clamp((event.clientY - rect.top) / view.zoom + crop.y, crop.y, crop.y + crop.height) };
 }
 
-function commitInlineText(cancel = false) {
-    const editor = byId('captureInlineText');
-    if (!editor || editor.hidden) return;
-    const index = editingTextIndex;
-    const value = editor.value.trim();
-    if (!cancel) {
-        if (index >= 0) {
-            if (value) objects[index].text = value;
-            else objects.splice(index, 1);
-        } else if (value) {
-            objects.push({
-                type: 'text',
-                text: value,
-                start: { x: Number(editor.dataset.x), y: Number(editor.dataset.y) },
-                color,
-                size,
-                fontSize: Math.max(18, size * 4)
-            });
-            selectedIndex = objects.length - 1;
+function commit(view, document, message) {
+    view.doc = sanitizeDocument(document, view.image.width, view.image.height);
+    view.history.push(view.doc); view.active = null; view.drag = null;
+    if (!view.doc.objects.some(object => object.id === view.selectedId)) view.selectedId = null;
+    renderBase(view); if (message) status(view, message);
+}
+
+function addObject(view, object) {
+    if (view.doc.objects.length >= LIMITS.objects) { status(view, '标注数量已达上限，请先删除部分标注', 'warning'); renderBase(view); return; }
+    if (object.type === 'pen' && view.doc.objects.reduce((total, item) => total + (item.points?.length || 0), 0) >= LIMITS.points) { status(view, '笔迹已达上限，请先删除部分笔迹', 'warning'); renderBase(view); return; }
+    view.selectedId = object.id; commit(view, { ...view.doc, objects: [...view.doc.objects, object] });
+}
+
+function selectMode(view, mode) {
+    if (!MODES.has(mode)) return;
+    commitInlineText(view); const changedCrop = (view.mode === 'crop') !== (mode === 'crop');
+    view.mode = mode; view.active = null; view.drag = null; view.cropDraft = mode === 'crop' && view.image ? clone(view.doc.crop) : null;
+    view.root.querySelectorAll('[data-capture-mode]').forEach(button => {
+        const selected = button.dataset.captureMode === mode; button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', String(selected));
+    });
+    node(view, 'captureCanvas').dataset.mode = mode; node(view, 'captureOverlay').dataset.mode = mode;
+    node(view, 'captureOverlay').style.cursor = '';
+    view.root.dataset.mode = mode;
+    node(view, 'captureBrushCursor').hidden = true;
+    if (mode !== 'select') view.selectedId = null;
+    if (view.image) { renderBase(view); if (changedCrop) fitZoom(view); } else updateControls(view);
+    if (mode === 'crop') status(view, '拖动选择裁剪范围，Enter 应用，Esc 取消。裁剪后仍可撤销。');
+}
+
+function pointerDown(view, event) {
+    if (!view.image || event.button !== 0 || view.captureBusy || view.pan || view.spacePressed || event.ctrlKey) return;
+    commitInlineText(view); cancelAnimationFrame(view.zoomFrame); view.zoomFrame = 0;
+    const point = canvasPoint(view, event), selected = view.doc.objects.find(object => object.id === view.selectedId);
+    if (view.mode === 'select') {
+        const handle = selected && hitTestHandle(selected, point, { zoom: view.zoom });
+        const object = handle ? selected : [...view.doc.objects].reverse().find(item => hitTestObject(item, point, 7 / view.zoom));
+        view.selectedId = object?.id || null;
+        if (object) {
+            view.color = object.color; view.size = clamp(object.size, 2, 40); view.fill = object.fill ? 'fill' : 'outline';
+            node(view, 'captureColor').value = view.color; node(view, 'captureSize').value = String(view.size); node(view, 'captureSizeValue').textContent = view.size + ' px';
+            view.root.querySelectorAll('[data-shape-style]').forEach(button => { const selected = button.dataset.shapeStyle === view.fill; button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', String(selected)); });
         }
+        if (object) {
+            view.drag = { pointerId: event.pointerId, start: point, object: clone(object), bounds: objectBounds(object), handle: typeof handle === 'string' ? handle : handle?.name };
+            view.active = clone(object);
+        }
+        renderBase(view);
+    } else if (view.mode === 'text') {
+        event.preventDefault(); const existing = [...view.doc.objects].reverse().find(item => item.type === 'text' && hitTestObject(item, point, 4 / view.zoom));
+        startInlineText(view, point, existing); return;
     }
-    editor.hidden = true;
-    editor.removeAttribute('style');
-    editor.value = '';
-    editingTextIndex = -1;
-    render();
-    updateControls();
-}
-
-function doubleClick(event) {
-    if (mode !== 'select' || !background) return;
-    const index = hitTestObject(canvasPoint(event));
-    if (index >= 0 && objects[index].type === 'text') startInlineText(objects[index].start, index);
-}
-
-function updateBrushCursor(event) {
-    const cursor = byId('captureBrushCursor');
-    if (!cursor || mode !== 'pen' || !background || event.ctrlKey) {
-        if (cursor) cursor.hidden = true;
-        return;
+    else if (view.mode === 'step') { addObject(view, { id: createId(), type: 'step', ...point, size: view.size, number: nextStepNumber(view.doc.objects), color: view.color }); return; }
+    else {
+        view.selectedId = null; view.drag = { pointerId: event.pointerId, start: point };
+        if (view.mode === 'crop') view.cropDraft = { ...point, width: 0, height: 0 };
+        else view.active = { id: createId(), type: view.mode, color: view.color, size: view.size, fill: view.fill === 'fill', ...point,
+            ...(view.mode === 'pen' ? { points: [point] } : ['line', 'arrow'].includes(view.mode) ? { x2: point.x, y2: point.y } : { width: 0, height: 0 }) };
+        renderOverlay(view); updateControls(view);
     }
-    const stageRect = byId('captureStage').getBoundingClientRect();
-    const canvasRect = canvas.getBoundingClientRect();
-    const inside = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right && event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
-    if (!inside) { cursor.hidden = true; return; }
-    const diameter = Math.max(4, size * canvasRect.width / canvas.width);
-    cursor.hidden = false;
-    cursor.style.width = `${diameter}px`;
-    cursor.style.height = `${diameter}px`;
-    cursor.style.transform = `translate3d(${event.clientX - stageRect.left - diameter / 2}px,${event.clientY - stageRect.top - diameter / 2}px,0)`;
+    if (view.drag) { node(view, 'captureOverlay').setPointerCapture(event.pointerId); event.preventDefault(); }
 }
 
-function setPanReady(ready) {
-    const stage = byId('captureStage');
-    if (stage) stage.dataset.panReady = String(Boolean(ready));
-}
-
-function beginPan(event) {
-    if (!background || !event.ctrlKey || event.button !== 0) return;
-    const stage = byId('captureStage');
-    pan = { x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
-    stage.dataset.panning = 'true';
-    event.preventDefault();
-    event.stopPropagation();
-}
-
-function movePan(event) {
-    if (!pan) return;
-    const stage = byId('captureStage');
-    stage.scrollLeft = pan.left - (event.clientX - pan.x);
-    stage.scrollTop = pan.top - (event.clientY - pan.y);
-}
-
-function endPan() {
-    pan = null;
-    const stage = byId('captureStage');
-    if (stage) stage.dataset.panning = 'false';
-}
-
-async function undo() {
-    commitInlineText();
-    if (objects.length) {
-        objects.pop();
-        selectedIndex = -1;
-        render();
+function pointerMove(view, event) {
+    if (!view.image) return;
+    updateBrushCursor(view, event);
+    if (view.mode === 'select' && !view.pan && !view.spacePressed) {
+        const point = canvasPoint(view, event), selected = view.doc.objects.find(object => object.id === view.selectedId), handle = selected && hitTestHandle(selected, point, { zoom: view.zoom });
+        const cursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
+        node(view, 'captureOverlay').style.cursor = view.drag ? (cursors[view.drag.handle] || 'grabbing') : cursors[handle] || (view.doc.objects.some(object => hitTestObject(object, point, 7 / view.zoom)) ? 'move' : 'default');
     }
-    updateControls();
+    if (!view.drag || event.pointerId !== view.drag.pointerId) return;
+    const point = canvasPoint(view, event), drag = view.drag;
+    if (view.mode === 'select') {
+        if (drag.handle) {
+            const bounds = drag.bounds, left = drag.handle.includes('w') ? point.x : bounds.x, top = drag.handle.includes('n') ? point.y : bounds.y;
+            let right = drag.handle.includes('e') ? point.x : bounds.x + bounds.width, bottom = drag.handle.includes('s') ? point.y : bounds.y + bounds.height;
+            if (event.shiftKey) { const ratio = bounds.width / Math.max(1, bounds.height), width = Math.abs(right - left), height = Math.abs(bottom - top); if (width > height * ratio) bottom = top + width / ratio; else right = left + height * ratio; }
+            view.active = resizeObject(drag.object, bounds, normalizeRect({ x: left, y: top }, { x: right, y: bottom }));
+        } else view.active = translateObject(drag.object, point.x - drag.start.x, point.y - drag.start.y);
+    } else if (view.mode === 'crop') view.cropDraft = normalizeRect(drag.start, point, event.shiftKey);
+    else if (view.active.type === 'pen') {
+        const coalesced = event.getCoalescedEvents?.(), samples = coalesced?.length ? coalesced : [event];
+        for (const sample of samples) {
+            const next = canvasPoint(view, sample), last = view.active.points.at(-1);
+            if (Math.hypot(next.x - last.x, next.y - last.y) >= .5) {
+                if (view.active.points.length >= 4000) view.active.points = view.active.points.filter((_, index) => index % 2 === 0);
+                view.active.points.push(next);
+            }
+        }
+    } else if (['line', 'arrow'].includes(view.active.type)) {
+        const end = event.shiftKey ? constrainPoint(drag.start, point) : point; view.active.x2 = end.x; view.active.y2 = end.y;
+    } else Object.assign(view.active, normalizeRect(drag.start, point, event.shiftKey));
+    scheduleOverlay(view);
 }
 
-function clearCapture() {
-    captureGeneration += 1;
-    commitInlineText(true);
-    objects = [];
-    active = null;
-    selectedIndex = -1;
-    dragState = null;
-    releaseBackground();
-    canvas.hidden = true;
-    canvas.removeAttribute('style');
-    byId('captureLoading').hidden = false;
-    showLoading('ready', '截图已移除', '点击“开始截图”重新选择范围。');
-    byId('captureDimensions').textContent = '等待截图';
-    byId('captureStatus').textContent = '当前没有截图，相关像素已经从内存释放。';
-    zoom = 1;
-    zoomMode = 'fit';
-    byId('captureZoomValue').textContent = '100%';
-    updateControls();
+function pointerUp(view, event, cancelled = false) {
+    if (!view.drag || view.drag.pointerId !== event.pointerId) return;
+    if (!cancelled) pointerMove(view, event);
+    const active = view.active, drag = view.drag; view.drag = null; view.active = null;
+    const overlay = node(view, 'captureOverlay'); if (overlay.hasPointerCapture(event.pointerId)) overlay.releasePointerCapture(event.pointerId);
+    if (cancelled) { renderBase(view); return; }
+    if (view.mode === 'crop') { updateControls(view); renderOverlay(view); return; }
+    if (view.mode === 'select' && active) commit(view, { ...view.doc, objects: view.doc.objects.map(object => object.id === active.id ? active : object) });
+    else if (active) {
+        const bounds = objectBounds(active);
+        if (active.type === 'pen' || Math.max(bounds.width, bounds.height) > 2) addObject(view, active);
+        else renderBase(view);
+    } else if (drag) renderBase(view);
 }
 
-async function save() {
-    if (!background || saveBusy) return;
-    commitInlineText();
-    selectedIndex = -1;
-    render();
-    saveBusy = true;
-    updateControls();
-    try {
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const path = await invoke('save_annotated_screenshot', { filename: `DtKit-${stamp}.png`, dataUrl: canvas.toDataURL('image/png') });
-        byId('captureStatus').textContent = `已保存：${path}`;
-    } catch (error) {
-        byId('captureStatus').textContent = `保存失败：${String(error)}`;
-    } finally {
-        saveBusy = false;
-        updateControls();
+function updateBrushCursor(view, event) {
+    const cursor = node(view, 'captureBrushCursor'), visible = view.mode === 'pen' && !view.pan && !view.spacePressed;
+    cursor.hidden = !visible;
+    if (!visible) return;
+    const point = canvasPoint(view, event), crop = visibleRect(view), width = Math.max(4, view.size * view.zoom);
+    cursor.style.width = cursor.style.height = width + 'px'; cursor.style.transform = `translate(${(point.x - crop.x) * view.zoom - width / 2}px, ${(point.y - crop.y) * view.zoom - width / 2}px)`;
+}
+
+function positionText(view) {
+    if (!view.textEdit || !view.image) return;
+    const input = node(view, 'captureInlineText'), crop = visibleRect(view), edit = view.textEdit;
+    const style = getComputedStyle(input), insetX = parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth), insetY = parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth);
+    input.style.left = `${(edit.x - crop.x) * view.zoom - insetX}px`; input.style.top = `${(edit.y - crop.y) * view.zoom - insetY}px`;
+    input.style.fontSize = `${edit.fontSize * view.zoom}px`; input.style.color = edit.color;
+    input.style.width = `${Math.max(100, Math.min((crop.x + crop.width - edit.x) * view.zoom, 480))}px`;
+    input.style.height = 'auto'; input.style.height = Math.max(30, input.scrollHeight + input.offsetHeight - input.clientHeight) + 'px';
+}
+
+function startInlineText(view, point, existing) {
+    commitInlineText(view);
+    view.textEdit = existing ? clone(existing) : { id: createId(), type: 'text', ...point, text: '', fontSize: Math.max(16, view.size * 4), size: view.size, color: view.color };
+    const input = node(view, 'captureInlineText'); input.value = view.textEdit.text; input.hidden = false;
+    view.selectedId = existing?.id || null; renderBase(view); positionText(view); input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function commitInlineText(view, cancel = false) {
+    if (!view.textEdit) return;
+    const edit = view.textEdit, input = node(view, 'captureInlineText');
+    view.textEdit = null; input.hidden = true;
+    if (cancel || !view.image) { renderBase(view); return; }
+    const text = input.value.slice(0, 2000), exists = view.doc.objects.some(object => object.id === edit.id);
+    if (!text.trim()) { if (exists) commit(view, { ...view.doc, objects: view.doc.objects.filter(object => object.id !== edit.id) }); else renderBase(view); return; }
+    const context = node(view, 'captureCanvas').getContext('2d'); context.font = `600 ${edit.fontSize}px system-ui`;
+    const object = { ...edit, text, width: Math.max(edit.fontSize, ...text.split('\n').map(line => context.measureText(line).width)), height: text.split('\n').length * edit.fontSize * 1.35 };
+    if (exists) { view.selectedId = edit.id; commit(view, { ...view.doc, objects: view.doc.objects.map(item => item.id === edit.id ? object : item) }); }
+    else addObject(view, object);
+}
+
+function undo(view, redo = false) {
+    if (!view.image || view.captureBusy) return;
+    commitInlineText(view); const document = redo ? view.history.redo() : view.history.undo(); if (!document) return;
+    view.doc = document; view.selectedId = null; view.active = null; view.drag = null; view.cropDraft = view.mode === 'crop' ? clone(view.doc.crop) : null;
+    renderBase(view); if (view.zoomMode === 'fit') fitZoom(view); else applyZoom(view); status(view, redo ? '已重做' : '已撤销');
+}
+
+function deleteSelected(view) {
+    commitInlineText(view); if (!view.selectedId) return;
+    commit(view, { ...view.doc, objects: view.doc.objects.filter(object => object.id !== view.selectedId) }, '已删除选中标注，可撤销');
+}
+
+function duplicateSelected(view) {
+    const object = view.doc.objects.find(item => item.id === view.selectedId); if (!object) return;
+    const copy = translateObject(object, 16, 16); copy.id = createId();
+    if (copy.type === 'step') copy.number = nextStepNumber(view.doc.objects);
+    addObject(view, copy); status(view, '已复制标注');
+}
+
+function reorderSelected(view, front) {
+    const object = view.doc.objects.find(item => item.id === view.selectedId); if (!object) return;
+    const remaining = view.doc.objects.filter(item => item.id !== object.id);
+    commit(view, { ...view.doc, objects: front ? [...remaining, object] : [object, ...remaining] }, front ? '已置于顶层' : '已置于底层');
+}
+
+function applyProperty(view, patch) {
+    view.root.querySelectorAll('[data-capture-color]').forEach(button => { const selected = button.dataset.captureColor.toLowerCase() === view.color.toLowerCase(); button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', String(selected)); });
+    const object = view.doc.objects.find(item => item.id === view.selectedId);
+    if (object && view.mode === 'select') {
+        const changed = { ...object, ...patch };
+        if (object.type === 'text' && patch.size) {
+            changed.fontSize = Math.max(16, patch.size * 4);
+            const context = node(view, 'captureCanvas').getContext('2d'); context.font = `600 ${changed.fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+            changed.width = Math.max(changed.fontSize, ...changed.text.split('\n').map(line => context.measureText(line).width)); changed.height = changed.text.split('\n').length * changed.fontSize * 1.35;
+        }
+        if (object.type === 'mosaic' && patch.size) changed.pixelSize = clamp(Math.max(8, patch.size * 3), 4, 96);
+        view.doc = { ...view.doc, objects: view.doc.objects.map(item => item.id === object.id ? changed : item) }; renderBase(view);
     }
 }
 
-function openLongDialog() {
-    if (!background) return;
-    byId('captureLongDialog').showModal();
+function finishProperty(view) { if (view.image) commit(view, view.doc); }
+
+function applyCrop(view, reset = false) {
+    if (!view.image) return;
+    const crop = reset ? { x: 0, y: 0, width: view.image.width, height: view.image.height } : view.cropDraft;
+    if (!crop || crop.width < 2 || crop.height < 2) return;
+    commit(view, { ...view.doc, crop }, reset ? '已恢复完整画面' : '裁剪已应用，可撤销'); selectMode(view, 'select'); fitZoom(view);
 }
 
-async function startLongCapture() {
-    const direction = document.querySelector('[data-long-direction].is-active')?.dataset.longDirection || 'vertical';
-    const maxSegments = Math.max(2, Math.min(20, Number(byId('captureLongSegments').value) || 12));
-    byId('captureLongDialog').close();
-    await capture({ longDirection: direction, maxSegments });
+function beginPan(view, event) {
+    if (!view.image || !(view.spacePressed || event.ctrlKey || event.button === 1) || event.target.closest('textarea,button,input,select')) return;
+    event.preventDefault(); event.stopPropagation();
+    view.pan = { id: event.pointerId, x: event.clientX, y: event.clientY, left: node(view, 'captureStage').scrollLeft, top: node(view, 'captureStage').scrollTop };
+    node(view, 'captureStage').setPointerCapture(event.pointerId); node(view, 'captureStage').dataset.panning = 'true';
 }
 
-function closeToolMenus(exceptId = '') {
-    document.querySelectorAll('.capture-tool-menu').forEach(menu => {
-        if (menu.id === exceptId) return;
-        menu.hidden = true;
-        const trigger = menu.parentElement?.querySelector('[aria-expanded]');
-        trigger?.setAttribute('aria-expanded', 'false');
+function endPan(view) { view.pan = null; node(view, 'captureStage').dataset.panning = 'false'; }
+
+function releaseBackground(view) {
+    if (view.image) { view.image.src = ''; view.image = null; }
+    if (view.imageUrl) URL.revokeObjectURL(view.imageUrl); view.imageUrl = null;
+}
+
+function decodeImage(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file), image = new Image();
+        image.onload = () => { image.onload = image.onerror = null; resolve({ image, url }); };
+        image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('无法读取图片，请选择 PNG、JPEG、WebP 或 GIF 图片')); };
+        image.src = url;
     });
 }
 
-function toggleToolMenu(menuId, triggerId) {
-    const menu = byId(menuId);
-    const trigger = byId(triggerId);
-    const opening = menu.hidden;
-    closeToolMenus(opening ? menuId : '');
-    menu.hidden = !opening;
-    trigger.setAttribute('aria-expanded', String(opening));
-    if (opening) {
-        const rect = trigger.getBoundingClientRect();
-        const width = menu.offsetWidth || 248;
-        menu.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, rect.left))}px`;
-        menu.style.top = `${Math.min(innerHeight - menu.offsetHeight - 8, rect.bottom + 7)}px`;
+async function loadImage(view, file, options = {}) {
+    if (!file || !alive(view) || (view.captureBusy && !options.fromCapture)) return;
+    if (!/^image\/(png|jpeg|webp|gif|bmp)$/i.test(file.type) || file.size > 50 * 1024 * 1024) { status(view, '请选择小于 50 MB 的 PNG、JPEG、WebP、GIF 或 BMP 图片', 'error'); return; }
+    commitInlineText(view); const generation = ++view.captureGeneration; view.loading = true; updateControls(view);
+    try {
+        const decoded = await decodeImage(file);
+        if (!alive(view) || generation !== view.captureGeneration) { decoded.image.src = ''; URL.revokeObjectURL(decoded.url); return; }
+        if (decoded.image.width * decoded.image.height > MAX_PIXELS || Math.max(decoded.image.width, decoded.image.height) > 16384) {
+            decoded.image.src = ''; URL.revokeObjectURL(decoded.url); throw new Error('图片过大，请使用不超过 3200 万像素、单边不超过 16384 px 的图片');
+        }
+        releaseBackground(view); view.image = decoded.image; view.imageUrl = decoded.url; view.imageName = file.name || '截图.png'; view.assetId = options.assetId || null;
+        view.doc = sanitizeDocument(options.document || {}, view.image.width, view.image.height); view.history = new History(view.doc); view.selectedId = null; view.textEdit = null;
+        view.mode = view.mode === 'crop' ? 'select' : view.mode; view.cropDraft = null;
+        node(view, 'captureViewport').hidden = false; node(view, 'captureCanvas').hidden = false; node(view, 'captureLoading').hidden = true;
+        node(view, 'captureOcrPanel').hidden = true; node(view, 'captureOcrText').value = ''; view.ocrGeneration++;
+        selectMode(view, view.mode); fitZoom(view);
+        status(view, `${view.imageName} · 可直接标注，或拖入图片替换`);
+        view.assetJob = options.assetId ? Promise.resolve() : storeImage(file).then(id => { if (alive(view) && generation === view.captureGeneration) view.assetId = id; }).catch(() => { if (alive(view) && generation === view.captureGeneration) status(view, '图片已打开；本地缓存不可用，关闭页面后需要重新导入', 'warning'); });
+        await view.assetJob;
+        return true;
+    } catch (error) { status(view, String(error.message || error), 'error'); }
+    finally { if (alive(view) && generation === view.captureGeneration) { view.loading = false; updateControls(view); } }
+}
+
+function cancelCapture(view) {
+    const pending = view.pendingCapture;
+    if (!pending) return;
+    view.pendingCapture = null; view.captureGeneration += 1; view.captureBusy = false; pending.resolve(null);
+    void Promise.resolve(invoke('cancel_screen_region_capture', { requestId: pending.requestId })).catch(() => {});
+    if (alive(view)) updateControls(view);
+}
+
+async function capture(view, options = {}) {
+    if (!alive(view) || view.captureBusy || !view.nativeReady) return;
+    commitInlineText(view); closeMenus(view); view.captureBusy = true; updateControls(view);
+    const generation = view.captureGeneration, requestId = crypto.randomUUID(); view.captureTaskId = requestId;
+    const result = new Promise(resolve => { view.pendingCapture = { requestId, resolve }; });
+    try {
+        const delayMs = Number(node(view, 'captureDelay').value) * 1000;
+        status(view, delayMs ? `${delayMs / 1000} 秒后截图，请切换到目标内容…` : '在屏幕上拖动选取区域；Esc 取消');
+        await invoke('start_screen_region_capture', { ...options, longMode: options.longMode || 'manual', delayMs, requestId, keepHidden: true });
+        const selected = await result;
+        if (!alive(view) || generation !== view.captureGeneration) return;
+        if (!selected) { status(view, '已取消截图'); return; }
+        if (typeof selected.dataUrl !== 'string' || !selected.dataUrl.startsWith('data:image/png;base64,')) throw new Error('截图图像格式无效');
+        const bytes = atob(selected.dataUrl.slice('data:image/png;base64,'.length));
+        const pixels = new Uint8Array(bytes.length);
+        for (let index = 0; index < bytes.length; index++) pixels[index] = bytes.charCodeAt(index);
+        if (!alive(view) || generation !== view.captureGeneration) return;
+        await loadImage(view, new File([pixels], options.longDirection ? '长截图.png' : '截图.png', { type: 'image/png' }), { fromCapture: true });
+    } catch (error) { if (alive(view) && view.captureTaskId === requestId && generation === view.captureGeneration) status(view, `截图失败：${String(error.message || error)}`, 'error'); }
+    finally {
+        if (view.pendingCapture?.requestId === requestId) { view.pendingCapture.resolve(null); view.pendingCapture = null; }
+        if (alive(view) && view.captureTaskId === requestId) { view.captureBusy = false; updateControls(view); }
     }
+}
+
+function clearCapture(view) {
+    cancelCapture(view); view.captureGeneration += 1; view.ocrGeneration++; commitInlineText(view, true); releaseBackground(view);
+    view.doc = { objects: [], crop: { x: 0, y: 0, width: 1, height: 1 }, cornerRadius: 0 }; view.history = new History(view.doc);
+    view.assetId = null; view.selectedId = null; view.active = null; view.drag = null; view.cropDraft = null;
+    node(view, 'captureViewport').hidden = true; node(view, 'captureLoading').hidden = false; node(view, 'captureOcrPanel').hidden = true;
+    for (const id of ['captureCanvas', 'captureOverlay']) { const canvas = node(view, id); canvas.width = canvas.height = 1; }
+    updateControls(view); status(view, '画面已清空，可重新截图或导入图片');
+}
+
+function exportedCanvas(view, scale = Number(node(view, 'captureExportScale').value) || 1) {
+    commitInlineText(view);
+    const crop = view.doc.crop;
+    if (crop.width * crop.height * scale * scale > MAX_PIXELS || Math.max(crop.width, crop.height) * scale > 16384) throw new Error('导出尺寸过大，请在画面设置中选择 1×，或先裁剪图片');
+    const canvas = document.createElement('canvas'); renderDocument(canvas, view.image, view.doc, { scale }); return canvas;
+}
+
+function canvasBlob(canvas) { return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('图片编码失败')), 'image/png')); }
+
+function download(blob, filename) {
+    const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function output(view, copy = false) {
+    if (!view.image || view.outputBusy || view.captureBusy) return;
+    if (view.mode === 'crop') { status(view, '请先应用或取消裁剪，再输出图片', 'warning'); return; }
+    view.outputBusy = true; updateControls(view); const generation = view.captureGeneration;
+    let canvas;
+    try {
+        canvas = exportedCanvas(view);
+        if (copy) {
+            if (window.__TAURI__?.core?.invoke) await invoke('copy_screenshot_to_clipboard', { dataUrl: canvas.toDataURL('image/png') });
+            else { if (!navigator.clipboard?.write || !globalThis.ClipboardItem) throw new Error('当前环境不支持图片复制，请保存 PNG'); const blob = await canvasBlob(canvas); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+            if (alive(view) && generation === view.captureGeneration) status(view, '图片已复制，可直接粘贴到聊天或文档', 'success');
+        } else {
+            const filename = `DtKit-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+            if (window.__TAURI__?.core?.invoke) {
+                const path = await invoke('save_annotated_screenshot', { filename, dataUrl: canvas.toDataURL('image/png') });
+                if (alive(view) && generation === view.captureGeneration) status(view, `已保存：${path}`, 'success');
+            } else { download(await canvasBlob(canvas), filename); status(view, 'PNG 已导出', 'success'); }
+        }
+    } catch (error) { if (alive(view) && generation === view.captureGeneration) status(view, `${copy ? '复制' : '保存'}失败：${String(error.message || error)}`, 'error'); }
+    finally { if (canvas) canvas.width = canvas.height = 1; if (alive(view)) { view.outputBusy = false; updateControls(view); } }
+}
+
+async function recognize(view) {
+    if (!view.image || view.ocrBusy) return;
+    if (!window.__TAURI__?.core?.invoke) { status(view, '本地文字识别需要 Windows 桌面版', 'warning'); return; }
+    const job = ++view.ocrGeneration, generation = view.captureGeneration;
+    view.ocrBusy = true; updateControls(view); status(view, '正在本地识别画面中的文字…');
+    let canvas;
+    try {
+        canvas = exportedCanvas(view, 1);
+        const result = await invoke('recognize_screenshot_text', { dataUrl: canvas.toDataURL('image/png') });
+        if (!alive(view) || job !== view.ocrGeneration || generation !== view.captureGeneration) return;
+        node(view, 'captureOcrText').value = typeof result === 'string' ? result : result?.text || '';
+        node(view, 'captureOcrPanel').hidden = false;
+        status(view, node(view, 'captureOcrText').value ? '识别完成，可编辑或复制文字' : '未识别到文字，试试更清晰的截图', node(view, 'captureOcrText').value ? 'success' : 'warning');
+    } catch (error) { if (alive(view) && job === view.ocrGeneration) status(view, `识别失败：${String(error.message || error)}`, 'error'); }
+    finally { if (canvas) canvas.width = canvas.height = 1; if (alive(view)) { view.ocrBusy = false; updateControls(view); } }
+}
+
+function closeMenus(view, except) {
+    view.root.querySelectorAll('.capture-tool-menu').forEach(menu => {
+        if (menu.id === except) return;
+        menu.hidden = true; view.root.querySelector(`[aria-controls="${menu.id}"]`)?.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function toggleMenu(view, menuId, triggerId) {
+    const menu = node(view, menuId), trigger = node(view, triggerId); if (!menu || !trigger) return;
+    const open = menu.hidden; closeMenus(view, open ? menuId : null); menu.hidden = !open; trigger.setAttribute('aria-expanded', String(open));
+    if (!open) return;
+    const rect = trigger.getBoundingClientRect(), width = menu.offsetWidth;
+    menu.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, rect.left))}px`; menu.style.top = `${Math.max(8, Math.min(innerHeight - menu.offsetHeight - 8, rect.bottom + 8))}px`;
+    if (!reducedMotion()) menu.animate([{ opacity: 0, transform: 'translateY(-6px) scale(.97)' }, { opacity: 1, transform: 'translateY(0) scale(1)' }], { duration: 190, easing: 'cubic-bezier(.2,.8,.2,1)' });
+}
+
+function keyboard(view, event) {
+    if (event.isComposing || event.target.closest('input,textarea,select,[contenteditable="true"]') || view.root.querySelector('dialog[open]')) return;
+    if (event.target.closest('button') && [' ', 'Enter'].includes(event.key)) return;
+    const key = event.key.toLowerCase(), command = event.ctrlKey || event.metaKey;
+    if (command && key === 'z') { event.preventDefault(); undo(view, event.shiftKey); return; }
+    if (command && key === 'y') { event.preventDefault(); undo(view, true); return; }
+    if (command && key === 's') { event.preventDefault(); void output(view); return; }
+    if (command && key === 'c') { event.preventDefault(); void output(view, true); return; }
+    if (command && key === 'd') { event.preventDefault(); duplicateSelected(view); return; }
+    if (command && key === 'o') { event.preventDefault(); node(view, 'captureFile').click(); return; }
+    if (event.key === ' ' && !event.repeat) { event.preventDefault(); view.spacePressed = true; node(view, 'captureStage').dataset.panReady = 'true'; }
+    if (event.key === 'Escape') {
+        const consumed = view.captureBusy || view.mode === 'crop' || view.selectedId || view.drag || view.root.querySelector('.capture-tool-menu:not([hidden])');
+        if (consumed) { event.preventDefault(); event.stopPropagation(); }
+        closeMenus(view); if (view.captureBusy) cancelCapture(view);
+        else if (view.mode === 'crop') selectMode(view, 'select');
+        else { view.drag = null; view.active = null; view.selectedId = null; renderBase(view); }
+    }
+    if (view.captureBusy || view.loading) return;
+    if (event.key === 'Enter' && view.mode === 'crop') { event.preventDefault(); applyCrop(view); }
+    if (['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); deleteSelected(view); }
+    if (!command && !event.altKey && (KEYS[key] || key === 'o')) { event.preventDefault(); selectMode(view, KEYS[key] || 'ellipse'); }
+    if (!command && ['+', '=', '-'].includes(key)) { event.preventDefault(); changeZoom(view, view.zoom * (key === '-' ? .8 : 1.25)); }
+    if (!command && key === '0') fitZoom(view, true);
+    if (view.mode === 'select' && view.selectedId && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault(); const step = event.shiftKey ? 10 : 1, dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0, dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+        commit(view, { ...view.doc, objects: view.doc.objects.map(object => object.id === view.selectedId ? translateObject(object, dx, dy) : object) });
+    }
+}
+
+function bindEvents(view) {
+    const { signal } = view.controller, on = (id, type, callback) => node(view, id)?.addEventListener(type, callback, { signal });
+    const stage = node(view, 'captureStage');
+    on('captureOverlay', 'pointerdown', event => pointerDown(view, event)); on('captureOverlay', 'pointermove', event => pointerMove(view, event));
+    on('captureOverlay', 'pointerup', event => pointerUp(view, event)); on('captureOverlay', 'pointercancel', event => pointerUp(view, event, true));
+    on('captureOverlay', 'pointerleave', () => { node(view, 'captureBrushCursor').hidden = true; });
+    on('captureOverlay', 'dblclick', event => { if (view.mode !== 'select') return; const point = canvasPoint(view, event), object = [...view.doc.objects].reverse().find(item => item.type === 'text' && hitTestObject(item, point, 6 / view.zoom)); if (object) { event.preventDefault(); startInlineText(view, point, object); } });
+    stage.addEventListener('pointerdown', event => beginPan(view, event), { signal, capture: true });
+    on('captureStage', 'pointermove', event => { if (!view.pan || event.pointerId !== view.pan.id) return; stage.scrollLeft = view.pan.left - event.clientX + view.pan.x; stage.scrollTop = view.pan.top - event.clientY + view.pan.y; });
+    on('captureStage', 'pointerup', () => endPan(view)); on('captureStage', 'pointercancel', () => endPan(view));
+    stage.addEventListener('wheel', event => { if (!event.ctrlKey && !event.metaKey) return; event.preventDefault(); changeZoom(view, view.zoom * Math.exp(-event.deltaY * .002), event); }, { signal, passive: false });
+    view.root.querySelectorAll('[data-capture-mode]').forEach(button => button.addEventListener('click', () => selectMode(view, button.dataset.captureMode), { signal }));
+    view.root.querySelectorAll('[data-shape-mode]').forEach(button => button.addEventListener('click', () => { selectMode(view, button.dataset.shapeMode); closeMenus(view); }, { signal }));
+    view.root.querySelectorAll('[data-shape-style]').forEach(button => button.addEventListener('click', () => {
+        view.fill = button.dataset.shapeStyle; view.root.querySelectorAll('[data-shape-style]').forEach(item => { const selected = item === button; item.classList.toggle('is-active', selected); item.setAttribute('aria-pressed', String(selected)); }); applyProperty(view, { fill: view.fill === 'fill' }); finishProperty(view);
+    }, { signal }));
+    view.root.querySelectorAll('[data-capture-color]').forEach(button => button.addEventListener('click', () => { view.color = button.dataset.captureColor; node(view, 'captureColor').value = view.color; applyProperty(view, { color: view.color }); finishProperty(view); }, { signal }));
+    on('captureColor', 'input', event => { view.color = event.target.value; applyProperty(view, { color: view.color }); }); on('captureColor', 'change', () => finishProperty(view));
+    on('captureSize', 'input', event => { view.size = Number(event.target.value); node(view, 'captureSizeValue').textContent = view.size + ' px'; applyProperty(view, { size: view.size }); }); on('captureSize', 'change', () => finishProperty(view));
+    on('captureCornerRadius', 'input', event => { view.doc = { ...view.doc, cornerRadius: Number(event.target.value) }; renderBase(view); }); on('captureCornerRadius', 'change', () => finishProperty(view));
+    on('captureInlineText', 'input', () => positionText(view)); on('captureInlineText', 'blur', () => commitInlineText(view));
+    on('captureInlineText', 'keydown', event => { if (event.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); commitInlineText(view, true); } if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitInlineText(view); } });
+    on('captureUndo', 'click', () => undo(view)); on('captureRedo', 'click', () => undo(view, true)); on('captureDelete', 'click', () => deleteSelected(view));
+    on('captureDuplicate', 'click', () => duplicateSelected(view)); on('captureBringFront', 'click', () => reorderSelected(view, true)); on('captureSendBack', 'click', () => reorderSelected(view, false));
+    on('captureCropApply', 'click', () => applyCrop(view)); on('captureCropCancel', 'click', () => selectMode(view, 'select')); on('captureCropReset', 'click', () => applyCrop(view, true));
+    on('captureClear', 'click', () => clearCapture(view)); on('captureAgain', 'click', () => void capture(view)); on('captureCopy', 'click', () => { view.outputJob = output(view, true); }); on('captureSave', 'click', () => { view.outputJob = output(view); });
+    on('captureImport', 'click', () => node(view, 'captureFile').click());
+    on('captureFile', 'change', event => { const file = event.target.files?.[0]; event.target.value = ''; view.imageJob = loadImage(view, file); });
+    view.root.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => { if (button.dataset.action === 'capture') void capture(view); else if (button.dataset.action === 'import') node(view, 'captureFile').click(); }, { signal }));
+    on('captureCanvasTrigger', 'click', () => toggleMenu(view, 'captureCanvasMenu', 'captureCanvasTrigger')); on('captureOptionsTrigger', 'click', () => toggleMenu(view, 'captureOptionsMenu', 'captureOptionsTrigger')); on('captureShapeOptionsTrigger', 'click', () => toggleMenu(view, 'captureShapeMenu', 'captureShapeOptionsTrigger'));
+    on('captureZoomOut', 'click', () => changeZoom(view, view.zoom / 1.25)); on('captureZoomIn', 'click', () => changeZoom(view, view.zoom * 1.25)); on('captureZoomFit', 'click', () => fitZoom(view, true));
+    on('captureLong', 'click', () => { closeMenus(view); node(view, 'captureLongDialog').showModal(); }); on('captureLongCancel', 'click', () => node(view, 'captureLongDialog').close());
+    view.root.querySelectorAll('[data-long-direction]').forEach(button => button.addEventListener('click', () => { view.longDirection = button.dataset.longDirection; view.root.querySelectorAll('[data-long-direction]').forEach(item => { item.classList.toggle('is-active', item === button); item.setAttribute('aria-pressed', String(item === button)); }); }, { signal }));
+    on('captureLongMode', 'change', () => {
+        node(view, 'captureLongNote').textContent = node(view, 'captureLongMode').value === 'manual'
+            ? '将鼠标放在选区内，自行缓慢向下（横向时向右）滚动，每次保留至少半屏重叠并稍停。Enter 完成，Esc 取消；10 分钟或达到段数上限时结束。'
+            : '开始后自动滚动所选区域；到达末端或内容不再变化时结束，Esc 取消。请让目标窗口保持可见。';
+    });
+    on('captureLongStart', 'click', () => { node(view, 'captureLongDialog').close(); void capture(view, { longDirection: view.longDirection, longMode: node(view, 'captureLongMode').value, maxSegments: clamp(Number(node(view, 'captureLongSegments').value) || 12, 2, 20) }); });
+    on('captureOcr', 'click', () => void recognize(view)); on('captureOcrClose', 'click', () => { node(view, 'captureOcrPanel').hidden = true; });
+    on('captureOcrCopy', 'click', async () => { const text = node(view, 'captureOcrText').value; try { await navigator.clipboard.writeText(text); status(view, '文字已复制', 'success'); } catch (error) { status(view, `文字复制失败：${String(error.message || error)}`, 'error'); } });
+    on('captureHelp', 'click', () => node(view, 'captureHelpDialog').showModal());
+    view.root.addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) { event.preventDefault(); view.root.classList.add('is-dragover'); } }, { signal });
+    view.root.addEventListener('dragleave', event => { if (!view.root.contains(event.relatedTarget)) view.root.classList.remove('is-dragover'); }, { signal });
+    view.root.addEventListener('drop', event => { event.preventDefault(); view.root.classList.remove('is-dragover'); view.imageJob = loadImage(view, [...event.dataTransfer.files].find(file => file.type.startsWith('image/')) || event.dataTransfer.files[0]); }, { signal });
+    document.addEventListener('paste', event => { if (event.target.closest('input,textarea,[contenteditable="true"]')) return; const file = [...event.clipboardData.files].find(item => item.type.startsWith('image/')); if (file) { event.preventDefault(); view.imageJob = loadImage(view, file); } }, { signal });
+    document.addEventListener('pointerdown', event => { if (!event.target.closest('.capture-tool-group')) closeMenus(view); }, { signal });
+    document.addEventListener('keydown', event => keyboard(view, event), { signal });
+    document.addEventListener('keyup', event => { if (event.key === ' ') { view.spacePressed = false; stage.dataset.panReady = 'false'; endPan(view); } }, { signal });
+    window.addEventListener('blur', () => { view.spacePressed = false; stage.dataset.panReady = 'false'; endPan(view); node(view, 'captureBrushCursor').hidden = true; if (view.drag) { view.active = null; view.drag = null; renderBase(view); } }, { signal });
+    window.addEventListener('dtkit:power-state', event => { if (event.detail?.suspended) { view.active = null; view.drag = null; view.spacePressed = false; endPan(view); commitInlineText(view); renderBase(view); } }, { signal });
 }
 
 async function init() {
-    controller?.abort();
-    controller = new AbortController();
-    const { signal } = controller;
-    canvas = byId('captureCanvas');
-    context = canvas?.getContext('2d', { alpha: true });
-    canvas.dataset.mode = mode;
-    unlistenRegionCapture?.();
-    unlistenRegionCapture = await listen('screen-region-captured', event => {
-        const pending = pendingRegionCapture;
-        if (!pending || event.payload?.requestId !== pending.requestId) return;
-        pendingRegionCapture = null;
-        pending.resolve(event.payload?.cancelled ? null : event.payload?.capture || null);
-    });
-    canvas.addEventListener('pointerdown', pointerDown, { signal });
-    canvas.addEventListener('pointermove', pointerMove, { signal });
-    canvas.addEventListener('pointerup', pointerUp, { signal });
-    canvas.addEventListener('pointercancel', pointerUp, { signal });
-    canvas.addEventListener('dblclick', doubleClick, { signal });
-    canvas.addEventListener('pointerleave', () => { byId('captureBrushCursor').hidden = true; }, { signal });
-    const stage = byId('captureStage');
-    stage.dataset.panReady = 'false';
-    stage.addEventListener('pointerdown', beginPan, { signal, capture: true });
-    stage.addEventListener('pointermove', movePan, { signal });
-    stage.addEventListener('pointerup', endPan, { signal });
-    stage.addEventListener('pointercancel', endPan, { signal });
-    document.querySelectorAll('[data-capture-mode]').forEach(button => button.addEventListener('click', event => {
-        if (button.id === 'captureShapeTrigger') {
-            event.preventDefault();
-            commitInlineText();
-            mode = currentShape;
-            document.querySelectorAll('[data-capture-mode]').forEach(node => {
-                const selected = node === button;
-                node.classList.toggle('is-active', selected);
-                node.setAttribute('aria-pressed', String(selected));
+    destroy(); const root = document.querySelector('.capture-shell'); if (!root) return;
+    const doc = { objects: [], crop: { x: 0, y: 0, width: 1, height: 1 }, cornerRadius: 0 };
+    const view = { root, controller: new AbortController(), doc, history: new History(doc), image: null, imageUrl: null, assetId: null, mode: 'pen', color: '#007aff', size: 5, fill: 'outline', zoom: 1, zoomMode: 'fit',
+        captureGeneration: 0, ocrGeneration: 0, captureBusy: false, outputBusy: false, ocrBusy: false, loading: false, nativeReady: false, pendingCapture: null,
+        active: null, drag: null, selectedId: null, cropDraft: null, textEdit: null, pan: null, spacePressed: false, renderFrame: 0, zoomFrame: 0, longDirection: 'vertical', assetJob: Promise.resolve(), imageJob: Promise.resolve(), outputJob: Promise.resolve() };
+    currentView = view; bindEvents(view); selectMode(view, 'pen');
+    view.observer = new ResizeObserver(() => { if (alive(view) && view.zoomMode === 'fit') fitZoom(view); }); view.observer.observe(node(view, 'captureStage'));
+    if (window.__TAURI__?.event?.listen) {
+        try {
+            const unlisten = await window.__TAURI__.event.listen('screen-region-captured', event => {
+                if (!alive(view) || !view.pendingCapture || event.payload?.requestId !== view.pendingCapture.requestId) return;
+                const pending = view.pendingCapture; view.pendingCapture = null; pending.resolve(event.payload.cancelled ? null : event.payload.capture || null);
             });
-            canvas.dataset.mode = mode;
-            toggleToolMenu('captureShapeMenu', 'captureShapeTrigger');
-            render();
-            return;
-        }
-        commitInlineText();
-        mode = button.id === 'captureShapeTrigger' ? currentShape : button.dataset.captureMode;
-        document.querySelectorAll('[data-capture-mode]').forEach(node => {
-            const selected = node === button;
-            node.classList.toggle('is-active', selected);
-            node.setAttribute('aria-pressed', String(selected));
-        });
-        canvas.dataset.mode = mode;
-        if (mode !== 'select') selectedIndex = -1;
-        if (mode !== 'pen') byId('captureBrushCursor').hidden = true;
-        render();
-    }, { signal }));
-    document.querySelectorAll('[data-shape-mode]').forEach(button => button.addEventListener('click', () => {
-        currentShape = button.dataset.shapeMode;
-        mode = currentShape;
-        const trigger = byId('captureShapeTrigger');
-        trigger.dataset.captureMode = currentShape;
-        trigger.querySelector('i:first-child').className = button.querySelector('i').className;
-        trigger.querySelector('span').textContent = button.querySelector('span').textContent;
-        document.querySelectorAll('[data-shape-mode]').forEach(node => node.classList.toggle('is-active', node === button));
-        document.querySelectorAll('[data-capture-mode]').forEach(node => {
-            const selected = node === trigger;
-            node.classList.toggle('is-active', selected);
-            node.setAttribute('aria-pressed', String(selected));
-        });
-        canvas.dataset.mode = mode;
-        closeToolMenus();
-        render();
-    }, { signal }));
-    document.querySelectorAll('[data-shape-style]').forEach(button => button.addEventListener('click', () => {
-        shapeStyle = button.dataset.shapeStyle;
-        document.querySelectorAll('[data-shape-style]').forEach(node => {
-            const selected = node === button;
-            node.classList.toggle('is-active', selected);
-            node.setAttribute('aria-pressed', String(selected));
-        });
-    }, { signal }));
-    document.querySelectorAll('[data-long-direction]').forEach(button => button.addEventListener('click', () => {
-        document.querySelectorAll('[data-long-direction]').forEach(node => {
-            const selected = node === button;
-            node.classList.toggle('is-active', selected);
-            node.setAttribute('aria-pressed', String(selected));
-        });
-    }, { signal }));
-    byId('captureColor').addEventListener('input', event => { color = event.target.value; }, { signal });
-    byId('captureSize').addEventListener('input', event => {
-        size = Number(event.target.value);
-        byId('captureSizeValue').value = `${size} px`;
-    }, { signal });
-    byId('captureInlineText').addEventListener('input', resizeInlineText, { signal });
-    byId('captureInlineText').addEventListener('keydown', event => {
-        if (event.key === 'Escape') { event.preventDefault(); commitInlineText(true); }
-        if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitInlineText(); }
-    }, { signal });
-    byId('captureInlineText').addEventListener('blur', () => commitInlineText(), { signal });
-    byId('captureUndo').addEventListener('click', undo, { signal });
-    byId('captureZoomOut').addEventListener('click', () => changeZoom(-0.1), { signal });
-    byId('captureZoomIn').addEventListener('click', () => changeZoom(0.1), { signal });
-    byId('captureZoomFit').addEventListener('click', fitZoom, { signal });
-    byId('captureDelete').addEventListener('click', clearCapture, { signal });
-    byId('captureAgain').addEventListener('click', capture, { signal });
-    byId('captureSave').addEventListener('click', save, { signal });
-    byId('captureLong')?.addEventListener('click', openLongDialog, { signal });
-    byId('captureLongStart')?.addEventListener('click', startLongCapture, { signal });
-    byId('captureLongCancel')?.addEventListener('click', () => byId('captureLongDialog')?.close(), { signal });
-    byId('captureCanvasTrigger').addEventListener('click', () => toggleToolMenu('captureCanvasMenu', 'captureCanvasTrigger'), { signal });
-    byId('captureCornerRadius').addEventListener('input', event => {
-        cornerRadius = Number(event.target.value);
-        byId('captureCornerRadiusValue').value = `${cornerRadius} px`;
-        render();
-    }, { signal });
-    document.addEventListener('pointerdown', event => {
-        if (!event.target.closest('.capture-tool-group')) closeToolMenus();
-    }, { signal });
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Control') setPanReady(true);
-        if (event.key === 'Delete' && selectedIndex >= 0 && byId('captureInlineText').hidden) {
-            objects.splice(selectedIndex, 1);
-            selectedIndex = -1;
-            render();
-            updateControls();
-        }
-        if (event.ctrlKey && event.key.toLowerCase() === 'z') {
-            event.preventDefault();
-            undo();
-        }
-    }, { signal });
-    document.addEventListener('keyup', event => { if (event.key === 'Control') setPanReady(false); }, { signal });
-    window.addEventListener('blur', () => { pan = null; setPanReady(false); byId('captureBrushCursor').hidden = true; }, { signal });
-    stageResizeObserver?.disconnect();
-    stageResizeObserver = new ResizeObserver(() => { if (zoomMode === 'fit') fitZoom(); });
-    stageResizeObserver.observe(stage);
-    updateControls();
-    if (isQuickHost()) await capture();
+            if (!alive(view)) { unlisten?.(); return; } view.unlisten = unlisten; view.nativeReady = true;
+        } catch (error) { if (alive(view)) status(view, `截图通道暂不可用，可导入图片：${String(error.message || error)}`, 'warning'); }
+    } else status(view, '可导入、拖入或粘贴图片；屏幕截图需使用桌面版');
+    if (!alive(view)) return;
+    updateControls(view); if (isQuickHost() && view.nativeReady) void capture(view);
 }
+
+function serialize() {
+    const view = currentView; if (!view) return null;
+    return { version: 2, assetId: view.assetId, imageName: view.imageName, document: clone(view.doc), mode: view.mode, color: view.color, size: view.size, fill: view.fill,
+        textEdit: view.textEdit ? { ...clone(view.textEdit), text: node(view, 'captureInlineText').value.slice(0, 2000) } : null, cropDraft: view.cropDraft ? clone(view.cropDraft) : null,
+        ocr: { open: !node(view, 'captureOcrPanel').hidden, text: node(view, 'captureOcrText').value.slice(0, 50000) },
+        exportScale: node(view, 'captureExportScale').value, delay: node(view, 'captureDelay').value, zoom: view.zoom, zoomMode: view.zoomMode };
+}
+
+async function restore(snapshot) {
+    const view = currentView; if (!view || snapshot?.version !== 2) return;
+    cancelCapture(view);
+    let generation = ++view.captureGeneration; view.loading = false;
+    const ownsRestore = () => alive(view) && generation === view.captureGeneration;
+    if (typeof snapshot.color === 'string' && /^#[\da-f]{6}$/i.test(snapshot.color)) { view.color = snapshot.color; node(view, 'captureColor').value = view.color; }
+    view.size = clamp(Number(snapshot.size) || 5, 2, 40); node(view, 'captureSize').value = String(view.size); node(view, 'captureSizeValue').textContent = view.size + ' px';
+    view.fill = snapshot.fill === 'fill' ? 'fill' : 'outline';
+    if (['1', '2'].includes(snapshot.exportScale)) node(view, 'captureExportScale').value = snapshot.exportScale;
+    if (['0', '3', '5', '10'].includes(snapshot.delay)) node(view, 'captureDelay').value = snapshot.delay;
+    if (snapshot.assetId) {
+        try {
+            const file = await readImage(snapshot.assetId); if (!ownsRestore()) return;
+            if (!file) { status(view, '原图缓存已过期，请重新导入图片', 'warning'); updateControls(view); return; }
+            const loading = loadImage(view, file, { assetId: snapshot.assetId, document: snapshot.document });
+            generation = view.captureGeneration;
+            if (!await loading || !ownsRestore()) return;
+        } catch { if (ownsRestore()) { status(view, '无法恢复原图，请重新导入图片', 'warning'); updateControls(view); } return; }
+    }
+    if (!ownsRestore()) return; selectMode(view, MODES.has(snapshot.mode) ? snapshot.mode : 'pen');
+    if (view.image && view.mode === 'crop' && snapshot.cropDraft) { view.cropDraft = sanitizeDocument({ crop: snapshot.cropDraft }, view.image.width, view.image.height).crop; renderOverlay(view); }
+    if (view.image && snapshot.textEdit?.type === 'text') {
+        const draft = sanitizeDocument({ objects: [{ ...snapshot.textEdit, text: 'draft' }] }, view.image.width, view.image.height).objects[0];
+        if (draft) { draft.text = String(snapshot.textEdit.text || '').slice(0, 2000); startInlineText(view, draft, draft); }
+    }
+    if (view.image && snapshot.ocr?.open) { node(view, 'captureOcrText').value = String(snapshot.ocr.text || '').slice(0, 50000); node(view, 'captureOcrPanel').hidden = false; }
+    if (view.image && snapshot.zoomMode === 'manual') changeZoom(view, Number(snapshot.zoom) || 1);
+}
+
+async function flush() { const view = currentView; if (!view) return; commitInlineText(view); await Promise.allSettled([view.imageJob, view.assetJob, view.outputJob]); }
 
 function destroy() {
-    controller?.abort();
-    controller = null;
-    stageResizeObserver?.disconnect();
-    stageResizeObserver = null;
-    unlistenRegionCapture?.();
-    unlistenRegionCapture = null;
-    pendingRegionCapture?.resolve(null);
-    pendingRegionCapture = null;
-    captureGeneration += 1;
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-    objects = [];
-    active = null;
-    selectedIndex = -1;
-    dragState = null;
-    pan = null;
-    editingTextIndex = -1;
-    captureBusy = false;
-    saveBusy = false;
-    releaseBackground();
-    context = null;
-    canvas = null;
+    const view = currentView; if (!view) return;
+    cancelCapture(view); view.captureGeneration += 1; view.ocrGeneration++; view.controller.abort(); view.observer?.disconnect(); view.unlisten?.();
+    cancelAnimationFrame(view.renderFrame); cancelAnimationFrame(view.zoomFrame); releaseBackground(view);
+    view.root.querySelectorAll('canvas').forEach(canvas => { canvas.width = canvas.height = 1; }); currentView = null;
 }
 
-registerTool({
-    id: 'screenshot-annotator',
-    name: '截图与标注',
-    icon: 'ri-screenshot-2-line',
-    colorClass: 'tool-card__icon--orange',
-    category: 'design',
-    status: 'ready',
-    description: '区域截图、实时文字、可编辑标注、多种形状与横向/纵向长图拼接。',
-    template,
-    init,
-    destroy
-});
+registerTool({ id: 'screenshot-annotator', name: '截图与标注', icon: 'ri-screenshot-2-line', colorClass: 'tool-card__icon--orange', category: 'design', status: 'ready',
+    description: '区域与长截图、图片导入、丰富标注、裁剪遮挡、本地文字识别与一键复制。', template, init, destroy, serialize, restore, flush });

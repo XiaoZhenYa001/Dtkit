@@ -3,13 +3,16 @@ use super::resources::ResourceGovernor;
 use super::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_BATCH_FILES: usize = 500;
+const MAX_CACHED_BATCH_EVENTS: usize = 100;
+static BATCH_EVENTS: OnceLock<Mutex<VecDeque<FileBatchEvent>>> = OnceLock::new();
 
 #[cfg(windows)]
 fn is_link_like(metadata: &fs::Metadata) -> bool {
@@ -43,13 +46,62 @@ pub(crate) struct FileBatchRequest {
     #[serde(default = "default_start_index")]
     start_index: u32,
     #[serde(default)]
+    rename_options: RenameOptions,
+    #[serde(default)]
     extensions: Vec<String>,
     #[serde(default)]
     permanent: bool,
+    #[serde(default)]
+    client_id: Option<String>,
 }
 
 fn default_start_index() -> u32 {
     1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RenameCaseMode {
+    Keep,
+    Lower,
+    Upper,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RenameOptions {
+    find: String,
+    replace: String,
+    case_mode: RenameCaseMode,
+    number_padding: u8,
+    number_step: u32,
+}
+
+impl Default for RenameOptions {
+    fn default() -> Self {
+        Self {
+            find: String::new(),
+            replace: String::new(),
+            case_mode: RenameCaseMode::Keep,
+            number_padding: 1,
+            number_step: 1,
+        }
+    }
+}
+
+impl RenameOptions {
+    fn validate(&self) -> Result<(), String> {
+        if self.find.chars().count() > 160 || self.replace.chars().count() > 160 {
+            return Err("查找和替换内容不能超过 160 个字符".into());
+        }
+        if !(1..=8).contains(&self.number_padding) {
+            return Err("序号位数须为 1–8 之间的整数".into());
+        }
+        if !(1..=10000).contains(&self.number_step) {
+            return Err("序号步长须为 1–10000 之间的整数".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,6 +147,7 @@ pub(crate) struct FileBatchStartResult {
     job_id: String,
     file_count: usize,
     total_bytes: u64,
+    preview: FileBatchPreview,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,12 +158,15 @@ struct FileBatchExecutionResult {
     bytes_processed: u64,
     cancelled: bool,
     recovery_batch_id: Option<String>,
+    preview: FileBatchPreview,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FileBatchEvent {
+pub(crate) struct FileBatchEvent {
     job_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
     status: String,
     progress: f32,
     result: Option<FileBatchExecutionResult>,
@@ -130,6 +186,28 @@ struct RecoveryManifest {
     batch_id: String,
     created_at: i64,
     entries: Vec<RecoveryEntry>,
+}
+
+fn write_recovery_manifest(root: &Path, manifest: &RecoveryManifest) -> Result<(), String> {
+    use std::io::Write;
+    let temporary = root.join(format!(".manifest-{}.tmp", uuid::Uuid::new_v4()));
+    let bytes = serde_json::to_vec_pretty(manifest).map_err(|error| error.to_string())?;
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        // This only replaces DtKit's own recovery metadata, never a user file.
+        fs::rename(&temporary, root.join("manifest.json"))
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("写入恢复清单失败: {error}"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,7 +240,13 @@ fn normalize_extensions(values: &[String]) -> Result<HashSet<String>, String> {
         .collect()
 }
 
-fn render_name(pattern: &str, source: &Path, index: u32) -> Result<String, String> {
+fn render_name(
+    pattern: &str,
+    source: &Path,
+    index: u32,
+    options: &RenameOptions,
+) -> Result<String, String> {
+    options.validate()?;
     if pattern.is_empty() || pattern.chars().count() > 160 {
         return Err("重命名模板不能为空且不能超过 160 个字符".to_string());
     }
@@ -170,6 +254,16 @@ fn render_name(pattern: &str, source: &Path, index: u32) -> Result<String, Strin
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let mut stem = if options.find.is_empty() {
+        stem.to_string()
+    } else {
+        stem.replace(&options.find, &options.replace)
+    };
+    stem = match options.case_mode {
+        RenameCaseMode::Keep => stem,
+        RenameCaseMode::Lower => stem.to_lowercase(),
+        RenameCaseMode::Upper => stem.to_uppercase(),
+    };
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
@@ -179,11 +273,28 @@ fn render_name(pattern: &str, source: &Path, index: u32) -> Result<String, Strin
     } else {
         format!(".{extension}")
     };
-    let name = pattern
-        .replace("{name}", stem)
-        .replace("{ext}", extension)
-        .replace("{dotext}", &dot_extension)
-        .replace("{n}", &index.to_string());
+    let number = format!("{:0width$}", index, width = options.number_padding as usize);
+    let replacements = [
+        ("{name}", stem.as_str()),
+        ("{ext}", extension),
+        ("{dotext}", dot_extension.as_str()),
+        ("{n}", number.as_str()),
+    ];
+    let mut remaining = pattern;
+    let mut name = String::with_capacity(pattern.len() + stem.len());
+    while !remaining.is_empty() {
+        if let Some((token, value)) = replacements
+            .iter()
+            .find(|(token, _)| remaining.starts_with(token))
+        {
+            name.push_str(value);
+            remaining = &remaining[token.len()..];
+        } else {
+            let character = remaining.chars().next().unwrap();
+            name.push(character);
+            remaining = &remaining[character.len_utf8()..];
+        }
+    }
     validate_leaf_filename(&name)?;
     Ok(name)
 }
@@ -197,6 +308,15 @@ fn path_key(path: &Path) -> String {
     }
 }
 
+fn is_case_only_rename(source: &Path, target: &Path) -> bool {
+    cfg!(windows)
+        && source.file_name() != target.file_name()
+        && fs::canonicalize(source)
+            .ok()
+            .zip(fs::canonicalize(target).ok())
+            .is_some_and(|(source, target)| source == target)
+}
+
 fn prepare_batch(request: &FileBatchRequest) -> Result<PreparedBatch, String> {
     if request.sources.is_empty() {
         return Err("请至少选择一个文件".to_string());
@@ -206,6 +326,9 @@ fn prepare_batch(request: &FileBatchRequest) -> Result<PreparedBatch, String> {
     }
     if request.operation != BatchOperation::Delete && request.permanent {
         return Err("只有删除操作可以启用彻底删除".to_string());
+    }
+    if request.operation == BatchOperation::Rename {
+        request.rename_options.validate()?;
     }
     let extensions = normalize_extensions(&request.extensions)?;
     let destination = match request.operation {
@@ -265,10 +388,18 @@ fn prepare_batch(request: &FileBatchRequest) -> Result<PreparedBatch, String> {
             skipped += 1;
             continue;
         }
-        let item_index = request.start_index.saturating_add(items.len() as u32);
         let target = match request.operation {
             BatchOperation::Rename => {
-                Some(source.with_file_name(render_name(pattern, &source, item_index)?))
+                let item_index = (items.len() as u32)
+                    .checked_mul(request.rename_options.number_step)
+                    .and_then(|offset| request.start_index.checked_add(offset))
+                    .ok_or_else(|| "文件序号超出有效范围".to_string())?;
+                Some(source.with_file_name(render_name(
+                    pattern,
+                    &source,
+                    item_index,
+                    &request.rename_options,
+                )?))
             }
             BatchOperation::Copy | BatchOperation::Move => Some(
                 destination
@@ -281,9 +412,14 @@ fn prepare_batch(request: &FileBatchRequest) -> Result<PreparedBatch, String> {
         let mut conflict = None;
         if let Some(target) = &target {
             let target_key = path_key(target);
-            if target_key == source_key && request.operation == BatchOperation::Rename {
+            let changes_case =
+                request.operation == BatchOperation::Rename && is_case_only_rename(&source, target);
+            if target_key == source_key
+                && request.operation == BatchOperation::Rename
+                && !changes_case
+            {
                 conflict = Some("新文件名与原文件名相同".to_string());
-            } else if target.exists() {
+            } else if target.exists() && !changes_case {
                 conflict = Some("目标文件已存在，不会覆盖".to_string());
             } else if !target_keys.insert(target_key) {
                 conflict = Some("多个文件会产生相同目标名称".to_string());
@@ -336,8 +472,66 @@ fn public_preview(prepared: &PreparedBatch) -> FileBatchPreview {
     }
 }
 
+#[cfg(windows)]
+fn copy_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Storage::FileSystem::CopyFileW;
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe { CopyFileW(PCWSTR(source.as_ptr()), PCWSTR(target.as_ptr()), BOOL(1)) }
+        .map_err(|error| format!("复制文件失败: {error}"))
+}
+
+#[cfg(not(windows))]
+fn copy_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    let mut input = fs::File::open(source).map_err(|error| format!("读取原文件失败: {error}"))?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|error| format!("创建目标文件失败: {error}"))?;
+    if let Err(error) = std::io::copy(&mut input, &mut output) {
+        drop(output);
+        let _ = fs::remove_file(target);
+        return Err(format!("复制文件失败: {error}"));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn rename_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Omitting REPLACE_EXISTING also protects targets created after the preview.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            MOVE_FILE_FLAGS(0),
+        )
+    }
+    .map_err(|error| format!("移动文件失败: {error}"))
+}
+
+#[cfg(not(windows))]
+fn rename_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
+    // A hard link fails atomically when target exists, unlike std::fs::rename.
+    fs::hard_link(source, target).map_err(|error| error.to_string())?;
+    if let Err(error) = fs::remove_file(source) {
+        let _ = fs::remove_file(target);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 fn move_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
-    if target.exists() {
+    if target.exists() && !is_case_only_rename(source, target) {
         return Err(format!("目标文件已存在: {}", target.display()));
     }
     if let Some(parent) = target.parent() {
@@ -348,10 +542,10 @@ fn move_without_overwrite(source: &Path, target: &Path) -> Result<(), String> {
             return Err(format!("目标文件夹不能是链接: {}", parent.display()));
         }
     }
-    match fs::rename(source, target) {
+    match rename_without_overwrite(source, target) {
         Ok(()) => Ok(()),
         Err(_) => {
-            fs::copy(source, target).map_err(|error| format!("复制文件失败: {error}"))?;
+            copy_without_overwrite(source, target)?;
             if let Err(error) = fs::remove_file(source) {
                 let _ = fs::remove_file(target);
                 return Err(format!("移除原文件失败: {error}"));
@@ -380,8 +574,96 @@ fn verify_item_before_write(item: &PreparedItem) -> Result<(), String> {
     Ok(())
 }
 
+fn remember_event(events: &mut VecDeque<FileBatchEvent>, event: FileBatchEvent) {
+    if let Some(index) = events.iter().position(|cached| {
+        cached.job_id == event.job_id
+            || (event.client_id.is_some() && cached.client_id == event.client_id)
+    }) {
+        events.remove(index);
+    }
+    events.push_back(event);
+    while events.len() > MAX_CACHED_BATCH_EVENTS {
+        let Some(index) = events.iter().position(|cached| {
+            matches!(cached.status.as_str(), "completed" | "cancelled" | "failed")
+        }) else {
+            break;
+        };
+        events.remove(index);
+    }
+}
+
+fn reserve_client_event(
+    events: &mut VecDeque<FileBatchEvent>,
+    raw_client_id: &str,
+) -> Result<FileBatchEvent, String> {
+    if raw_client_id.len() > 80
+        || !raw_client_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err("任务请求标识无效".into());
+    }
+    let client_id = uuid::Uuid::parse_str(raw_client_id)
+        .map_err(|_| "任务请求标识无效".to_string())?
+        .to_string();
+    if events
+        .iter()
+        .any(|event| event.client_id.as_deref() == Some(&client_id) || event.job_id == client_id)
+    {
+        return Err("这次任务已经提交，请等待原任务完成".into());
+    }
+    let event = FileBatchEvent {
+        job_id: client_id.clone(),
+        client_id: Some(client_id),
+        status: "preparing".into(),
+        progress: 0.0,
+        result: None,
+        error: None,
+    };
+    remember_event(events, event.clone());
+    Ok(event)
+}
+
 fn emit_event(app: &AppHandle, event: FileBatchEvent) {
+    if let Ok(mut events) = BATCH_EVENTS.get_or_init(Mutex::default).lock() {
+        remember_event(&mut events, event.clone());
+    }
     let _ = app.emit("file-batch-progress", event);
+}
+
+#[tauri::command]
+pub(crate) fn get_file_batch_status(job_id: String) -> Result<Option<FileBatchEvent>, String> {
+    if job_id.is_empty() || job_id.len() > 80 {
+        return Err("任务编号无效".into());
+    }
+    let events = BATCH_EVENTS
+        .get_or_init(Mutex::default)
+        .lock()
+        .map_err(|_| "暂时无法读取任务状态".to_string())?;
+    let normalized = uuid::Uuid::parse_str(&job_id)
+        .map(|id| id.to_string())
+        .unwrap_or(job_id);
+    Ok(events
+        .iter()
+        .find(|event| event.job_id == normalized || event.client_id.as_deref() == Some(&normalized))
+        .cloned())
+}
+
+fn emit_start_failure(app: &AppHandle, client_id: &Option<String>, error: String) -> String {
+    if let Some(client_id) = client_id {
+        emit_event(
+            app,
+            FileBatchEvent {
+                job_id: client_id.clone(),
+                client_id: Some(client_id.clone()),
+                status: "failed".into(),
+                progress: 0.0,
+                result: None,
+                error: Some(error.clone()),
+            },
+        );
+    }
+    error
 }
 
 fn execute_batch(
@@ -389,6 +671,8 @@ fn execute_batch(
     job_id: String,
     ticket: JobTicket,
     prepared: PreparedBatch,
+    client_id: Option<String>,
+    partial_result: &mut FileBatchExecutionResult,
 ) -> Result<(), String> {
     let manager = app.state::<JobManager>();
     manager.mark_running(&job_id)?;
@@ -396,6 +680,7 @@ fn execute_batch(
         &app,
         FileBatchEvent {
             job_id: job_id.clone(),
+            client_id: client_id.clone(),
             status: "running".into(),
             progress: 0.0,
             result: None,
@@ -437,16 +722,14 @@ fn execute_batch(
             created_at: chrono::Utc::now().timestamp_millis(),
             entries: recovery_entries.clone(),
         };
-        fs::write(
-            root.join("manifest.json"),
-            serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| format!("写入恢复清单失败: {error}"))?;
+        write_recovery_manifest(&root, &manifest)?;
         recovery_batch_id = Some(batch_id);
+        partial_result.recovery_batch_id = recovery_batch_id.clone();
     }
 
     for (index, item) in prepared.items.iter().enumerate() {
         if ticket.is_cancelled() {
+            partial_result.cancelled = true;
             manager.mark_cancelled(&job_id)?;
             let result = FileBatchExecutionResult {
                 processed,
@@ -454,11 +737,13 @@ fn execute_batch(
                 bytes_processed,
                 cancelled: true,
                 recovery_batch_id,
+                preview: partial_result.preview.clone(),
             };
             emit_event(
                 &app,
                 FileBatchEvent {
                     job_id,
+                    client_id,
                     status: "cancelled".into(),
                     progress: processed as f32 / total as f32,
                     result: Some(result),
@@ -474,10 +759,7 @@ fn execute_batch(
             }
             BatchOperation::Copy => {
                 let target = item.target.as_ref().unwrap();
-                if target.exists() {
-                    return Err(format!("目标文件已存在: {}", target.display()));
-                }
-                fs::copy(&item.source, target).map_err(|error| format!("复制文件失败: {error}"))?;
+                copy_without_overwrite(&item.source, target)?;
             }
             BatchOperation::Delete if prepared.permanent => {
                 fs::remove_file(&item.source).map_err(|error| format!("彻底删除失败: {error}"))?
@@ -488,6 +770,8 @@ fn execute_batch(
         }
         processed += 1;
         bytes_processed = bytes_processed.saturating_add(item.size);
+        partial_result.processed = processed;
+        partial_result.bytes_processed = bytes_processed;
         let progress = processed as f32 / total as f32;
         manager.set_progress(&job_id, progress)?;
         if last_emit.elapsed() >= Duration::from_millis(100) || processed == total {
@@ -495,6 +779,7 @@ fn execute_batch(
                 &app,
                 FileBatchEvent {
                     job_id: job_id.clone(),
+                    client_id: client_id.clone(),
                     status: "running".into(),
                     progress,
                     result: None,
@@ -511,11 +796,13 @@ fn execute_batch(
         bytes_processed,
         cancelled: false,
         recovery_batch_id,
+        preview: partial_result.preview.clone(),
     };
     emit_event(
         &app,
         FileBatchEvent {
             job_id,
+            client_id,
             status: "completed".into(),
             progress: 1.0,
             result: Some(result),
@@ -541,27 +828,59 @@ pub(crate) async fn start_file_batch(
     app: AppHandle,
     request: FileBatchRequest,
 ) -> Result<FileBatchStartResult, String> {
+    let client_id = if let Some(raw_client_id) = &request.client_id {
+        let event = {
+            let mut events = BATCH_EVENTS
+                .get_or_init(Mutex::default)
+                .lock()
+                .map_err(|_| "暂时无法创建任务".to_string())?;
+            reserve_client_event(&mut events, raw_client_id)?
+        };
+        let client_id = event.client_id.clone();
+        let _ = app.emit("file-batch-progress", event);
+        client_id
+    } else {
+        None
+    };
     let prepared = tauri::async_runtime::spawn_blocking(move || prepare_batch(&request))
         .await
-        .map_err(|error| format!("预检任务失败: {error}"))??;
+        .map_err(|error| emit_start_failure(&app, &client_id, format!("预检任务失败: {error}")))?
+        .map_err(|error| emit_start_failure(&app, &client_id, error))?;
     if prepared.items.iter().any(|item| item.conflict.is_some()) {
-        return Err("存在文件名冲突，请修改设置后重新预检".to_string());
+        return Err(emit_start_failure(
+            &app,
+            &client_id,
+            "存在文件名冲突，请修改设置后重新预检".to_string(),
+        ));
     }
     let total_bytes = prepared.items.iter().map(|item| item.size).sum();
     let file_count = prepared.items.len();
+    let preview = public_preview(&prepared);
+    let execution_preview = preview.clone();
     let active_limit = app.state::<ResourceGovernor>().effective_worker_limit();
-    let ticket =
-        app.state::<JobManager>()
-            .begin_limited("file-batch", "文件批处理", active_limit)?;
+    let ticket = app
+        .state::<JobManager>()
+        .begin_limited("file-batch", "文件批处理", active_limit)
+        .map_err(|error| emit_start_failure(&app, &client_id, error))?;
     let job_id = ticket.id().to_string();
     let execution_job_id = job_id.clone();
     let execution_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let mut partial_result = FileBatchExecutionResult {
+            processed: 0,
+            total: file_count,
+            bytes_processed: 0,
+            cancelled: false,
+            recovery_batch_id: None,
+            preview: execution_preview,
+        };
         if let Err(error) = execute_batch(
             execution_app.clone(),
             execution_job_id.clone(),
             ticket,
             prepared,
+            client_id.clone(),
+            &mut partial_result,
         ) {
             let _ = execution_app
                 .state::<JobManager>()
@@ -570,9 +889,10 @@ pub(crate) async fn start_file_batch(
                 &execution_app,
                 FileBatchEvent {
                     job_id: execution_job_id,
+                    client_id,
                     status: "failed".into(),
-                    progress: 0.0,
-                    result: None,
+                    progress: partial_result.processed as f32 / file_count as f32,
+                    result: Some(partial_result),
                     error: Some(error),
                 },
             );
@@ -582,6 +902,7 @@ pub(crate) async fn start_file_batch(
         job_id,
         file_count,
         total_bytes,
+        preview,
     })
 }
 
@@ -604,45 +925,62 @@ pub(crate) async fn restore_file_batch(
             .layout()?
             .recovery
             .join(&batch_id);
-        let manifest: RecoveryManifest = serde_json::from_slice(
-            &fs::read(root.join("manifest.json")).map_err(|_| "恢复清单不存在".to_string())?,
-        )
-        .map_err(|error| format!("恢复清单无效: {error}"))?;
-        if manifest.batch_id != batch_id {
-            return Err("恢复清单与批次不匹配".to_string());
-        }
-        let mut restored = 0;
-        let mut skipped = 0;
-        let canonical_root =
-            fs::canonicalize(&root).map_err(|error| format!("恢复目录无效: {error}"))?;
-        for entry in manifest.entries {
-            let stored_metadata = fs::symlink_metadata(&entry.stored).ok();
-            let stored_within_batch = fs::canonicalize(&entry.stored)
-                .ok()
-                .is_some_and(|stored| stored.starts_with(&canonical_root));
-            if stored_metadata
-                .as_ref()
-                .is_none_or(|metadata| !metadata.is_file() || is_link_like(metadata))
-                || !stored_within_batch
-                || entry.original.exists()
-            {
-                skipped += 1;
-                continue;
-            }
-            move_without_overwrite(&entry.stored, &entry.original)?;
-            restored += 1;
-        }
-        if restored > 0 && skipped == 0 {
-            let _ = fs::remove_dir_all(&root);
-        }
-        Ok(FileBatchRestoreResult {
-            batch_id,
-            restored,
-            skipped,
-        })
+        restore_batch_from_root(&root, &batch_id)
     })
     .await
     .map_err(|error| format!("恢复任务失败: {error}"))?
+}
+
+fn restore_batch_from_root(root: &Path, batch_id: &str) -> Result<FileBatchRestoreResult, String> {
+    let mut manifest: RecoveryManifest = serde_json::from_slice(
+        &fs::read(root.join("manifest.json")).map_err(|_| "恢复清单不存在".to_string())?,
+    )
+    .map_err(|error| format!("恢复清单无效: {error}"))?;
+    if manifest.batch_id != batch_id {
+        return Err("恢复清单与批次不匹配".to_string());
+    }
+    let mut restored = 0;
+    let mut pending = Vec::new();
+    let canonical_root =
+        fs::canonicalize(root).map_err(|error| format!("恢复目录无效: {error}"))?;
+    for entry in manifest.entries {
+        let stored_metadata = match fs::symlink_metadata(&entry.stored) {
+            Ok(metadata) => metadata,
+            // Cancelled jobs include entries that never moved; previous restores
+            // can also have completed before a metadata write was interrupted.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                pending.push(entry);
+                continue;
+            }
+        };
+        let stored_within_batch = fs::canonicalize(&entry.stored)
+            .ok()
+            .is_some_and(|stored| stored.starts_with(&canonical_root));
+        if !stored_metadata.is_file()
+            || is_link_like(&stored_metadata)
+            || !stored_within_batch
+            || entry.original.exists()
+        {
+            pending.push(entry);
+            continue;
+        }
+        move_without_overwrite(&entry.stored, &entry.original)?;
+        restored += 1;
+    }
+    let skipped = pending.len();
+    manifest.entries = pending;
+    if manifest.entries.is_empty() {
+        let _ = fs::remove_file(root.join("manifest.json"));
+        let _ = fs::remove_dir(root);
+    } else {
+        write_recovery_manifest(root, &manifest)?;
+    }
+    Ok(FileBatchRestoreResult {
+        batch_id: batch_id.to_string(),
+        restored,
+        skipped,
+    })
 }
 
 #[cfg(test)]
@@ -663,8 +1001,10 @@ mod tests {
             destination: None,
             name_pattern: None,
             start_index: 1,
+            rename_options: RenameOptions::default(),
             extensions: vec![],
             permanent: false,
+            client_id: None,
         }
     }
 
@@ -708,6 +1048,422 @@ mod tests {
         let prepared = prepare_batch(&input).unwrap();
         assert_eq!(prepared.items.len(), 1);
         assert_eq!(prepared.skipped, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_requests_and_partial_options_keep_compatible_defaults() {
+        let input: FileBatchRequest = serde_json::from_value(serde_json::json!({
+            "sources": ["report.txt"], "operation": "rename"
+        }))
+        .unwrap();
+        assert_eq!(input.start_index, 1);
+        assert_eq!(input.rename_options.number_step, 1);
+        assert_eq!(input.rename_options.number_padding, 1);
+        assert_eq!(input.rename_options.case_mode, RenameCaseMode::Keep);
+        assert!(input.client_id.is_none());
+        let input: FileBatchRequest = serde_json::from_value(serde_json::json!({
+            "sources": ["report.txt"], "operation": "rename",
+            "renameOptions": { "numberPadding": 3 }
+        }))
+        .unwrap();
+        assert_eq!(input.rename_options.number_step, 1);
+        assert_eq!(input.rename_options.number_padding, 3);
+    }
+
+    #[test]
+    fn rename_tokens_expand_once_and_keep_unicode_and_extension_case() {
+        let options = RenameOptions::default();
+        assert_eq!(
+            render_name(
+                "{name}_{n}-{ext}{dotext}-{name}",
+                Path::new("你好{n}{ext}.TXT"),
+                7,
+                &options,
+            )
+            .unwrap(),
+            "你好{n}{ext}_7-TXT.TXT-你好{n}{ext}"
+        );
+        assert_eq!(
+            render_name("{name}-{n}{dotext}", Path::new(".gitignore"), 0, &options).unwrap(),
+            ".gitignore-0"
+        );
+    }
+
+    #[test]
+    fn rename_replaces_literal_occurrences_then_applies_unicode_case_and_padding() {
+        let options = RenameOptions {
+            find: "[旧]".into(),
+            replace: "新{n}".into(),
+            case_mode: RenameCaseMode::Upper,
+            number_padding: 4,
+            ..RenameOptions::default()
+        };
+        assert_eq!(
+            render_name(
+                "{name}_{n}{dotext}",
+                Path::new("[旧]Straße[旧].Txt"),
+                12,
+                &options,
+            )
+            .unwrap(),
+            "新{N}STRASSE新{N}_0012.Txt"
+        );
+        let lower = RenameOptions {
+            case_mode: RenameCaseMode::Lower,
+            ..RenameOptions::default()
+        };
+        assert_eq!(
+            render_name("{name}{dotext}", Path::new("ABC中文.TXT"), 1, &lower).unwrap(),
+            "abc中文.TXT"
+        );
+        assert_eq!(
+            render_name("{name}{dotext}", Path::new("ΟΣ ΣΟΣ.TXT"), 1, &lower).unwrap(),
+            "ος σος.TXT"
+        );
+    }
+
+    #[test]
+    fn rename_validates_result_and_number_options() {
+        for pattern in ["", "../{name}", "CON{dotext}", "{name}.", "{name} "] {
+            assert!(
+                render_name(pattern, Path::new("ok.txt"), 1, &RenameOptions::default()).is_err()
+            );
+        }
+        let unsafe_replace = RenameOptions {
+            find: "ok".into(),
+            replace: "../escape".into(),
+            ..RenameOptions::default()
+        };
+        assert!(render_name("{name}{dotext}", Path::new("ok.txt"), 1, &unsafe_replace).is_err());
+        for padding in [0, 9] {
+            assert!(RenameOptions {
+                number_padding: padding,
+                ..RenameOptions::default()
+            }
+            .validate()
+            .is_err());
+        }
+        for step in [0, 10001] {
+            assert!(RenameOptions {
+                number_step: step,
+                ..RenameOptions::default()
+            }
+            .validate()
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn sequence_step_counts_only_unique_filtered_files() {
+        let root = temp_root();
+        let skipped = root.join("image.png");
+        let first = root.join("one.TXT");
+        let second = root.join("two.txt");
+        for source in [&skipped, &first, &second] {
+            fs::write(source, b"fixture").unwrap();
+        }
+        let mut input = request(&skipped, BatchOperation::Rename);
+        input
+            .sources
+            .extend([&first, &first, &second].map(|path| path.to_string_lossy().into_owned()));
+        input.extensions = vec![".TXT".into()];
+        input.start_index = 5;
+        input.name_pattern = Some("item-{n}{dotext}".into());
+        input.rename_options.number_step = 3;
+        input.rename_options.number_padding = 3;
+        let prepared = prepare_batch(&input).unwrap();
+        assert_eq!(prepared.skipped, 2);
+        assert_eq!(prepared.items.len(), 2);
+        assert_eq!(
+            prepared.items[0]
+                .target
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "item-005.TXT"
+        );
+        assert_eq!(
+            prepared.items[1]
+                .target
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "item-008.txt"
+        );
+        assert!(!prepared.items.iter().any(|item| item.conflict.is_some()));
+        input.start_index = u32::MAX;
+        assert!(prepare_batch(&input).unwrap_err().contains("序号"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replacement_collisions_are_reported_without_mutating_sources() {
+        let root = temp_root();
+        let first = root.join("one.txt");
+        let second = root.join("two.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let mut input = request(&first, BatchOperation::Rename);
+        input.sources.push(second.to_string_lossy().into_owned());
+        input.name_pattern = Some("same{dotext}".into());
+        let prepared = prepare_batch(&input).unwrap();
+        assert!(prepared.items[0].conflict.is_none());
+        assert!(prepared.items[1]
+            .conflict
+            .as_ref()
+            .unwrap()
+            .contains("相同目标"));
+        assert!(first.exists() && second.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_and_move_never_overwrite_files_created_after_preview() {
+        let root = temp_root();
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        fs::write(&source, b"source bytes").unwrap();
+        fs::write(&target, b"precious target bytes").unwrap();
+        assert!(copy_without_overwrite(&source, &target).is_err());
+        assert!(rename_without_overwrite(&source, &target).is_err());
+        assert!(move_without_overwrite(&source, &target).is_err());
+        assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+        assert_eq!(fs::read(&target).unwrap(), b"precious target bytes");
+        fs::remove_file(&target).unwrap();
+        copy_without_overwrite(&source, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"source bytes");
+        fs::remove_file(&target).unwrap();
+        move_without_overwrite(&source, &target).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(&target).unwrap(), b"source bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn case_only_rename_is_supported_without_changing_file_contents() {
+        let root = temp_root();
+        let source = root.join("Report.TXT");
+        fs::write(&source, b"case fixture").unwrap();
+        let mut input = request(&source, BatchOperation::Rename);
+        input.name_pattern = Some("{name}{dotext}".into());
+        input.rename_options.case_mode = RenameCaseMode::Lower;
+        let prepared = prepare_batch(&input).unwrap();
+        assert!(prepared.items[0].conflict.is_none());
+        let target = prepared.items[0].target.as_ref().unwrap();
+        move_without_overwrite(&prepared.items[0].source, target).unwrap();
+        assert_eq!(fs::read(target).unwrap(), b"case fixture");
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .file_name(),
+            "report.TXT"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn partial_restore_keeps_only_pending_files_and_can_complete_on_retry() {
+        let fixture = temp_root();
+        let root = fixture.join("recovery");
+        let originals = fixture.join("originals");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&originals).unwrap();
+        let restored = originals.join("first.txt");
+        let conflict = originals.join("second.txt");
+        let unmoved = originals.join("unmoved.txt");
+        fs::write(root.join("first.txt"), b"first recovered bytes").unwrap();
+        fs::write(root.join("second.txt"), b"second recovered bytes").unwrap();
+        fs::write(&conflict, b"new original bytes").unwrap();
+        fs::write(&unmoved, b"never moved bytes").unwrap();
+        let manifest = RecoveryManifest {
+            batch_id: "file-batch-partial-test".into(),
+            created_at: 0,
+            entries: vec![
+                RecoveryEntry {
+                    original: restored.clone(),
+                    stored: root.join("first.txt"),
+                },
+                RecoveryEntry {
+                    original: conflict.clone(),
+                    stored: root.join("second.txt"),
+                },
+                RecoveryEntry {
+                    original: unmoved.clone(),
+                    stored: root.join("unmoved.txt"),
+                },
+            ],
+        };
+        write_recovery_manifest(&root, &manifest).unwrap();
+        let result = restore_batch_from_root(&root, &manifest.batch_id).unwrap();
+        assert_eq!((result.restored, result.skipped), (1, 1));
+        assert_eq!(fs::read(&restored).unwrap(), b"first recovered bytes");
+        assert_eq!(fs::read(&conflict).unwrap(), b"new original bytes");
+        assert_eq!(fs::read(&unmoved).unwrap(), b"never moved bytes");
+        let remaining: RecoveryManifest =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(remaining.entries.len(), 1);
+        assert_eq!(remaining.entries[0].original, conflict);
+        fs::remove_file(&conflict).unwrap();
+        let result = restore_batch_from_root(&root, &manifest.batch_id).unwrap();
+        assert_eq!((result.restored, result.skipped), (1, 0));
+        assert_eq!(fs::read(&conflict).unwrap(), b"second recovered bytes");
+        assert!(!root.exists());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn recovery_rejects_files_outside_the_batch_and_preserves_original_conflicts() {
+        let fixture = temp_root();
+        let root = fixture.join("recovery");
+        fs::create_dir_all(&root).unwrap();
+        let outside = fixture.join("outside.txt");
+        let original = fixture.join("original.txt");
+        fs::write(&outside, b"outside bytes").unwrap();
+        let manifest = RecoveryManifest {
+            batch_id: "file-batch-boundary-test".into(),
+            created_at: 0,
+            entries: vec![RecoveryEntry {
+                original: original.clone(),
+                stored: outside.clone(),
+            }],
+        };
+        write_recovery_manifest(&root, &manifest).unwrap();
+        let result = restore_batch_from_root(&root, &manifest.batch_id).unwrap();
+        assert_eq!((result.restored, result.skipped), (0, 1));
+        assert_eq!(fs::read(outside).unwrap(), b"outside bytes");
+        assert!(!original.exists());
+        assert!(restore_batch_from_root(&root, "file-batch-different").is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn event_cache_retains_active_jobs_and_latest_partial_recovery_results() {
+        let event = |id: String, status: &str| FileBatchEvent {
+            job_id: id,
+            client_id: None,
+            status: status.into(),
+            progress: 0.0,
+            result: None,
+            error: None,
+        };
+        let mut events = VecDeque::new();
+        remember_event(&mut events, event("active".into(), "running"));
+        for index in 0..110 {
+            remember_event(
+                &mut events,
+                event(format!("completed-{index}"), "completed"),
+            );
+        }
+        assert_eq!(events.len(), MAX_CACHED_BATCH_EVENTS);
+        assert!(events.iter().any(|event| event.job_id == "active"));
+        assert!(!events.iter().any(|event| event.job_id == "completed-0"));
+        let mut failed = event("active".into(), "failed");
+        failed.progress = 0.5;
+        failed.result = Some(FileBatchExecutionResult {
+            processed: 2,
+            total: 4,
+            bytes_processed: 12,
+            cancelled: false,
+            recovery_batch_id: Some("file-batch-partial".into()),
+            preview: FileBatchPreview {
+                operation: BatchOperation::Delete,
+                items: vec![],
+                skipped: 0,
+                total_bytes: 12,
+                has_conflicts: false,
+                permanent: false,
+            },
+        });
+        remember_event(&mut events, failed);
+        assert_eq!(events.len(), MAX_CACHED_BATCH_EVENTS);
+        let cached = events
+            .iter()
+            .find(|event| event.job_id == "active")
+            .unwrap();
+        assert_eq!(cached.status, "failed");
+        assert_eq!(cached.result.as_ref().unwrap().processed, 2);
+        assert_eq!(
+            cached.result.as_ref().unwrap().recovery_batch_id.as_deref(),
+            Some("file-batch-partial")
+        );
+    }
+
+    #[test]
+    fn client_reservation_deduplicates_submission_and_tracks_real_job_identity() {
+        let mut events = VecDeque::new();
+        let client_id = uuid::Uuid::new_v4().to_string();
+        let initial = reserve_client_event(&mut events, &client_id.to_uppercase()).unwrap();
+        assert_eq!(initial.client_id.as_deref(), Some(client_id.as_str()));
+        assert_eq!(initial.job_id, client_id);
+        assert_eq!(initial.status, "preparing");
+        assert!(reserve_client_event(&mut events, &client_id).is_err());
+        let real_job_id = uuid::Uuid::new_v4().to_string();
+        remember_event(
+            &mut events,
+            FileBatchEvent {
+                job_id: real_job_id.clone(),
+                client_id: Some(client_id.clone()),
+                status: "running".into(),
+                progress: 0.0,
+                result: None,
+                error: None,
+            },
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].job_id, real_job_id);
+        assert_eq!(events[0].client_id.as_deref(), Some(client_id.as_str()));
+        let mut failed = events[0].clone();
+        failed.status = "failed".into();
+        remember_event(&mut events, failed);
+        assert_eq!(events.len(), 1);
+        assert!(reserve_client_event(&mut events, &client_id).is_err());
+    }
+
+    #[test]
+    fn client_reservation_rejects_invalid_identifiers_without_creating_jobs() {
+        let mut events = VecDeque::new();
+        for identifier in ["", "../escape", "普通文字", "not-a-uuid"] {
+            assert!(reserve_client_event(&mut events, identifier).is_err());
+        }
+        assert!(reserve_client_event(&mut events, &"a".repeat(81)).is_err());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn execution_preview_reflects_sources_that_changed_after_the_initial_check() {
+        let root = temp_root();
+        let first = root.join("first.txt");
+        let second = root.join("second.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let mut input = request(&first, BatchOperation::Rename);
+        input.sources.push(second.to_string_lossy().into_owned());
+        input.name_pattern = Some("renamed-{n}{dotext}".into());
+        let initial = public_preview(&prepare_batch(&input).unwrap());
+        assert_eq!(initial.items.len(), 2);
+        fs::remove_file(&first).unwrap();
+        fs::create_dir(&first).unwrap();
+        let actual = public_preview(&prepare_batch(&input).unwrap());
+        assert_eq!(actual.skipped, 1);
+        assert_eq!(actual.items.len(), 1);
+        assert_eq!(
+            Path::new(&actual.items[0].source).file_name().unwrap(),
+            "second.txt"
+        );
+        assert_eq!(
+            Path::new(actual.items[0].target.as_ref().unwrap())
+                .file_name()
+                .unwrap(),
+            "renamed-1.txt"
+        );
+        assert!(first.is_dir() && second.is_file());
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,18 +1,19 @@
 use super::quick_host::QUICK_HOST_LABEL_PREFIX;
+use super::screenshot_content::{decode_png, png_bytes, MAX_SCREENSHOT_BYTES};
 use super::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use base64::Engine;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
 
-const MAX_SCREENSHOT_BYTES: usize = 100 * 1024 * 1024;
 const REGION_OVERLAY_LABEL_PREFIX: &str = "screen-region-overlay-";
 const LONG_BORDER_LABEL_PREFIX: &str = "screen-long-border-";
 const MAX_LONG_SCREENSHOT_PIXELS: u64 = 16_000_000;
@@ -46,8 +47,13 @@ struct ScreenRegionCaptureSession {
     hidden_quick_hosts: Vec<TemporarilyHiddenQuickHost>,
     capture: Option<ScreenCapture>,
     long_direction: Option<String>,
+    long_mode: String,
+    keep_hidden: bool,
     max_segments: u8,
     source_rect: (i32, i32, u32, u32),
+    cancelled: Arc<AtomicBool>,
+    finishing: bool,
+    border_label: Option<String>,
 }
 
 #[derive(Clone)]
@@ -63,12 +69,209 @@ pub(crate) struct ScreenRegionSource {
     #[serde(flatten)]
     capture: ScreenCapture,
     long_direction: Option<String>,
+    long_mode: String,
 }
 
 #[derive(Default)]
 pub(crate) struct ScreenRegionCaptureManager {
     next_label: AtomicU64,
     sessions: Mutex<HashMap<String, ScreenRegionCaptureSession>>,
+    cancelled_requests: Mutex<HashMap<(String, String, String), Instant>>,
+}
+
+impl ScreenRegionCaptureSession {
+    fn matches(&self, owner: &str, request: &ScreenRequestContext) -> bool {
+        self.owner_label == owner
+            && self.request.instance_id == request.instance_id
+            && self.request.request_id == request.request_id
+    }
+}
+
+fn request_key(owner: &str, request: &ScreenRequestContext) -> Option<(String, String, String)> {
+    Some((
+        owner.into(),
+        request.instance_id.clone()?,
+        request.request_id.clone()?,
+    ))
+}
+
+fn remember_cancellation(
+    requests: &mut HashMap<(String, String, String), Instant>,
+    key: (String, String, String),
+) {
+    requests.retain(|_, time| time.elapsed() < Duration::from_secs(120));
+    if requests.len() >= 256 {
+        if let Some(oldest) = requests
+            .iter()
+            .min_by_key(|(_, time)| **time)
+            .map(|(key, _)| key.clone())
+        {
+            requests.remove(&oldest);
+        }
+    }
+    requests.insert(key, Instant::now());
+}
+
+impl ScreenRegionCaptureManager {
+    pub(crate) fn cancel_window(&self, app: &AppHandle, owner_label: &str) {
+        let labels = self
+            .sessions
+            .lock()
+            .map(|sessions| {
+                sessions
+                    .iter()
+                    .filter(|(_, session)| session.owner_label == owner_label)
+                    .map(|(label, session)| {
+                        session.cancelled.store(true, Ordering::Release);
+                        label.clone()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for label in labels {
+            complete_session(app, label, None, false);
+        }
+    }
+}
+
+// Removal, window visibility and future request registration are serialized on
+// the UI thread. An old completion cannot reveal windows hidden by a new shot.
+fn complete_session(
+    app: &AppHandle,
+    label: String,
+    capture: Option<ScreenCapture>,
+    restore_owner: bool,
+) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let session = handle
+            .state::<ScreenRegionCaptureManager>()
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut sessions| sessions.remove(&label));
+        let Some(session) = session else { return };
+        session.cancelled.store(true, Ordering::Release);
+        if session.keep_hidden {
+            let quick_hosts = handle.state::<super::quick_host::QuickHostManager>();
+            for state in &session.hidden_quick_hosts {
+                if state.was_visible && state.label.starts_with(QUICK_HOST_LABEL_PREFIX) {
+                    quick_hosts.retain_for_manual_restore(&state.label);
+                }
+            }
+        }
+        if let Some(overlay) = handle.get_webview_window(&label) {
+            let _ = overlay.close();
+        }
+        if let Some(border) = session
+            .border_label
+            .as_deref()
+            .and_then(|label| handle.get_webview_window(label))
+        {
+            let _ = border.close();
+        }
+        if restore_owner {
+            restore_region_capture_owner(&handle, session, capture);
+        } else {
+            // Closing to tray must not reopen the owner. Other windows hidden
+            // for this request still regain their original visible state.
+            if !session.keep_hidden {
+                restore_capture_windows(
+                    &handle,
+                    &session.owner_label,
+                    &session.hidden_quick_hosts,
+                    false,
+                );
+            }
+        }
+    });
+}
+
+async fn reserve_and_hide(
+    window: WebviewWindow,
+    label: String,
+    request: ScreenRequestContext,
+    long_direction: Option<String>,
+    long_mode: String,
+    keep_hidden: bool,
+    max_segments: u8,
+) -> Result<bool, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let result = (|| {
+                let manager = target.state::<ScreenRegionCaptureManager>();
+                let mut cancelled = manager
+                    .cancelled_requests
+                    .lock()
+                    .map_err(|_| "截图状态不可用")?;
+                cancelled.retain(|_, time| time.elapsed() < Duration::from_secs(120));
+                if request_key(target.label(), &request)
+                    .is_some_and(|key| cancelled.remove(&key).is_some())
+                {
+                    return Ok(false);
+                }
+                let mut sessions = manager.sessions.lock().map_err(|_| "截图状态不可用")?;
+                if !sessions.is_empty() {
+                    return Err("已有截图任务，请先完成或取消".to_string());
+                }
+                let hidden_quick_hosts = hide_quick_hosts_for_capture(&target, keep_hidden)?;
+                sessions.insert(
+                    label,
+                    ScreenRegionCaptureSession {
+                        owner_label: target.label().into(),
+                        request,
+                        hidden_quick_hosts,
+                        capture: None,
+                        long_direction,
+                        long_mode,
+                        keep_hidden,
+                        max_segments,
+                        source_rect: (0, 0, 0, 0),
+                        cancelled: Arc::new(AtomicBool::new(false)),
+                        finishing: false,
+                        border_label: None,
+                    },
+                );
+                Ok(true)
+            })();
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("调度截图窗口失败：{error}"))?;
+    receiver
+        .await
+        .map_err(|error| format!("截图窗口任务异常结束：{error}"))?
+}
+
+async fn show_session_window(window: WebviewWindow, session_label: String) -> Result<bool, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let result = target
+                .state::<ScreenRegionCaptureManager>()
+                .sessions
+                .lock()
+                .map_err(|_| "截图状态不可用".to_string())
+                .and_then(|sessions| {
+                    if !sessions
+                        .get(&session_label)
+                        .is_some_and(|session| !session.cancelled.load(Ordering::Acquire))
+                    {
+                        return Ok(false);
+                    }
+                    target
+                        .show()
+                        .map_err(|error| format!("显示截图窗口失败：{error}"))?;
+                    Ok(true)
+                });
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("调度截图窗口失败：{error}"))?;
+    receiver
+        .await
+        .map_err(|error| format!("截图窗口任务异常结束：{error}"))?
 }
 
 #[derive(Clone, Serialize)]
@@ -109,19 +312,24 @@ impl ScreenRequestContext {
 
 fn hide_quick_hosts_for_capture(
     owner: &WebviewWindow,
+    hide_main: bool,
 ) -> Result<Vec<TemporarilyHiddenQuickHost>, String> {
     let owner_label = owner.label();
     let mut hidden = Vec::new();
     for (label, candidate) in owner.app_handle().webview_windows() {
-        if label != owner_label && !label.starts_with(QUICK_HOST_LABEL_PREFIX) {
+        if label != owner_label
+            && !label.starts_with(QUICK_HOST_LABEL_PREFIX)
+            && !(hide_main && label == "main")
+        {
             continue;
         }
         let was_visible = candidate.is_visible().unwrap_or(true);
         let was_minimized = candidate.is_minimized().unwrap_or(false);
         if was_visible {
             if let Err(error) = candidate.hide() {
-                if label == owner_label {
-                    return Err(format!("隐藏截图来源窗口失败: {error}"));
+                if label == owner_label || hide_main {
+                    restore_capture_windows(owner.app_handle(), "", &hidden, false);
+                    return Err(format!("隐藏 DtKit 窗口失败: {error}"));
                 }
                 continue;
             }
@@ -139,6 +347,7 @@ fn restore_capture_windows(
     app: &AppHandle,
     owner_label: &str,
     hidden_quick_hosts: &[TemporarilyHiddenQuickHost],
+    restore_owner: bool,
 ) {
     for state in hidden_quick_hosts {
         if state.label == owner_label || !state.was_visible {
@@ -151,7 +360,10 @@ fn restore_capture_windows(
             }
         }
     }
-    if let Some(owner) = app.get_webview_window(owner_label) {
+    if let Some(owner) = app
+        .get_webview_window(owner_label)
+        .filter(|_| restore_owner)
+    {
         let _ = owner.show();
         let _ = owner.unminimize();
         let _ = owner.set_focus();
@@ -171,7 +383,16 @@ fn restore_region_capture_owner(
         };
         let _ = owner.emit("screen-region-captured", result);
     }
-    restore_capture_windows(app, &session.owner_label, &session.hidden_quick_hosts);
+    if !session.keep_hidden {
+        restore_capture_windows(app, &session.owner_label, &session.hidden_quick_hosts, true);
+    }
+}
+
+fn validate_long_mode(mode: Option<&str>) -> Result<&str, String> {
+    match mode.unwrap_or("automatic") {
+        value @ ("manual" | "automatic") => Ok(value),
+        _ => Err("长截图滚动方式无效".into()),
+    }
 }
 
 fn validate_selected_capture(
@@ -188,12 +409,10 @@ fn validate_selected_capture(
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 100_000_000 {
         return Err("截图选区尺寸无效或过大".to_string());
     }
-    let encoded = data_url
-        .strip_prefix("data:image/png;base64,")
-        .ok_or_else(|| "截图选区数据格式无效".to_string())?;
-    let max_encoded_len = MAX_SCREENSHOT_BYTES.saturating_mul(4) / 3 + 8;
-    if encoded.len() > max_encoded_len {
-        return Err("截图选区数据超过 100MB 限制".to_string());
+    let bytes = png_bytes(&data_url)?;
+    let image = decode_png(&bytes)?;
+    if image.dimensions() != (width, height) {
+        return Err("截图选区尺寸与 PNG 图像不一致".into());
     }
     Ok(Some(ScreenCapture {
         data_url,
@@ -649,13 +868,28 @@ fn capture_automatic_long_region(
     direction: String,
     max_segments: u8,
     target: isize,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<ScreenCapture, String> {
     let vertical = direction == "vertical";
     let mut previous = capture_region_image(rect)?;
     let mut output = LongImage::new(&previous);
+    let was_cancelled = || {
+        cancelled.load(Ordering::Acquire)
+            || unsafe {
+                windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                    windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 as i32,
+                ) < 0
+            }
+    };
     for _ in 1..max_segments {
+        if was_cancelled() {
+            return Err("长截图已取消".into());
+        }
         scroll_target_window(target, rect, &direction)?;
         std::thread::sleep(std::time::Duration::from_millis(360));
+        if was_cancelled() {
+            return Err("长截图已取消".into());
+        }
         let next = capture_region_image(rect)?;
         if frames_are_equal(&previous, &next) {
             break;
@@ -678,23 +912,230 @@ fn capture_automatic_long_region(
     output.into_capture(rect.x, rect.y)
 }
 
+// Reserve these keys on the capture worker's own message queue. Enter must not
+// also reach the target application (for example, send a chat message).
+#[cfg(target_os = "windows")]
+struct ManualCaptureKeys;
+
+#[cfg(target_os = "windows")]
+impl ManualCaptureKeys {
+    const FINISH: i32 = 0x4451;
+    const CANCEL: i32 = 0x4452;
+
+    fn register() -> Result<Self, String> {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            RegisterHotKey, MOD_NOREPEAT, VK_ESCAPE, VK_RETURN,
+        };
+        let guard = Self;
+        unsafe {
+            RegisterHotKey(
+                HWND::default(),
+                Self::FINISH,
+                MOD_NOREPEAT,
+                u32::from(VK_RETURN.0),
+            )
+            .map_err(|_| {
+                "无法占用 Enter 完成长截图，请关闭占用该键的程序或使用自动模式".to_string()
+            })?;
+            RegisterHotKey(
+                HWND::default(),
+                Self::CANCEL,
+                MOD_NOREPEAT,
+                u32::from(VK_ESCAPE.0),
+            )
+            .map_err(|_| {
+                "无法占用 Esc 取消长截图，请关闭占用该键的程序或使用自动模式".to_string()
+            })?;
+        }
+        Ok(guard)
+    }
+
+    fn poll(&self) -> (bool, bool) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
+        let mut message = MSG::default();
+        let (mut finish, mut cancel) = (false, false);
+        while unsafe {
+            PeekMessageW(
+                &mut message,
+                HWND::default(),
+                WM_HOTKEY,
+                WM_HOTKEY,
+                PM_REMOVE,
+            )
+        }
+        .as_bool()
+        {
+            finish |= message.wParam.0 == Self::FINISH as usize;
+            cancel |= message.wParam.0 == Self::CANCEL as usize;
+        }
+        (finish, cancel)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for ManualCaptureKeys {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Input::KeyboardAndMouse::UnregisterHotKey;
+        unsafe {
+            let _ = UnregisterHotKey(HWND::default(), Self::FINISH);
+            let _ = UnregisterHotKey(HWND::default(), Self::CANCEL);
+        }
+        // Tokio reuses blocking threads. Do not leave old WM_HOTKEY messages
+        // behind for a later capture running on this same thread.
+        let _ = self.poll();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reliable_forward_overlap(
+    previous: &image::RgbaImage,
+    next: &image::RgbaImage,
+    vertical: bool,
+) -> Option<u32> {
+    let span = if vertical {
+        previous.height()
+    } else {
+        previous.width()
+    };
+    let refine = |a: &image::RgbaImage, b: &image::RgbaImage| {
+        let coarse = find_overlap(a, b, vertical);
+        let radius = (span / 160).max(2);
+        let overlap = (coarse.saturating_sub(radius).max(8)..=(coarse + radius).min(span * 9 / 10))
+            .min_by(|left, right| {
+                sampled_difference(a, b, *left, vertical)
+                    .total_cmp(&sampled_difference(a, b, *right, vertical))
+            })?;
+        Some((overlap, sampled_difference(a, b, overlap, vertical)))
+    };
+    let (overlap, error) = refine(previous, next)?;
+    let (_, reverse_error) = refine(next, previous)?;
+    // Blank, repeated or backwards-moving content cannot establish a reliable
+    // forward seam. Keep the last accepted frame so the user can scroll back.
+    if error > 8.0 || reverse_error < error + 1.0 {
+        return None;
+    }
+    Some(overlap)
+}
+
+#[cfg(target_os = "windows")]
+fn capture_manual_long_region(
+    rect: CaptureRect,
+    direction: String,
+    max_segments: u8,
+    cancelled: Arc<AtomicBool>,
+    progress: impl Fn(&str),
+) -> Result<ScreenCapture, String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RETURN};
+    let keys = ManualCaptureKeys::register()?;
+    let vertical = direction == "vertical";
+    let mut previous = capture_region_image(rect)?;
+    let mut candidate = previous.clone();
+    let mut output = LongImage::new(&previous);
+    let mut changed_at = Instant::now();
+    let started = Instant::now();
+    let mut segments = 1;
+    let mut ready_for_finish = false;
+    let mut finish_requested = None;
+    let mut last_message = String::new();
+    let mut last_progress_at = Instant::now();
+    loop {
+        let (finish, cancel) = keys.poll();
+        if cancelled.load(Ordering::Acquire) || cancel {
+            return Err("长截图已取消".into());
+        }
+        if finish && ready_for_finish && finish_requested.is_none() {
+            finish_requested = Some(Instant::now());
+        }
+        // Selection may have been confirmed by Enter or a held mouse button.
+        // Only accept a fresh Enter after both have been released.
+        if unsafe {
+            GetAsyncKeyState(VK_RETURN.0 as i32) >= 0 && GetAsyncKeyState(VK_LBUTTON.0 as i32) >= 0
+        } {
+            ready_for_finish = true;
+        }
+        let next = capture_region_image(rect)?;
+        if !frames_are_equal(&candidate, &next) {
+            candidate = next;
+            changed_at = Instant::now();
+        }
+        let mut message =
+            format!("手动滚动 · 已采集 {segments}/{max_segments} 段 · Enter 完成 · Esc 取消");
+        if changed_at.elapsed() >= Duration::from_millis(240)
+            && !frames_are_equal(&previous, &candidate)
+        {
+            if let Some(overlap) = reliable_forward_overlap(&previous, &candidate, vertical) {
+                let appended = if vertical {
+                    output.append_vertical(&candidate, overlap)
+                } else {
+                    output.append_horizontal(&candidate, overlap)
+                };
+                if appended.is_err() {
+                    break;
+                }
+                previous = candidate.clone();
+                segments += 1;
+                message = format!(
+                    "手动滚动 · 已采集 {segments}/{max_segments} 段 · Enter 完成 · Esc 取消"
+                );
+                if segments >= max_segments {
+                    break;
+                }
+            } else {
+                message =
+                    "未匹配重叠：向回滚动后减小幅度，再稍停 · Enter 保留已采集部分 · Esc 取消"
+                        .into();
+            }
+        }
+        // The border's listener can initialize after our first emit. Repeat the
+        // current status at most once per second while this capture is active.
+        if message != last_message || last_progress_at.elapsed() >= Duration::from_secs(1) {
+            progress(&message);
+            last_message = message;
+            last_progress_at = Instant::now();
+        }
+        if finish_requested.is_some_and(|time| {
+            time.elapsed() >= Duration::from_millis(300)
+                && (changed_at.elapsed() >= Duration::from_millis(240)
+                    || time.elapsed() >= Duration::from_secs(2))
+        }) || started.elapsed() >= Duration::from_secs(600)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err("长截图已取消".into());
+    }
+    output.into_capture(rect.x, rect.y)
+}
+
 #[cfg(target_os = "windows")]
 async fn run_automatic_long_capture(
     app: &AppHandle,
     rect: CaptureRect,
     direction: String,
+    mode: String,
     max_segments: u8,
     border_label: String,
+    session_label: String,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<ScreenCapture, String> {
-    let target = tauri::async_runtime::spawn_blocking(move || target_window_at(rect))
-        .await
-        .map_err(|error| format!("定位长截图窗口失败: {error}"))??;
+    let target = if mode == "automatic" {
+        tauri::async_runtime::spawn_blocking(move || target_window_at(rect))
+            .await
+            .map_err(|error| format!("定位长截图窗口失败: {error}"))??
+    } else {
+        0
+    };
     let border = WebviewWindowBuilder::new(
         app,
         &border_label,
-        WebviewUrl::App("long-capture-border.html".into()),
+        WebviewUrl::App(format!("long-capture-border.html?mode={mode}").into()),
     )
-    .title("DtKit 自动长截图")
+    .title("DtKit 长截图")
     .decorations(false)
     .resizable(false)
     .always_on_top(true)
@@ -709,13 +1150,30 @@ async fn run_automatic_long_capture(
     let _ = border.set_size(PhysicalSize::new(rect.width + 8, rect.height + 8));
     let _ = border.set_content_protected(true);
     let _ = border.set_ignore_cursor_events(true);
-    let _ = border.show();
+    match show_session_window(border.clone(), session_label).await {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = border.close();
+            return Err("长截图已取消".into());
+        }
+        Err(error) => {
+            let _ = border.close();
+            return Err(error);
+        }
+    }
     wait_for_hidden_window().await;
+    let progress = border.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        capture_automatic_long_region(rect, direction, max_segments, target)
+        if mode == "manual" {
+            capture_manual_long_region(rect, direction, max_segments, cancelled, |message| {
+                let _ = progress.emit("screen-long-progress", message);
+            })
+        } else {
+            capture_automatic_long_region(rect, direction, max_segments, target, cancelled)
+        }
     })
     .await
-    .map_err(|error| format!("自动长截图任务异常结束: {error}"))
+    .map_err(|error| format!("长截图任务异常结束: {error}"))
     .and_then(|capture| capture);
     let _ = border.close();
     result
@@ -726,118 +1184,182 @@ pub(crate) async fn start_screen_region_capture(
     window: WebviewWindow,
     manager: tauri::State<'_, ScreenRegionCaptureManager>,
     long_direction: Option<String>,
+    long_mode: Option<String>,
+    keep_hidden: Option<bool>,
     max_segments: Option<u8>,
+    delay_ms: Option<u64>,
     instance_id: Option<String>,
     request_id: Option<String>,
 ) -> Result<(), String> {
     let request = ScreenRequestContext::new(instance_id, request_id)?;
     let _work = super::launch::keep_native_work(window.app_handle());
-    if let Some(direction) = &long_direction {
-        if direction != "vertical" && direction != "horizontal" {
-            return Err("长截图方向无效".to_string());
-        }
+    if long_direction
+        .as_deref()
+        .is_some_and(|value| value != "vertical" && value != "horizontal")
+    {
+        return Err("长截图方向无效".into());
     }
-    let owner_label = window.label().to_string();
-    let hidden_quick_hosts = hide_quick_hosts_for_capture(&window)?;
-    wait_for_hidden_window().await;
-    let capture = match tauri::async_runtime::spawn_blocking(capture_virtual_screen).await {
-        Ok(Ok(capture)) => capture,
-        Ok(Err(error)) => {
-            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-            return Err(error);
-        }
-        Err(error) => {
-            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-            return Err(format!("截图任务异常结束: {error}"));
-        }
-    };
-
+    let long_mode = validate_long_mode(long_mode.as_deref())?.to_string();
+    let delay = delay_ms.unwrap_or(0);
+    if ![0, 3000, 5000, 10000].contains(&delay) {
+        return Err("延时截图可选 0、3、5 或 10 秒".into());
+    }
     let sequence = manager.next_label.fetch_add(1, Ordering::Relaxed) + 1;
     let label = format!("{REGION_OVERLAY_LABEL_PREFIX}{sequence}");
-    let overlay = match WebviewWindowBuilder::new(
-        window.app_handle(),
-        &label,
-        WebviewUrl::App("screen-region.html".into()),
-    )
-    .title("DtKit 区域截图")
-    .decorations(false)
-    .resizable(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .shadow(false)
-    .focused(true)
-    .visible(false)
-    .build()
-    {
-        Ok(overlay) => overlay,
-        Err(error) => {
-            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-            return Err(format!("创建截图选区覆盖层失败: {error}"));
-        }
-    };
-    if let Err(error) = overlay.set_position(PhysicalPosition::new(capture.x, capture.y)) {
-        let _ = overlay.close();
-        restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-        return Err(format!("定位截图选区覆盖层失败: {error}"));
-    }
-    if let Err(error) = overlay.set_size(PhysicalSize::new(capture.width, capture.height)) {
-        let _ = overlay.close();
-        restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-        return Err(format!("调整截图选区覆盖层失败: {error}"));
-    }
-    let source_rect = (capture.x, capture.y, capture.width, capture.height);
-    let mut sessions = match manager.sessions.lock() {
-        Ok(sessions) => sessions,
-        Err(_) => {
-            let _ = overlay.close();
-            restore_capture_windows(window.app_handle(), &owner_label, &hidden_quick_hosts);
-            return Err("截图选区状态不可用".to_string());
-        }
-    };
-    sessions.insert(
+    if !reserve_and_hide(
+        window.clone(),
         label.clone(),
-        ScreenRegionCaptureSession {
-            owner_label,
-            request,
-            hidden_quick_hosts,
-            capture: Some(capture),
-            long_direction,
-            max_segments: max_segments.unwrap_or(12).clamp(2, 20),
-            source_rect,
-        },
-    );
-    drop(sessions);
-    let app = window.app_handle().clone();
+        request,
+        long_direction,
+        long_mode,
+        keep_hidden.unwrap_or(false),
+        max_segments.unwrap_or(12).clamp(2, 20),
+    )
+    .await?
+    {
+        return Ok(());
+    }
+    let result = start_reserved_capture(&window, &label, delay).await;
+    if result.is_err() {
+        complete_session(window.app_handle(), label, None, true);
+    }
+    result
+}
+
+async fn start_reserved_capture(
+    window: &WebviewWindow,
+    label: &str,
+    delay: u64,
+) -> Result<(), String> {
+    let app = window.app_handle();
+    let manager = app.state::<ScreenRegionCaptureManager>();
+    let is_active = || {
+        manager
+            .sessions
+            .lock()
+            .map(|sessions| {
+                sessions
+                    .get(label)
+                    .is_some_and(|session| !session.cancelled.load(Ordering::Acquire))
+            })
+            .unwrap_or(false)
+    };
+    // The original DtKit windows are already hidden, allowing the user to
+    // open a menu or tooltip during the delay. Check cancellation every 50 ms.
+    let deadline = Instant::now() + Duration::from_millis(delay);
+    while Instant::now() < deadline {
+        if !is_active() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    wait_for_hidden_window().await;
+    if !is_active() {
+        return Ok(());
+    }
+    let capture = tauri::async_runtime::spawn_blocking(capture_virtual_screen)
+        .await
+        .map_err(|error| format!("截图任务异常结束：{error}"))??;
+    let (capture_x, capture_y, capture_width, capture_height) =
+        (capture.x, capture.y, capture.width, capture.height);
+    {
+        let mut sessions = manager.sessions.lock().map_err(|_| "截图状态不可用")?;
+        let Some(session) = sessions.get_mut(label) else {
+            return Ok(());
+        };
+        if session.cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        session.source_rect = (capture_x, capture_y, capture_width, capture_height);
+        session.capture = Some(capture);
+    }
+    let overlay =
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("screen-region.html".into()))
+            .title("DtKit 区域截图")
+            .decorations(false)
+            .resizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .shadow(false)
+            .focused(true)
+            .visible(false)
+            .build()
+            .map_err(|error| format!("创建截图选区覆盖层失败：{error}"))?;
+    if let Err(error) = overlay
+        .set_position(PhysicalPosition::new(capture_x, capture_y))
+        .and_then(|_| overlay.set_size(PhysicalSize::new(capture_width, capture_height)))
+    {
+        let _ = overlay.close();
+        return Err(format!("设置截图选区覆盖层失败：{error}"));
+    }
+    let handle = app.clone();
+    let session_label = label.to_string();
     overlay.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-            let session = app
+        if matches!(
+            event,
+            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+        ) {
+            let should_cancel = handle
                 .state::<ScreenRegionCaptureManager>()
                 .sessions
                 .lock()
                 .ok()
-                .and_then(|mut sessions| sessions.remove(&label));
-            if let Some(session) = session {
-                restore_region_capture_owner(&app, session, None);
+                .and_then(|sessions| {
+                    sessions
+                        .get(&session_label)
+                        .map(|session| !session.finishing)
+                })
+                .unwrap_or(false);
+            if should_cancel {
+                complete_session(&handle, session_label.clone(), None, true);
             }
         }
     });
-    overlay.show().map_err(|error| {
-        let session = manager
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|mut sessions| sessions.remove(overlay.label()));
-        let _ = overlay.close();
-        if let Some(session) = session {
-            restore_capture_windows(
-                window.app_handle(),
-                &session.owner_label,
-                &session.hidden_quick_hosts,
-            );
+    match show_session_window(overlay.clone(), label.to_string()).await {
+        Ok(true) => {
+            let _ = overlay.set_focus();
+            Ok(())
         }
-        format!("显示截图选区覆盖层失败: {error}")
-    })?;
-    let _ = overlay.set_focus();
+        Ok(false) => {
+            let _ = overlay.close();
+            Ok(())
+        }
+        Err(error) => {
+            let _ = overlay.close();
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn cancel_screen_region_capture(
+    window: WebviewWindow,
+    manager: tauri::State<'_, ScreenRegionCaptureManager>,
+    instance_id: Option<String>,
+    request_id: Option<String>,
+) -> Result<(), String> {
+    let request = ScreenRequestContext::new(instance_id, request_id)?;
+    let mut cancelled = manager
+        .cancelled_requests
+        .lock()
+        .map_err(|_| "截图状态不可用")?;
+    if let Some(key) = request_key(window.label(), &request) {
+        remember_cancellation(&mut cancelled, key);
+    }
+    let label = manager
+        .sessions
+        .lock()
+        .map_err(|_| "截图状态不可用")?
+        .iter()
+        .find(|(_, session)| session.matches(window.label(), &request))
+        .map(|(label, session)| {
+            session.cancelled.store(true, Ordering::Release);
+            label.clone()
+        });
+    drop(cancelled);
+    if let Some(label) = label {
+        complete_session(window.app_handle(), label, None, true);
+    }
     Ok(())
 }
 
@@ -860,6 +1382,7 @@ pub(crate) fn get_screen_region_capture(
     Ok(ScreenRegionSource {
         capture,
         long_direction: session.long_direction.clone(),
+        long_mode: session.long_mode.clone(),
     })
 }
 
@@ -873,37 +1396,61 @@ pub(crate) async fn finish_screen_region_capture(
     x: Option<i32>,
     y: Option<i32>,
     long_direction: Option<String>,
+    long_mode: Option<String>,
     max_segments: Option<u8>,
 ) -> Result<(), String> {
     let _work = super::launch::keep_native_work(window.app_handle());
-    let mut session = manager
-        .sessions
-        .lock()
-        .map_err(|_| "截图选区状态不可用".to_string())?
-        .remove(window.label())
-        .ok_or_else(|| "截图选区会话不存在".to_string())?;
+    let label = window.label().to_string();
+    let mut session = {
+        let mut sessions = manager.sessions.lock().map_err(|_| "截图选区状态不可用")?;
+        let Some(session) = sessions.get_mut(&label) else {
+            return Ok(());
+        };
+        if session.finishing || session.cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        session.finishing = true;
+        session.capture = None;
+        session.clone()
+    };
     let app = window.app_handle().clone();
     let _ = window.close();
-
+    if data_url.is_none() && width.is_none() && height.is_none() && x.is_none() && y.is_none() {
+        complete_session(&app, label, None, true);
+        return Ok(());
+    }
     let direction = long_direction.or_else(|| session.long_direction.clone());
+    let mode = match validate_long_mode(long_mode.as_deref().or(Some(&session.long_mode))) {
+        Ok(mode) => mode.to_string(),
+        Err(error) => {
+            complete_session(&app, label, None, true);
+            return Err(error);
+        }
+    };
     if direction
         .as_deref()
         .is_some_and(|value| value != "vertical" && value != "horizontal")
     {
-        restore_region_capture_owner(&app, session, None);
-        return Err("长截图方向无效".to_string());
+        complete_session(&app, label, None, true);
+        return Err("长截图方向无效".into());
     }
     if let Some(value) = max_segments {
         session.max_segments = value.clamp(2, 20);
     }
     let Some(direction) = direction else {
-        return match validate_selected_capture(data_url, width, height) {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            validate_selected_capture(data_url, width, height)
+        })
+        .await
+        .map_err(|error| format!("选区验证任务异常结束：{error}"))
+        .and_then(|capture| capture);
+        return match result {
             Ok(capture) => {
-                restore_region_capture_owner(&app, session, capture);
+                complete_session(&app, label, capture, true);
                 Ok(())
             }
             Err(error) => {
-                restore_region_capture_owner(&app, session, None);
+                complete_session(&app, label, None, true);
                 Err(error)
             }
         };
@@ -911,7 +1458,7 @@ pub(crate) async fn finish_screen_region_capture(
     let (source_x, source_y, source_width, source_height) = session.source_rect;
     let rect = (|| -> Result<CaptureRect, String> {
         if data_url.is_some() {
-            return Err("自动长截图不接受前端图像数据".to_string());
+            return Err("长截图不接受前端图像数据".to_string());
         }
         let rect = CaptureRect {
             x: x.ok_or_else(|| "长截图选区缺少横坐标".to_string())?,
@@ -942,8 +1489,24 @@ pub(crate) async fn finish_screen_region_capture(
                 "{LONG_BORDER_LABEL_PREFIX}{}",
                 manager.next_label.fetch_add(1, Ordering::Relaxed) + 1
             );
-            run_automatic_long_capture(&app, rect, direction, session.max_segments, border_label)
-                .await
+            {
+                let mut sessions = manager.sessions.lock().map_err(|_| "截图状态不可用")?;
+                let Some(active) = sessions.get_mut(&label) else {
+                    return Ok(());
+                };
+                active.border_label = Some(border_label.clone());
+            }
+            run_automatic_long_capture(
+                &app,
+                rect,
+                direction,
+                mode,
+                session.max_segments,
+                border_label,
+                label.clone(),
+                session.cancelled.clone(),
+            )
+            .await
         }
         Err(error) => Err(error),
     };
@@ -952,18 +1515,18 @@ pub(crate) async fn finish_screen_region_capture(
 
     match result {
         Ok(capture) => {
-            restore_region_capture_owner(&app, session, Some(capture));
+            complete_session(&app, label, Some(capture), true);
             Ok(())
         }
         Err(error) => {
-            restore_region_capture_owner(&app, session, None);
+            complete_session(&app, label, None, true);
             Err(error)
         }
     }
 }
 
 #[tauri::command]
-pub(crate) fn save_annotated_screenshot(
+pub(crate) async fn save_annotated_screenshot(
     app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
     filename: String,
@@ -972,33 +1535,128 @@ pub(crate) fn save_annotated_screenshot(
     let _work = super::launch::keep_native_work(&app);
     validate_leaf_filename(&filename)?;
     if !filename.to_ascii_lowercase().ends_with(".png") {
-        return Err("截图只能保存为 PNG 文件".to_string());
+        return Err("截图只能保存为 PNG 文件".into());
     }
-    let encoded = data_url
-        .strip_prefix("data:image/png;base64,")
-        .ok_or_else(|| "截图数据格式无效".to_string())?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|_| "截图数据损坏".to_string())?;
-    if bytes.len() > MAX_SCREENSHOT_BYTES {
-        return Err("截图数据超过 100MB 限制".to_string());
-    }
-    let layout = storage.layout()?;
-    fs::create_dir_all(&layout.screenshots)
-        .map_err(|error| format!("创建截图目录失败: {error}"))?;
-    let path = layout.screenshots.join(filename);
-    if path.exists() {
-        return Err("同名截图已存在".to_string());
-    }
-    fs::write(&path, bytes).map_err(|error| format!("保存截图失败: {error}"))?;
-    Ok(path.to_string_lossy().to_string())
+    let directory = storage.layout()?.screenshots;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        let bytes = png_bytes(&data_url)?;
+        decode_png(&bytes)?;
+        fs::create_dir_all(&directory).map_err(|error| format!("创建截图目录失败：{error}"))?;
+        let path = directory.join(filename);
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    "同名截图已存在".to_string()
+                } else {
+                    format!("创建截图文件失败：{error}")
+                }
+            })?;
+        if let Err(error) = file.write_all(&bytes) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(format!("保存截图失败：{error}"));
+        }
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("保存截图任务异常结束：{error}"))?
 }
 
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "windows")]
     use super::{find_horizontal_overlap, find_vertical_overlap, LongImage};
+    use super::{remember_cancellation, request_key, ScreenRegionCaptureSession};
     use super::{validate_selected_capture, ScreenRegionCaptureResult, ScreenRequestContext};
+
+    #[test]
+    fn long_capture_modes_validate_without_changing_legacy_callers() {
+        assert_eq!(super::validate_long_mode(None).unwrap(), "automatic");
+        assert_eq!(super::validate_long_mode(Some("manual")).unwrap(), "manual");
+        assert!(super::validate_long_mode(Some("unknown")).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn manual_stitch_accepts_forward_content_and_rejects_reverse_blank_or_unrelated_frames() {
+        let frame = |offset| {
+            image::RgbaImage::from_fn(80, 180, |x, y| {
+                let y = y + offset;
+                image::Rgba([
+                    ((x * 13 + y * 17) % 251) as u8,
+                    ((x * 3 + y * 23) % 253) as u8,
+                    ((x * 31 + y * 7) % 255) as u8,
+                    255,
+                ])
+            })
+        };
+        let first = frame(0);
+        let next = frame(60);
+        assert_eq!(
+            super::reliable_forward_overlap(&first, &next, true),
+            Some(120)
+        );
+        assert!(super::reliable_forward_overlap(&next, &first, true).is_none());
+        let blank = image::RgbaImage::from_pixel(80, 180, image::Rgba([255, 255, 255, 255]));
+        assert!(super::reliable_forward_overlap(&first, &blank, true).is_none());
+        assert!(super::reliable_forward_overlap(&blank, &blank, true).is_none());
+        let noise = image::RgbaImage::from_fn(80, 180, |x, y| {
+            image::Rgba([
+                ((x * 11 + y * 39) % 251) as u8,
+                ((x * 3 + y * 37) % 253) as u8,
+                ((x * 19 + y * 9) % 255) as u8,
+                255,
+            ])
+        });
+        assert!(super::reliable_forward_overlap(&first, &noise, true).is_none());
+    }
+
+    #[test]
+    fn cancellation_requires_the_owner_page_and_request_and_has_a_bounded_race_cache() {
+        let request =
+            ScreenRequestContext::new(Some("page-a".into()), Some("capture-1".into())).unwrap();
+        let session = ScreenRegionCaptureSession {
+            owner_label: "main".into(),
+            request: request.clone(),
+            hidden_quick_hosts: Vec::new(),
+            capture: None,
+            long_direction: None,
+            long_mode: "automatic".into(),
+            keep_hidden: false,
+            max_segments: 12,
+            source_rect: (0, 0, 100, 100),
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            finishing: false,
+            border_label: None,
+        };
+        assert!(session.matches("main", &request));
+        assert!(!session.matches("quick-host-1", &request));
+        assert!(!session.matches(
+            "main",
+            &ScreenRequestContext::new(Some("page-b".into()), Some("capture-1".into())).unwrap()
+        ));
+        assert!(!session.matches(
+            "main",
+            &ScreenRequestContext::new(Some("page-a".into()), Some("capture-2".into())).unwrap()
+        ));
+        assert!(!session.matches("main", &ScreenRequestContext::new(None, None).unwrap()));
+        let mut cancelled = std::collections::HashMap::new();
+        for index in 0..300 {
+            remember_cancellation(
+                &mut cancelled,
+                ("main".into(), "page-a".into(), format!("capture-{index}")),
+            );
+        }
+        assert_eq!(cancelled.len(), 256);
+        let key = request_key("main", &request).unwrap();
+        remember_cancellation(&mut cancelled, key.clone());
+        assert!(cancelled.remove(&key).is_some());
+        assert!(cancelled.remove(&key).is_none());
+    }
 
     #[test]
     fn capture_results_retain_the_exact_page_and_request_identity() {
@@ -1048,13 +1706,17 @@ mod tests {
             Some(10)
         )
         .is_err());
-        let capture = validate_selected_capture(
-            Some("data:image/png;base64,AA==".into()),
-            Some(320),
-            Some(180),
-        )
-        .unwrap()
-        .unwrap();
+        let image = image::RgbaImage::from_pixel(320, 180, image::Rgba([10, 20, 30, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png.get_ref())
+        );
+        assert!(validate_selected_capture(Some(data_url.clone()), Some(180), Some(320)).is_err());
+        let capture = validate_selected_capture(Some(data_url), Some(320), Some(180))
+            .unwrap()
+            .unwrap();
         assert_eq!((capture.width, capture.height), (320, 180));
     }
 

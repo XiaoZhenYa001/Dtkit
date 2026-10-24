@@ -151,11 +151,13 @@ export function courseHighlights(state, week, now = new Date()) {
     if (week !== currentWeek(state, dateKey(now))) return [];
     const minute = now.getHours() * 60 + now.getMinutes();
     const segments = todayCourses(state, dateKey(now)).flatMap(course => courseSegments(course).map(segment => ({
-        id: course.id, start: segment.start, from: timeMinutes(state.semester.periods[segment.start - 1].start), until: timeMinutes(state.semester.periods[segment.end - 1].end)
+        id: course.id, start: segment.start, from: timeMinutes(state.semester.periods[segment.start - 1].start), until: timeMinutes(state.semester.periods[segment.end - 1].end),
+        intervals: state.semester.periods.slice(segment.start - 1, segment.end).map(period => ({ from: timeMinutes(period.start), until: timeMinutes(period.end) }))
     }))).sort((a, b) => a.from - b.from);
-    const current = segments.find(segment => segment.from <= minute && minute < segment.until);
-    const next = segments.find(segment => segment.from > minute);
-    return [current && { ...current, label: '正在上课' }, next && { ...next, label: '下一节' }].filter(Boolean);
+    const current = segments.find(segment => segment.intervals.some(period => period.from <= minute && minute < period.until));
+    const next = segments.find(segment => segment !== current && segment.intervals.some(period => period.from > minute));
+    return [current && { id: current.id, start: current.start, from: current.from, until: current.until, label: '正在上课' },
+        next && { id: next.id, start: next.start, from: next.from, until: next.until, label: '下一节' }].filter(Boolean);
 }
 export function nextBoundary(state, now = new Date()) {
     const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();

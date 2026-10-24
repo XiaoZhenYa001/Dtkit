@@ -36,23 +36,29 @@
 
     <nav id="regionToolbar" class="region-toolbar" hidden aria-label="截图操作">
         <div class="region-tool-group region-edit-tools">
-            <button type="button" data-tool="move" class="is-active" aria-pressed="true" title="移动选区"><i class="ri-drag-move-2-line"></i><span>调整</span></button>
-            <button type="button" data-tool="rect" aria-pressed="false" title="矩形"><i class="ri-checkbox-blank-line"></i><span>矩形</span></button>
-            <button type="button" data-tool="ellipse" aria-pressed="false" title="椭圆"><i class="ri-circle-line"></i><span>椭圆</span></button>
-            <button type="button" data-tool="arrow" aria-pressed="false" title="箭头"><i class="ri-arrow-right-up-line"></i><span>箭头</span></button>
-            <button type="button" data-tool="pen" aria-pressed="false" title="画笔"><i class="ri-pencil-line"></i><span>画笔</span></button>
-            <button type="button" data-tool="text" aria-pressed="false" title="文字"><i class="ri-text"></i><span>文字</span></button>
-            <button type="button" data-tool="mosaic" aria-pressed="false" title="马赛克"><i class="ri-layout-grid-line"></i><span>马赛克</span></button>
+            <button type="button" data-tool="move" class="is-active" aria-pressed="true" title="移动选区 (V)"><i class="ri-drag-move-2-line"></i><span>调整</span></button>
+            <button type="button" data-tool="rect" aria-pressed="false" title="矩形 (R) · Shift 正方形"><i class="ri-checkbox-blank-line"></i><span>矩形</span></button>
+            <button type="button" data-tool="ellipse" aria-pressed="false" title="椭圆 (E) · Shift 正圆"><i class="ri-circle-line"></i><span>椭圆</span></button>
+            <button type="button" data-tool="arrow" aria-pressed="false" title="箭头 (A) · Shift 限制角度"><i class="ri-arrow-right-up-line"></i><span>箭头</span></button>
+            <button type="button" data-tool="line" aria-pressed="false" title="直线 (L)"><i class="ri-subtract-line"></i><span>直线</span></button>
+            <button type="button" data-tool="pen" aria-pressed="false" title="画笔 (P)"><i class="ri-pencil-line"></i><span>画笔</span></button>
+            <button type="button" data-tool="highlight" aria-pressed="false" title="荧光标记 (H)"><i class="ri-mark-pen-line"></i><span>荧光</span></button>
+            <button type="button" data-tool="text" aria-pressed="false" title="文字 (T) · Ctrl+Enter 确认"><i class="ri-text"></i><span>文字</span></button>
+            <button type="button" data-tool="step" aria-pressed="false" title="步骤编号 (N)"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 9 2-1v8m-2 0h4"/></svg><span>编号</span></button>
+            <button type="button" data-tool="mosaic" aria-pressed="false" title="马赛克 (M)"><i class="ri-layout-grid-line"></i><span>马赛克</span></button>
+            <button type="button" data-tool="mask" aria-pressed="false" title="实色遮挡 (B)"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span>遮挡</span></button>
         </div>
         <span class="region-divider region-edit-tools" aria-hidden="true"></span>
-        <label class="region-color region-edit-tools" title="标注颜色"><input id="regionColor" type="color" value="#ff5f38"><span></span></label>
+        <label class="region-color region-edit-tools" title="标注颜色"><input id="regionColor" type="color" value="#007aff"><span></span></label>
         <label class="region-size-control region-edit-tools" title="标注粗细"><input id="regionStrokeSize" type="range" min="2" max="24" value="5"><output id="regionStrokeValue">5</output></label>
         <button id="regionUndo" class="region-edit-tools" type="button" title="撤销" disabled><i class="ri-arrow-go-back-line"></i><span>撤销</span></button>
+        <button id="regionRedo" class="region-edit-tools" type="button" title="重做 (Ctrl+Shift+Z)" disabled><i class="ri-arrow-go-forward-line"></i><span>重做</span></button>
         <div id="regionLongControl" class="region-long">
             <button id="regionLong" type="button" aria-haspopup="true" aria-expanded="false" title="将当前选区作为长截图范围"><i class="ri-layout-row-line"></i><span>长截图</span><i class="ri-arrow-down-s-line region-menu-chevron"></i></button>
             <div id="regionLongMenu" class="region-long-menu" hidden>
                 <strong>拼接方向</strong>
                 <span>使用当前选区直接开始</span>
+                <label for="regionLongMode">滚动方式 <select id="regionLongMode"><option value="manual">手动滚轮</option><option value="automatic">自动滚动</option></select></label>
                 <div>
                     <button type="button" data-region-long-direction="vertical"><b aria-hidden="true">↓</b><span>纵向</span></button>
                     <button type="button" data-region-long-direction="horizontal"><b aria-hidden="true">→</b><span>横向</span></button>
@@ -69,7 +75,7 @@
 
     <div id="regionHint" class="region-hint" aria-hidden="true">
         <strong>拖动选择截图范围</strong>
-        <span>松开后可继续调整 · 右键或 Esc 取消</span>
+            <span>松开后继续调整 · Ctrl+A 全屏 · Enter 完成 · Esc 取消</span>
     </div>
     <div id="regionLoading" class="region-loading">正在准备截图选区…</div>
     <script type="module" src="./screen-region/main.js"></script>

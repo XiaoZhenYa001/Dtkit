@@ -11,6 +11,7 @@ pub(crate) mod resources;
 pub(crate) mod region_mirror;
 pub(crate) mod screen_color_picker;
 pub(crate) mod screenshot;
+pub(crate) mod screenshot_content;
 pub(crate) mod shortcuts;
 pub(crate) mod snippets;
 pub(crate) mod software_analysis;

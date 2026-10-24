@@ -7,6 +7,7 @@ import { initPasswordSettings } from './settings/passwords.js';
 import { shortcutManager } from './settings/shortcuts.js';
 import { initToolModuleSettings } from './settings/tool-modules.js';
 import { initUpdateChecker } from './settings/update-checker.js';
+import { initProjectLink } from './settings/project-link.js';
 
 let initializationPromise = null;
 
@@ -22,6 +23,7 @@ export function initSettings() {
             initDownloadPathSettings();
             initMinimizeModeSettings();
             initUpdateChecker();
+            initProjectLink();
             await Promise.all([
                 shortcutManager.init(),
                 initToolModuleSettings(),

@@ -9,8 +9,14 @@ use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::{Manager, WebviewWindow};
+
+#[path = "system_assistant/add.rs"]
+mod add;
+pub(crate) use add::{add_system_startup_item, open_system_startup_folder};
+#[path = "system_assistant/grouping.rs"]
+mod grouping;
 
 #[cfg(target_os = "windows")]
 use winreg::enums::{
@@ -20,7 +26,7 @@ use winreg::enums::{
 #[cfg(target_os = "windows")]
 use winreg::{RegKey, RegValue};
 
-const STORE_VERSION: u8 = 1;
+const STORE_VERSION: u8 = 2;
 const DISABLED_SUFFIX: &str = ".dtkit-disabled";
 const DISABLED_DIRECTORY: &str = "DtKitDisabledStartup";
 const BACKUP_FILE: &str = "startup-disabled.json";
@@ -54,6 +60,14 @@ pub(crate) struct StartupEntry {
     managed: bool,
     requires_elevation: bool,
     disabled_reason: Option<String>,
+    can_forget_backup: bool,
+    backup_conflict: bool,
+    backup_disabled_at: Option<i64>,
+    backup_path: Option<PathBuf>,
+    can_reveal_backup: bool,
+    group_id: String,
+    group_name: String,
+    group_reason: String,
     fingerprint: String,
     can_reveal: bool,
     can_reveal_source: bool,
@@ -92,6 +106,9 @@ pub(crate) struct StartupSnapshot {
     read_only: usize,
     scanned_at: i64,
     warnings: Vec<String>,
+    recovery_state: String,
+    recovery_fingerprint: Option<String>,
+    recovery_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +122,8 @@ struct RawValue {
 struct RegistryBackupStore {
     version: u8,
     #[serde(default)]
+    owner_hash: Option<String>,
+    #[serde(default)]
     registry_items: Vec<RegistryBackup>,
     #[serde(default)]
     folder_items: Vec<FolderBackup>,
@@ -114,6 +133,7 @@ impl Default for RegistryBackupStore {
     fn default() -> Self {
         Self {
             version: STORE_VERSION,
+            owner_hash: current_owner_hash().ok(),
             registry_items: Vec::new(),
             folder_items: Vec::new(),
         }
@@ -235,12 +255,92 @@ fn registry_sources() -> [RegistrySource; 6] {
     ]
 }
 
-fn store_path(layout: &StorageLayout) -> PathBuf {
+fn legacy_store_path(layout: &StorageLayout) -> PathBuf {
     layout.kits.join("SystemAssistant").join(BACKUP_FILE)
 }
 
-fn read_store(layout: &StorageLayout) -> Result<RegistryBackupStore, String> {
-    let path = store_path(layout);
+fn store_path(layout: &StorageLayout) -> PathBuf {
+    layout
+        .kits
+        .join("SystemAssistant")
+        .join("recovery")
+        .join(current_owner_hash().unwrap_or_else(|_| "identity-unavailable".into()))
+        .join(BACKUP_FILE)
+}
+
+fn current_owner_hash() -> Result<String, String> {
+    static OWNER: OnceLock<Result<String, String>> = OnceLock::new();
+    OWNER.get_or_init(platform_owner_hash).clone()
+}
+
+#[cfg(target_os = "windows")]
+fn platform_owner_hash() -> Result<String, String> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetLengthSid, GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let key = root_key(RegistryHive::LocalMachine)
+        .open_subkey_with_flags(
+            r"SOFTWARE\Microsoft\Cryptography",
+            KEY_READ | KEY_WOW64_64KEY,
+        )
+        .map_err(|_| "无法确认本机身份，启动项管理仅供查看".to_string())?;
+    let machine: String = key
+        .get_value("MachineGuid")
+        .map_err(|_| "无法读取本机身份，启动项管理仅供查看".to_string())?;
+    if machine.trim().is_empty() {
+        return Err("本机身份无效".into());
+    }
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+            .map_err(|_| "无法确认当前账户身份".to_string())?;
+        struct Token(HANDLE);
+        impl Drop for Token {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+        let token = Token(token);
+        let mut needed = 0u32;
+        let _ = GetTokenInformation(token.0, TokenUser, None, 0, &mut needed);
+        if needed == 0 || needed > 64 * 1024 {
+            return Err("账户身份信息无效".into());
+        }
+        let mut buffer = vec![
+            0usize;
+            (needed as usize + std::mem::size_of::<usize>() - 1)
+                / std::mem::size_of::<usize>()
+        ];
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+        .map_err(|_| "无法读取账户身份".to_string())?;
+        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
+        let sid = std::slice::from_raw_parts(
+            user.User.Sid.0.cast::<u8>(),
+            GetLengthSid(user.User.Sid) as usize,
+        );
+        Ok(fingerprint(&(machine.trim().to_ascii_lowercase(), sid)))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn platform_owner_hash() -> Result<String, String> {
+    Ok(fingerprint(&(
+        std::env::var("HOSTNAME").unwrap_or_default(),
+        std::env::var("USER").unwrap_or_default(),
+    )))
+}
+
+fn read_store_file(path: &Path) -> Result<RegistryBackupStore, String> {
     let file = match fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -265,14 +365,137 @@ fn read_store(layout: &StorageLayout) -> Result<RegistryBackupStore, String> {
     }
     let store: RegistryBackupStore = serde_json::from_slice(&bytes)
         .map_err(|error| format!("启动项恢复信息损坏，请勿继续启停操作: {error}"))?;
-    if store.version != STORE_VERSION {
+    if !matches!(store.version, 1 | STORE_VERSION) {
         return Err(format!("暂不支持启动项恢复信息版本 {}", store.version));
     }
     validate_store(&store)?;
     Ok(store)
 }
 
+struct RecoveryAccess {
+    store: RegistryBackupStore,
+    state: &'static str,
+    message: Option<String>,
+    fingerprint: Option<String>,
+}
+
+fn recovery_access(layout: &StorageLayout) -> RecoveryAccess {
+    let owner = match current_owner_hash() {
+        Ok(owner) => owner,
+        Err(error) => {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "unavailable",
+                message: Some(error),
+                fingerprint: None,
+            }
+        }
+    };
+    let current = store_path(layout);
+    let legacy = legacy_store_path(layout);
+    let current_exists = match current.try_exists() {
+        Ok(exists) => exists,
+        Err(error) => {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "unavailable",
+                message: Some(format!("无法确认本机恢复文件，未执行更改: {error}")),
+                fingerprint: None,
+            }
+        }
+    };
+    let (path, old_location) = if current_exists {
+        (current, false)
+    } else {
+        (legacy, true)
+    };
+    let store = match read_store_file(&path) {
+        Ok(store) => store,
+        Err(error) => {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "corrupt",
+                message: Some(error),
+                fingerprint: None,
+            }
+        }
+    };
+    let empty = store.registry_items.is_empty() && store.folder_items.is_empty();
+    let (state, message) = match store.owner_hash.as_deref() {
+        Some(hash) if hash == owner => ("ready", None),
+        Some(_) if old_location => {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "ready",
+                message: Some(
+                    "已保留其他电脑或账户的旧恢复记录；当前电脑使用独立的恢复目录".into(),
+                ),
+                fingerprint: None,
+            }
+        }
+        Some(_) => (
+            "foreign",
+            Some("此恢复文件属于其他电脑或账户，未开放更改；原文件已保留".into()),
+        ),
+        None if empty => {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "ready",
+                message: None,
+                fingerprint: None,
+            }
+        }
+        None if !old_location => (
+            "unavailable",
+            Some(format!("本机恢复目录中存在未绑定身份的记录，原始文件已保留。请先妥善保存并移出该文件后重试：{}", path.display())),
+        ),
+        None => (
+            "legacy",
+            Some(
+                "发现尚未绑定电脑的旧恢复记录。请确认记录来自当前电脑后绑定；确认前仅供查看".into(),
+            ),
+        ),
+    };
+    if state == "ready" {
+        if let Err(error) = validate_local_folder_records(&store) {
+            return RecoveryAccess {
+                store: RegistryBackupStore::default(),
+                state: "unavailable",
+                message: Some(error),
+                fingerprint: None,
+            };
+        }
+    }
+    let digest = (state == "legacy").then(|| fingerprint(&store));
+    RecoveryAccess {
+        store,
+        state,
+        message,
+        fingerprint: digest,
+    }
+}
+
+fn read_store(layout: &StorageLayout) -> Result<RegistryBackupStore, String> {
+    let access = recovery_access(layout);
+    if access.state != "ready" {
+        return Err(access
+            .message
+            .unwrap_or_else(|| "恢复信息不可用，未执行更改".into()));
+    }
+    let mut store = access.store;
+    store.version = STORE_VERSION;
+    store.owner_hash = Some(current_owner_hash()?);
+    Ok(store)
+}
+
 fn validate_store(store: &RegistryBackupStore) -> Result<(), String> {
+    if store
+        .owner_hash
+        .as_ref()
+        .is_some_and(|hash| hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()))
+    {
+        return Err("恢复记录的电脑身份无效".into());
+    }
     let mut ids = HashSet::new();
     for item in &store.registry_items {
         if item.id != registry_id(&item.source_id, &item.name)
@@ -299,8 +522,37 @@ fn validate_store(store: &RegistryBackupStore) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_local_folder_records(store: &RegistryBackupStore) -> Result<(), String> {
+    if store
+        .folder_items
+        .iter()
+        .any(|record| !local_folder_record(record))
+    {
+        return Err("恢复记录中的启动文件夹与当前账户不一致，原始记录已保留，未开放更改".into());
+    }
+    Ok(())
+}
+
+fn local_folder_record(record: &FolderBackup) -> bool {
+    startup_directories().iter().any(|(scope, _, directory)| {
+        *scope == record.scope && record.original_path.parent() == Some(directory.as_path())
+    })
+}
+
 fn write_store(layout: &StorageLayout, store: &RegistryBackupStore) -> Result<(), String> {
+    write_store_mode(layout, store, true)
+}
+
+fn write_store_mode(
+    layout: &StorageLayout,
+    store: &RegistryBackupStore,
+    replace_existing: bool,
+) -> Result<(), String> {
+    if store.version != STORE_VERSION || store.owner_hash.as_ref() != Some(&current_owner_hash()?) {
+        return Err("恢复记录尚未绑定当前电脑与账户，未执行更改".into());
+    }
     validate_store(store)?;
+    validate_local_folder_records(store)?;
     let bytes = serde_json::to_vec_pretty(store)
         .map_err(|error| format!("序列化启动项恢复信息失败: {error}"))?;
     if bytes.len() > MAX_STORE_BYTES {
@@ -320,7 +572,12 @@ fn write_store(layout: &StorageLayout, store: &RegistryBackupStore) -> Result<()
             .and_then(|_| file.sync_all())
             .map_err(|error| format!("写入启动项恢复信息失败: {error}"))?;
         drop(file);
-        fs::rename(&temporary, &path).map_err(|error| format!("提交启动项恢复信息失败: {error}"))
+        if replace_existing {
+            fs::rename(&temporary, &path)
+        } else {
+            move_file_without_overwrite(&temporary, &path)
+        }
+        .map_err(|error| format!("提交启动项恢复信息失败: {error}"))
     })();
     if result.is_err() {
         let _ = fs::remove_file(temporary);
@@ -356,6 +613,18 @@ fn fingerprint<T: Serialize>(value: &T) -> String {
     ))
 }
 
+fn registry_fingerprint(
+    source_id: &str,
+    raw: &RawValue,
+    approval: &Option<RawValue>,
+    backup: Option<&RegistryBackup>,
+) -> String {
+    match backup {
+        Some(backup) => fingerprint(&(source_id, raw, approval, backup)),
+        None => fingerprint(&(source_id, raw, approval)),
+    }
+}
+
 fn summarize(mut items: Vec<StartupEntry>, warnings: Vec<String>) -> StartupSnapshot {
     items.sort_by(|left, right| {
         right
@@ -381,6 +650,9 @@ fn summarize(mut items: Vec<StartupEntry>, warnings: Vec<String>) -> StartupSnap
         scanned_at: Utc::now().timestamp_millis(),
         items,
         warnings,
+        recovery_state: "ready".into(),
+        recovery_fingerprint: None,
+        recovery_message: None,
     }
 }
 
@@ -550,6 +822,9 @@ fn scan_registry(
             let (enabled, mut reason) =
                 approval_reason(approval_result.and_then(|value| approval_state(value.as_ref())));
             let previous = store.registry_items.iter().find(|backup| backup.id == id);
+            let backup_conflict = previous.is_some_and(|previous| {
+                previous.raw_bytes != raw.bytes || previous.approval != approval
+            });
             if let Some(previous) = previous {
                 if previous.raw_bytes != raw.bytes
                     || previous.value_kind
@@ -563,6 +838,11 @@ fn scan_registry(
                         "同名启动项已被其他软件更新，保留的旧恢复记录不会覆盖新配置".to_string(),
                     );
                 }
+            }
+            if source.approval_group.is_none() {
+                reason = Some(
+                    "一次性 RunOnce 任务可能用于安装或更新，仅供查看，避免影响其执行顺序".into(),
+                );
             }
             let mut entry = StartupEntry {
                 id,
@@ -586,7 +866,15 @@ fn scan_registry(
                 managed: false,
                 requires_elevation: source.scope == StartupScope::System,
                 disabled_reason: reason,
-                fingerprint: fingerprint(&(source.id, &raw_value(&raw), &approval)),
+                can_forget_backup: previous.is_some(),
+                backup_conflict,
+                backup_disabled_at: previous.map(|backup| backup.disabled_at),
+                backup_path: None,
+                can_reveal_backup: false,
+                group_id: String::new(),
+                group_name: String::new(),
+                group_reason: String::new(),
+                fingerprint: registry_fingerprint(source.id, &raw_value(&raw), &approval, previous),
                 can_reveal: false,
                 can_reveal_source: false,
                 target_exists: false,
@@ -638,13 +926,15 @@ fn scan_registry(
             managed: true,
             requires_elevation: source.scope == StartupScope::System,
             disabled_reason: reason,
-            fingerprint: fingerprint(&(
-                source.id,
-                &backup.raw_bytes,
-                &backup.value_kind,
-                &approval,
-                "disabled",
-            )),
+            can_forget_backup: true,
+            backup_conflict: false,
+            backup_disabled_at: Some(backup.disabled_at),
+            backup_path: None,
+            can_reveal_backup: false,
+            group_id: String::new(),
+            group_name: String::new(),
+            group_reason: String::new(),
+            fingerprint: fingerprint(&(source.id, backup, &approval, "disabled")),
             can_reveal: false,
             can_reveal_source: false,
             target_exists: false,
@@ -745,9 +1035,8 @@ fn valid_folder_backup(record: &FolderBackup) -> bool {
         && record.content_hash.len() == 64
         && record.content_hash.bytes().all(|ch| ch.is_ascii_hexdigit())
         && disabled_folder_path(&record.original_path).as_ref() == Some(&record.stored_path)
-        && startup_directories().iter().any(|(scope, _, directory)| {
-            *scope == record.scope && record.original_path.parent() == Some(directory.as_path())
-        })
+        && record.original_path.is_absolute()
+        && record.stored_path.is_absolute()
 }
 
 fn file_fingerprint(path: &Path) -> Result<String, String> {
@@ -913,8 +1202,7 @@ fn scan_startup_folders(
             }
             if record.is_some() && record.unwrap().stored_path.exists() && !legacy {
                 entry.can_toggle = false;
-                entry.disabled_reason =
-                    Some("已保留的恢复文件与新启动文件同名，请在文件位置确认".to_string());
+                entry.disabled_reason = Some(format!("旧启动文件仍保留在 {}，与新启动文件同名。请先通过“旧文件位置”妥善保存旧文件；未开放覆盖或遗弃操作", record.unwrap().stored_path.display()));
             }
             items.push(entry);
         }
@@ -984,7 +1272,26 @@ fn folder_entry(
         managed: disabled,
         requires_elevation: scope == StartupScope::System,
         disabled_reason: reason,
-        fingerprint: fingerprint(&(original, current, signature.ok(), &approval, disabled)),
+        can_forget_backup: record.is_some_and(|record| !record.stored_path.exists()),
+        backup_conflict: record.is_some_and(|record| {
+            record.stored_path.exists() && original.exists() && current == original
+        }),
+        backup_disabled_at: record.map(|record| record.disabled_at),
+        backup_path: record.map(|record| record.stored_path.clone()),
+        can_reveal_backup: record.is_some_and(|record| {
+            is_local_path(&record.stored_path) && record.stored_path.is_file()
+        }),
+        group_id: String::new(),
+        group_name: String::new(),
+        group_reason: String::new(),
+        fingerprint: fingerprint(&(
+            original,
+            current,
+            signature.ok(),
+            &approval,
+            disabled,
+            record,
+        )),
         can_reveal: false,
         can_reveal_source: false,
         target_exists: false,
@@ -1004,13 +1311,38 @@ fn folder_entry(
 
 #[cfg(target_os = "windows")]
 fn scan(layout: &StorageLayout) -> Result<StartupSnapshot, String> {
-    let store = read_store(layout)?;
+    let access = recovery_access(layout);
+    let mut store = if matches!(access.state, "ready" | "legacy") {
+        access.store.clone()
+    } else {
+        RegistryBackupStore::default()
+    };
+    // Never probe old startup paths belonging to another profile merely to
+    // display a legacy record. Adoption separately checks every original path.
+    if access.state == "legacy" {
+        store.folder_items.retain(local_folder_record);
+    }
     let mut items = Vec::new();
     let mut warnings = Vec::new();
     scan_registry(&store, &mut items, &mut warnings);
     scan_startup_folders(&store, &mut items, &mut warnings);
+    grouping::assign(&mut items, &mut warnings);
+    if let Some(message) = &access.message {
+        warnings.insert(0, message.clone());
+    }
+    if access.state != "ready" {
+        for item in &mut items {
+            item.can_toggle = false;
+            item.can_forget_backup = false;
+            item.disabled_reason = access.message.clone();
+        }
+    }
     warnings.truncate(100);
-    Ok(summarize(items, warnings))
+    let mut snapshot = summarize(items, warnings);
+    snapshot.recovery_state = access.state.into();
+    snapshot.recovery_fingerprint = access.fingerprint;
+    snapshot.recovery_message = access.message;
+    Ok(snapshot)
 }
 #[cfg(not(target_os = "windows"))]
 fn scan(_layout: &StorageLayout) -> Result<StartupSnapshot, String> {
@@ -1314,11 +1646,24 @@ fn disable_registry_using(
     entry: &StartupEntry,
     value: &mut impl StartupValue,
 ) -> Result<(), String> {
+    if matches!(
+        entry.source_id.as_str(),
+        "hkcu-runonce" | "hklm-runonce64" | "hklm-runonce32"
+    ) {
+        return Err("一次性 RunOnce 任务仅供查看，未执行关闭".into());
+    }
+    let mut store = read_store(layout)?;
     let raw = value
         .current()?
         .ok_or_else(|| "启动项已被删除，请刷新后重试".to_string())?;
     let approval = value.approval()?;
-    if fingerprint(&(entry.source_id.as_str(), &raw, &approval)) != entry.fingerprint {
+    if registry_fingerprint(
+        entry.source_id.as_str(),
+        &raw,
+        &approval,
+        store.registry_items.iter().find(|item| item.id == entry.id),
+    ) != entry.fingerprint
+    {
         return Err("启动项已被其他软件修改，请刷新后重试".to_string());
     }
     if !approval_state(approval.as_ref())? {
@@ -1326,7 +1671,6 @@ fn disable_registry_using(
     }
     let (command, value_kind) =
         decode_raw_command(&raw).ok_or_else(|| "只支持管理文本类型的注册表启动项".to_string())?;
-    let mut store = read_store(layout)?;
     if let Some(old) = store.registry_items.iter().find(|item| item.id == entry.id) {
         if old.raw_bytes != raw.bytes || old.value_kind != value_kind {
             return Err("已保留同名项的恢复记录，未覆盖它".to_string());
@@ -1465,6 +1809,7 @@ fn set_folder_enabled(
         Some(signature.clone()),
         &entry.approval,
         !entry.enabled,
+        record.as_ref(),
     )) != entry.fingerprint
     {
         return Err("启动文件已发生变化，请刷新后重试".to_string());
@@ -1574,6 +1919,7 @@ pub(crate) async fn scan_system_startup_items(
         let _guard = manager.migration_guard()?;
         authorize_module(&app, &tool_id)?;
         let layout = app.state::<StorageManager>().layout()?;
+        grouping::refresh_catalog();
         scan(&layout)
     })
     .await
@@ -1634,6 +1980,133 @@ pub(crate) async fn set_system_startup_enabled(
 }
 
 #[tauri::command]
+pub(crate) async fn create_system_startup_recovery(
+    window: WebviewWindow,
+    tool_id: String,
+    expected_store_fingerprint: String,
+) -> Result<StartupSnapshot, String> {
+    authorize(&window, &tool_id)?;
+    let app = window.app_handle().clone();
+    let _work = super::launch::keep_native_work(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = app.state::<SystemAssistantManager>();
+        let _guard = manager.migration_guard()?;
+        authorize_module(&app, &tool_id)?;
+        let layout = app.state::<StorageManager>().layout()?;
+        create_local_recovery(&layout, &expected_store_fingerprint)?;
+        scan(&layout)
+    })
+    .await
+    .map_err(|error| format!("创建本机启动项恢复记录失败: {error}"))?
+}
+
+fn create_local_recovery(layout: &StorageLayout, expected_fingerprint: &str) -> Result<(), String> {
+    let access = recovery_access(layout);
+    if access.state != "legacy" || access.fingerprint.as_deref() != Some(expected_fingerprint) {
+        return Err("旧恢复记录已发生变化，请刷新并重新确认".into());
+    }
+    // Leaving the legacy bytes in place preserves records from another machine
+    // and any files they describe. Only the current identity receives an empty journal.
+    write_store_mode(layout, &RegistryBackupStore::default(), false)
+}
+
+#[tauri::command]
+pub(crate) async fn adopt_system_startup_backups(
+    window: WebviewWindow,
+    tool_id: String,
+    expected_store_fingerprint: String,
+) -> Result<StartupSnapshot, String> {
+    authorize(&window, &tool_id)?;
+    let app = window.app_handle().clone();
+    let _work = super::launch::keep_native_work(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = app.state::<SystemAssistantManager>();
+        let _guard = manager.migration_guard()?;
+        authorize_module(&app, &tool_id)?;
+        let layout = app.state::<StorageManager>().layout()?;
+        adopt_legacy_store(&layout, &expected_store_fingerprint)?;
+        scan(&layout)
+    })
+    .await
+    .map_err(|error| format!("旧启动项恢复记录绑定失败: {error}"))?
+}
+
+fn adopt_legacy_store(layout: &StorageLayout, expected_fingerprint: &str) -> Result<(), String> {
+    let access = recovery_access(layout);
+    if access.state != "legacy" {
+        return Err("当前没有待绑定的旧恢复记录，请刷新后确认".into());
+    }
+    if access.fingerprint.as_deref() != Some(expected_fingerprint) {
+        return Err("旧恢复记录已发生变化，请刷新并重新确认".into());
+    }
+    validate_local_folder_records(&access.store)?;
+    let mut store = access.store;
+    store.version = STORE_VERSION;
+    store.owner_hash = Some(current_owner_hash()?);
+    // The root legacy file remains unchanged. Each machine/account writes only
+    // into its own namespace, so moving portable storage never adopts it silently.
+    write_store_mode(layout, &store, false)
+}
+
+#[tauri::command]
+pub(crate) async fn forget_system_startup_backup(
+    window: WebviewWindow,
+    tool_id: String,
+    id: String,
+    expected_fingerprint: String,
+) -> Result<StartupSnapshot, String> {
+    authorize(&window, &tool_id)?;
+    let app = window.app_handle().clone();
+    let _work = super::launch::keep_native_work(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = app.state::<SystemAssistantManager>();
+        let _guard = manager.migration_guard()?;
+        authorize_module(&app, &tool_id)?;
+        let layout = app.state::<StorageManager>().layout()?;
+        let snapshot = scan(&layout)?;
+        let entry = snapshot.items.iter().find(|entry| entry.id == id)
+            .ok_or_else(|| "启动项或恢复记录已变化，请刷新后重试".to_string())?;
+        if entry.fingerprint != expected_fingerprint {
+            return Err("启动项或恢复记录已被其他软件修改，请刷新后重试".into());
+        }
+        if !entry.can_forget_backup {
+            return Err(if entry.source_kind == StartupSourceKind::StartupFolder && entry.backup_disabled_at.is_some() {
+                "旧启动文件仍保存在停用目录中。请先定位并恢复或自行妥善保存该文件；本工具不会遗弃或删除它".into()
+            } else { "当前恢复记录不能放弃，请刷新并查看恢复状态".into() });
+        }
+        forget_backup(&layout, &id)?;
+        scan(&layout)
+    }).await.map_err(|error| format!("清理启动项恢复记录失败: {error}"))?
+}
+
+fn forget_backup(layout: &StorageLayout, id: &str) -> Result<(), String> {
+    let mut store = read_store(layout)?;
+    remove_backup_record(&mut store, id)?;
+    // This operation changes the journal only, never Run values or source files.
+    write_store(layout, &store)
+}
+
+fn remove_backup_record(store: &mut RegistryBackupStore, id: &str) -> Result<(), String> {
+    let registry_found = store.registry_items.iter().any(|item| item.id == id);
+    let folder = store.folder_items.iter().find(|item| item.id == id);
+    if !registry_found && folder.is_none() {
+        return Err("恢复记录已不存在，请刷新后确认".into());
+    }
+    if let Some(record) = folder {
+        if record
+            .stored_path
+            .try_exists()
+            .map_err(|error| format!("无法确认旧启动文件位置，未清理恢复记录: {error}"))?
+        {
+            return Err("旧启动文件仍在停用目录中，请先恢复或妥善保存该文件；未清理记录".into());
+        }
+    }
+    store.registry_items.retain(|item| item.id != id);
+    store.folder_items.retain(|item| item.id != id);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn reveal_system_startup_item(
     window: WebviewWindow,
     tool_id: String,
@@ -1655,6 +2128,10 @@ pub(crate) async fn reveal_system_startup_item(
         let path = match target.as_deref().unwrap_or("program") {
             "program" => entry.target_path.as_ref().map(PathBuf::from),
             "source" => entry.source_path.clone(),
+            "backup" => entry
+                .backup_path
+                .clone()
+                .filter(|_| entry.can_reveal_backup),
             _ => return Err("文件定位类型无效".to_string()),
         }
         .filter(|path| is_local_path(path) && path.is_file())
@@ -1799,6 +2276,14 @@ mod tests {
             managed: false,
             requires_elevation: false,
             disabled_reason: None,
+            can_forget_backup: false,
+            backup_conflict: false,
+            backup_disabled_at: None,
+            backup_path: None,
+            can_reveal_backup: false,
+            group_id: String::new(),
+            group_name: String::new(),
+            group_reason: String::new(),
             fingerprint: fingerprint(&("hkcu-run", raw, None::<RawValue>)),
             can_reveal: false,
             can_reveal_source: false,
@@ -2004,10 +2489,14 @@ mod tests {
             ..Default::default()
         };
         assert!(disable_registry_using(&layout, &entry, &mut value).is_err());
-        assert_eq!(value.raw, Some(original));
+        assert_eq!(value.raw, Some(original.clone()));
         assert_eq!(read_store(&layout).unwrap().registry_items.len(), 1);
         value.remove_error = false;
-        disable_registry_using(&layout, &entry, &mut value).unwrap();
+        let mut refreshed = entry;
+        let store = read_store(&layout).unwrap();
+        refreshed.fingerprint =
+            registry_fingerprint("hkcu-run", &original, &None, store.registry_items.first());
+        disable_registry_using(&layout, &refreshed, &mut value).unwrap();
         assert!(value.raw.is_none());
         assert_eq!(read_store(&layout).unwrap().registry_items.len(), 1);
         fs::remove_dir_all(root).unwrap();
@@ -2192,6 +2681,204 @@ mod tests {
             assert!(resolve_local_file(value).is_none());
         }
     }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn machine_account_namespace_preserves_foreign_root_journals() {
+        let (layout, root) = temporary_layout();
+        let mut foreign = RegistryBackupStore::default();
+        foreign.owner_hash = Some("f".repeat(64));
+        foreign.registry_items.push(backup());
+        let original = PathBuf::from(r"C:\ForeignProfile\Programs\Startup\Old.lnk");
+        foreign.folder_items.push(FolderBackup {
+            id: folder_id(StartupScope::User, &original),
+            scope: StartupScope::User,
+            stored_path: disabled_folder_path(&original).unwrap(),
+            original_path: original,
+            content_hash: "a".repeat(64),
+            disabled_at: 1,
+            approval: None,
+        });
+        let legacy = legacy_store_path(&layout);
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&foreign).unwrap();
+        fs::write(&legacy, &bytes).unwrap();
+        let access = recovery_access(&layout);
+        assert_eq!(access.state, "ready");
+        assert!(access.store.registry_items.is_empty());
+        assert!(access.message.unwrap().contains("其他电脑"));
+        write_store(&layout, &RegistryBackupStore::default()).unwrap();
+        assert!(store_path(&layout).is_file());
+        assert_ne!(store_path(&layout), legacy);
+        assert_eq!(fs::read(&legacy).unwrap(), bytes);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unbound_legacy_records_require_review_and_preserve_original_bytes() {
+        let (layout, root) = temporary_layout();
+        let mut legacy = RegistryBackupStore::default();
+        legacy.version = 1;
+        legacy.owner_hash = None;
+        legacy.registry_items.push(backup());
+        let path = legacy_store_path(&layout);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let access = recovery_access(&layout);
+        assert_eq!(access.state, "legacy");
+        assert!(read_store(&layout).is_err());
+        assert!(adopt_legacy_store(&layout, "stale-review").is_err());
+        assert!(!store_path(&layout).exists());
+        adopt_legacy_store(&layout, access.fingerprint.as_deref().unwrap()).unwrap();
+        let adopted = read_store(&layout).unwrap();
+        assert_eq!(adopted.version, STORE_VERSION);
+        assert_eq!(adopted.owner_hash, Some(current_owner_hash().unwrap()));
+        assert_eq!(adopted.registry_items.len(), 1);
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn changed_legacy_review_and_wrong_owner_do_not_allow_mutation() {
+        let (layout, root) = temporary_layout();
+        let mut store = RegistryBackupStore::default();
+        store.registry_items.push(backup());
+        store.owner_hash = Some("0".repeat(64));
+        let path = store_path(&layout);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&store).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(recovery_access(&layout).state, "foreign");
+        assert!(read_store(&layout).is_err());
+        assert!(forget_backup(&layout, &store.registry_items[0].id).is_err());
+        assert!(adopt_legacy_store(&layout, "anything").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::write(&path, b"corrupt-json").unwrap();
+        assert_eq!(recovery_access(&layout).state, "corrupt");
+        assert!(read_store(&layout).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"corrupt-json");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn starting_fresh_preserves_unclaimed_records_and_never_overwrites_namespace() {
+        let (layout, root) = temporary_layout();
+        let mut legacy = RegistryBackupStore::default();
+        legacy.version = 1;
+        legacy.owner_hash = None;
+        legacy.registry_items.push(backup());
+        let path = legacy_store_path(&layout);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let access = recovery_access(&layout);
+        assert!(create_local_recovery(&layout, "outdated-review").is_err());
+        create_local_recovery(&layout, access.fingerprint.as_deref().unwrap()).unwrap();
+        assert!(read_store(&layout).unwrap().registry_items.is_empty());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        let local_bytes = fs::read(store_path(&layout)).unwrap();
+        assert!(write_store_mode(&layout, &legacy, false).is_err());
+        assert!(create_local_recovery(&layout, access.fingerprint.as_deref().unwrap()).is_err());
+        assert_eq!(fs::read(store_path(&layout)).unwrap(), local_bytes);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn forgetting_registry_record_only_updates_its_own_journal_entry() {
+        let (layout, root) = temporary_layout();
+        let mut store = RegistryBackupStore::default();
+        let first = backup();
+        let mut second = backup();
+        second.name = "Keep this recovery".into();
+        second.id = registry_id(&second.source_id, &second.name);
+        store.registry_items = vec![first.clone(), second.clone()];
+        write_store(&layout, &store).unwrap();
+        forget_backup(&layout, &first.id).unwrap();
+        let remaining = read_store(&layout).unwrap();
+        assert_eq!(remaining.registry_items.len(), 1);
+        assert_eq!(remaining.registry_items[0].id, second.id);
+        assert!(forget_backup(&layout, "unknown-id").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn forgetting_folder_record_cannot_orphan_its_retained_file() {
+        let (_, root) = temporary_layout();
+        let original = root.join("Programs").join("Startup").join("old.lnk");
+        let stored = disabled_folder_path(&original).unwrap();
+        fs::create_dir_all(stored.parent().unwrap()).unwrap();
+        fs::write(&stored, b"do not lose this shortcut").unwrap();
+        let id = folder_id(StartupScope::User, &original);
+        let mut store = RegistryBackupStore::default();
+        store.folder_items.push(FolderBackup {
+            id: id.clone(),
+            scope: StartupScope::User,
+            original_path: original,
+            stored_path: stored.clone(),
+            content_hash: "a".repeat(64),
+            disabled_at: 1,
+            approval: None,
+        });
+        assert!(remove_backup_record(&mut store, &id).is_err());
+        assert_eq!(store.folder_items.len(), 1);
+        assert_eq!(fs::read(&stored).unwrap(), b"do not lose this shortcut");
+        fs::remove_file(&stored).unwrap();
+        remove_backup_record(&mut store, &id).unwrap();
+        assert!(store.folder_items.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_record_changes_invalidate_the_reviewed_live_fingerprint() {
+        let raw = RawValue {
+            kind: 1,
+            bytes: text_bytes(r"C:\Example.exe"),
+        };
+        let mut record = backup();
+        let before = registry_fingerprint("hkcu-run", &raw, &None, Some(&record));
+        record.disabled_at += 1;
+        assert_ne!(
+            before,
+            registry_fingerprint("hkcu-run", &raw, &None, Some(&record))
+        );
+        assert_ne!(before, registry_fingerprint("hkcu-run", &raw, &None, None));
+    }
+
+    #[test]
+    fn runonce_is_not_newly_disabled_but_a_legacy_backup_remains_restorable() {
+        let (layout, root) = temporary_layout();
+        let raw = RawValue {
+            kind: 2,
+            bytes: text_bytes(r"%LOCALAPPDATA%\Setup.exe --complete"),
+        };
+        let mut entry = transaction_entry(&raw);
+        entry.source_id = "hkcu-runonce".into();
+        entry.id = registry_id(&entry.source_id, &entry.name);
+        let mut value = FakeStartupValue {
+            raw: Some(raw.clone()),
+            ..Default::default()
+        };
+        assert!(disable_registry_using(&layout, &entry, &mut value)
+            .unwrap_err()
+            .contains("一次性"));
+        assert_eq!(value.writes, 0);
+        assert!(!store_path(&layout).exists());
+        let mut store = RegistryBackupStore::default();
+        let mut record = backup();
+        record.id = entry.id.clone();
+        record.source_id = entry.source_id.clone();
+        record.raw_bytes = raw.bytes.clone();
+        record.command = decode_text(&raw.bytes).unwrap();
+        record.value_kind = RegistryValueKind::ExpandString;
+        store.registry_items.push(record);
+        write_store(&layout, &store).unwrap();
+        value.raw = None;
+        enable_registry_using(&layout, &entry, &mut value).unwrap();
+        assert_eq!(value.raw, Some(raw));
+        assert!(read_store(&layout).unwrap().registry_items.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     #[ignore = "read-only native startup registry diagnostic"]

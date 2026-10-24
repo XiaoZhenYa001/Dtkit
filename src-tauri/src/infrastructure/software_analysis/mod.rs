@@ -13,12 +13,34 @@ use std::sync::atomic::Ordering;
 use tauri::{Emitter, Manager, WebviewWindow};
 
 const TOOL_ID: &str = "software-analysis";
+const REGISTRATION_SIZE_NOTE: &str = "登记大小由软件安装程序提供；扫描大小按需计算，二者可能不同";
 
 fn enumerate_platform() -> Result<SoftwareSnapshot, String> {
     #[cfg(target_os = "windows")]
     return native::enumerate();
     #[cfg(not(target_os = "windows"))]
     Err("软件分析目前仅支持 Windows".into())
+}
+
+// Shared read-only registration metadata. This does not start space analysis or
+// call the software tool's IPC; the requesting tool supplies its own authorization.
+pub(super) fn startup_ownership_catalog() -> Result<Vec<Software>, String> {
+    ownership_from_snapshot(enumerate_platform()?)
+}
+
+fn ownership_from_snapshot(snapshot: SoftwareSnapshot) -> Result<Vec<Software>, String> {
+    if let Some(warning) = snapshot
+        .warnings
+        .iter()
+        .find(|warning| warning.as_str() != REGISTRATION_SIZE_NOTE)
+    {
+        return Err(format!("软件登记可能不完整，未用于归属判断：{warning}"));
+    }
+    Ok(snapshot
+        .items
+        .into_iter()
+        .filter(|item| item.can_analyze && item.reason.is_none() && item.install_location.is_some())
+        .collect())
 }
 
 #[derive(Clone, Debug, Serialize)]

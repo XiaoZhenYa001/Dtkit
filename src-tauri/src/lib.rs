@@ -47,7 +47,7 @@ use infrastructure::clipboard_puzzle::{
     puzzle_edit, puzzle_get, puzzle_import_content, puzzle_import_image, puzzle_open, puzzle_open_url, puzzle_output, puzzle_overview,
     puzzle_remove, puzzle_retention, puzzle_take_clipboard, PuzzleManager,
 };
-use infrastructure::file_batch::{preview_file_batch, restore_file_batch, start_file_batch};
+use infrastructure::file_batch::{get_file_batch_status, preview_file_batch, restore_file_batch, start_file_batch};
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::launch::{create_tool_launcher, LaunchRuntime, LaunchTarget};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
@@ -70,13 +70,14 @@ use infrastructure::resources::{
     set_resource_policy, MinimizeMode, ResourceGovernor,
 };
 use infrastructure::screen_color_picker::{
-    finish_screen_color_pick, get_screen_color_pick_capture, start_screen_color_pick,
-    ScreenColorPickerManager,
+    cancel_screen_color_pick, finish_screen_color_pick, get_screen_color_pick_capture,
+    start_screen_color_pick, ScreenColorPickerManager,
 };
 use infrastructure::screenshot::{
-    finish_screen_region_capture, get_screen_region_capture, save_annotated_screenshot,
-    start_screen_region_capture, ScreenRegionCaptureManager,
+    cancel_screen_region_capture, finish_screen_region_capture, get_screen_region_capture,
+    save_annotated_screenshot, start_screen_region_capture, ScreenRegionCaptureManager,
 };
+use infrastructure::screenshot_content::{copy_screenshot_to_clipboard, recognize_screenshot_text};
 use infrastructure::shortcuts::{
     get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
 };
@@ -86,15 +87,17 @@ use infrastructure::software_analysis::{
     release_software_analysis, reveal_software_location, SoftwareAnalysisManager,
 };
 use infrastructure::sticky_notes::{
-    close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note, list_sticky_notes,
-    open_sticky_note, restore_sticky_note, save_sticky_note, trash_sticky_note, StickyNoteManager,
+    close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note, import_sticky_notes,
+    list_sticky_notes, open_sticky_note, restore_sticky_note, save_sticky_note,
+    set_sticky_note_collapsed, set_sticky_notes_visible, trash_sticky_note, StickyNoteManager,
 };
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
 };
 use infrastructure::timetable::{close_timetable_widget, open_timetable_widget, pin_timetable_widget};
 use infrastructure::system_assistant::{
-    open_system_startup_settings, reveal_system_startup_item, scan_system_startup_items,
+    add_system_startup_item, adopt_system_startup_backups, create_system_startup_recovery, forget_system_startup_backup,
+    open_system_startup_folder, open_system_startup_settings, reveal_system_startup_item, scan_system_startup_items,
     set_system_startup_enabled, SystemAssistantManager,
 };
 use infrastructure::tool_modules::{
@@ -110,7 +113,7 @@ use infrastructure::whiteboard::{
     release_whiteboard_edit, save_whiteboard, save_whiteboard_draft, take_over_whiteboard_edit,
     WhiteboardEditManager,
 };
-use system_actions::{lock_screen, open_release_page, run_program, schedule_shutdown};
+use system_actions::{lock_screen, open_project_page, open_release_page, run_program, schedule_shutdown};
 
 static APP_SUSPENDED: AtomicBool = AtomicBool::new(false);
 static DEEP_SLEEP_CLOSING: AtomicBool = AtomicBool::new(false);
@@ -960,6 +963,17 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                window
+                    .state::<ScreenColorPickerManager>()
+                    .cancel_window(window.app_handle(), window.label());
+                window
+                    .state::<ScreenRegionCaptureManager>()
+                    .cancel_window(window.app_handle(), window.label());
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<SoftwareAnalysisManager>().cancel_window(window.label());
                 window.state::<PuzzleManager>().release_window(window.label());
@@ -1062,10 +1076,13 @@ pub fn run() {
             sleep_main_window,
             list_sticky_notes,
             create_sticky_note,
+            import_sticky_notes,
             get_sticky_note,
             save_sticky_note,
             open_sticky_note,
             close_sticky_note,
+            set_sticky_note_collapsed,
+            set_sticky_notes_visible,
             trash_sticky_note,
             restore_sticky_note,
             delete_sticky_note,
@@ -1079,6 +1096,7 @@ pub fn run() {
             write_qr_code,
             run_program,
             open_release_page,
+            open_project_page,
             schedule_shutdown,
             lock_screen,
             calculate_text_hash,
@@ -1103,6 +1121,7 @@ pub fn run() {
             restore_latest_cleanup,
             preview_file_batch,
             start_file_batch,
+            get_file_batch_status,
             restore_file_batch,
             list_transfer_items,
             import_transfer_files,
@@ -1177,16 +1196,25 @@ pub fn run() {
             reveal_software_location,
             set_context_menu_enabled,
             set_system_startup_enabled,
+            add_system_startup_item,
+            forget_system_startup_backup,
+            adopt_system_startup_backups,
+            create_system_startup_recovery,
+            open_system_startup_folder,
             reveal_system_startup_item,
             open_system_startup_settings,
             search_snippets,
             save_snippet,
             delete_snippet,
             start_screen_region_capture,
+            cancel_screen_region_capture,
             get_screen_region_capture,
             finish_screen_region_capture,
             save_annotated_screenshot,
+            copy_screenshot_to_clipboard,
+            recognize_screenshot_text,
             start_screen_color_pick,
+            cancel_screen_color_pick,
             get_screen_color_pick_capture,
             finish_screen_color_pick,
             get_tool_module_settings,

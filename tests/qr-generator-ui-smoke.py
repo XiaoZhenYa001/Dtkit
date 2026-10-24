@@ -234,6 +234,8 @@ def exercise_contents(page, frame):
 
 
 def exercise_native_export(page, frame):
+    if frame.locator('#qrDefaultDirectory').is_enabled():
+        frame.locator('#qrDefaultDirectory').click()
     expect(frame.locator('#qrSaveDirectory')).to_have_text('默认下载目录')
     set_data(frame, 'native export payload A')
     png = native_export(page, frame, 'png')
@@ -554,6 +556,72 @@ def test_late_listener(context, base_url, errors):
     page.close()
 
 
+def test_directory_preference(context, base_url, errors):
+    page = context.new_page(); record_errors(page, errors)
+    page.goto(base_url+'/quick.html?kind=tool&toolId=qr-generator', wait_until='networkidle')
+    wait_ready(page)
+    page.evaluate('value => window.__qrFixture.dialogValue=value', CUSTOM_DIRECTORY)
+    page.locator('#qrChooseDirectory').click()
+    expect(page.locator('#qrSaveDirectory')).to_have_text(CUSTOM_DIRECTORY)
+    page.close()
+
+    # A newly opened standalone view has no page draft to restore.
+    reopened = context.new_page(); record_errors(reopened, errors)
+    reopened.goto(base_url+'/quick.html?kind=tool&toolId=qr-generator', wait_until='networkidle')
+    wait_ready(reopened)
+    expect(reopened.locator('#qrSaveDirectory')).to_have_text(CUSTOM_DIRECTORY)
+    assert_export(native_export(reopened, reopened, 'svg'), 'svg', CUSTOM_DIRECTORY)
+
+    embedded = context.new_page(); record_errors(embedded, errors)
+    embedded.goto(base_url, wait_until='networkidle')
+    if embedded.locator('[data-tool-id="qr-generator"] .tool-card__title').is_visible():
+        embedded.locator('[data-tool-id="qr-generator"] .tool-card__title').click()
+    frame = multi.active_tool_frame(embedded, '#qrDataInput')
+    expect(frame.locator('#qrSaveDirectory')).to_have_text(CUSTOM_DIRECTORY)
+    snapshot = frame.evaluate('window.__DTKIT_TOOL_PAGE__.snapshot()')
+    next_directory = r'D:\Fixtures\新保存目录'
+    reopened.evaluate('value => window.__qrFixture.dialogValue=value', next_directory)
+    reopened.locator('#qrChooseDirectory').click()
+    expect(reopened.locator('#qrSaveDirectory')).to_have_text(next_directory)
+    expect(frame.locator('#qrSaveDirectory')).to_have_text(next_directory)
+    frame.evaluate('snapshot => window.__DTKIT_TOOL_PAGE__.restore(snapshot)', snapshot)
+    expect(frame.locator('#qrSaveDirectory')).to_have_text(next_directory)
+    assert_export(native_export(embedded, frame, 'svg'), 'svg', next_directory)
+
+    # Cancelling leaves both the stored preference and all active views intact.
+    reopened.evaluate('window.__qrFixture.dialogValue=null')
+    reopened.locator('#qrChooseDirectory').click()
+    expect(reopened.locator('#qrChooseDirectory')).to_be_enabled()
+    expect(reopened.locator('#qrSaveDirectory')).to_have_text(next_directory)
+    reopened.locator('#qrDefaultDirectory').click()
+    expect(frame.locator('#qrSaveDirectory')).to_have_text('默认下载目录')
+    frame.evaluate('snapshot => window.__DTKIT_TOOL_PAGE__.restore(snapshot)', snapshot)
+    expect(frame.locator('#qrSaveDirectory')).to_have_text('默认下载目录')
+
+    # Failed persistence is explicit, while the current session still exports
+    # to the user's chosen path rather than silently reading the old preference.
+    reopened.evaluate("""() => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key,value) {
+        if (key === 'dtkit_qr_save_directory') throw new DOMException('Quota exceeded','QuotaExceededError');
+        return original.call(this,key,value);
+      };
+    }""")
+    reopened.evaluate('value => window.__qrFixture.dialogValue=value', CUSTOM_DIRECTORY)
+    reopened.locator('#qrChooseDirectory').click()
+    expect(reopened.locator('#qrSaveDirectory')).to_have_text(CUSTOM_DIRECTORY)
+    expect(reopened.locator('#qrStatus')).to_contain_text('无法记住设置')
+    expect(reopened.locator('#qrStatus')).to_have_attribute('data-type', 'error')
+    assert_export(native_export(reopened, reopened, 'svg'), 'svg', CUSTOM_DIRECTORY)
+    reopened.reload(wait_until='networkidle')
+    wait_ready(reopened)
+    expect(reopened.locator('#qrSaveDirectory')).to_have_text('默认下载目录')
+    frame.evaluate('snapshot => window.__DTKIT_TOOL_PAGE__.restore(snapshot)', snapshot)
+    expect(frame.locator('#qrSaveDirectory')).to_have_text('默认下载目录')
+    embedded.close()
+    reopened.close()
+
+
 def run(base_url):
     errors = []
     with sync_playwright() as playwright:
@@ -578,6 +646,8 @@ def run(base_url):
             print('QR UI: LAN sharing contracts and disposed-view guards', flush=True)
             test_lan_lifecycle(context, base_url, errors)
             test_late_listener(context, base_url, errors)
+            print('QR UI: save directory survives closing and reopening the tool', flush=True)
+            test_directory_preference(context, base_url, errors)
             assert not errors, errors
         except Exception:
             for index, page in enumerate(context.pages):

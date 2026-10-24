@@ -5,6 +5,7 @@ Build with tests/native-webview.config.json. Never targets the installed app.
 import importlib.util
 import base64
 import json
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -143,7 +144,12 @@ def check_drawing(page, context, process):
     for mode,start,end in [('rect',(210,30),(300,85)),('arrow',(300,100),(440,160)),('pen',(270,200),(400,225))]:
         page.locator(f'[data-tool={mode}]').click()
         page.mouse.move(stage['x']+start[0],stage['y']+start[1]);page.mouse.down()
-        page.mouse.move(stage['x']+end[0],stage['y']+end[1],steps=12);page.mouse.up()
+        page.mouse.move(stage['x']+end[0],stage['y']+end[1],steps=12)
+        if mode=='pen':
+            expect(page.locator('#puzzleInkPreview')).to_be_visible()
+            expect(page.locator('#puzzleSelection')).to_be_hidden()
+            assert not any(n['type']=='pen' for n in task(page)['nodes'])
+        page.mouse.up()
         native.wait_until(lambda: any(n['type']==mode for n in task(page)['nodes']))
     assert task(page)['meta']['count']==5
     page.keyboard.press('Control+z')
@@ -175,6 +181,42 @@ def check_drawing(page, context, process):
     page.locator('#quickClose').click()
     native.wait_until(lambda: process.poll() is not None)
     assert process.returncode==0
+
+
+def check_region_cut(page,context,process):
+    expect(page.locator('#puzzleTool')).to_be_visible()
+    native.wait_until(lambda: page.evaluate('Boolean(window.__DTKIT_TOOL_PAGE__?.ready)'))
+    page.locator('[data-action=tasks]').click();page.locator('[data-action=new]').click()
+    native.wait_until(lambda: task(page)['meta']['count']==0)
+    png=page.evaluate('''(()=>{const c=document.createElement('canvas');c.width=240;c.height=160;
+        const ctx=c.getContext('2d');ctx.fillStyle='#ee3300';ctx.fillRect(0,0,240,160);return c.toDataURL();})()''')
+    page.locator('#puzzleFileInput').set_input_files({'name':'cut.png','mimeType':'image/png','buffer':base64.b64decode(png.split(',')[1])})
+    expect(page.locator('.puzzle-node[data-type=image]')).to_have_count(1)
+    before=task(page)['nodes'];image=page.locator('.puzzle-node[data-type=image]').bounding_box()
+    page.locator('button[data-tool=scissors]').hover()
+    expect(page.locator('#puzzleRegionModes')).to_be_visible()
+    page.locator('[data-action=region-cut]').click()
+    page.mouse.move(image['x']+40,image['y']+30);page.mouse.down()
+    page.mouse.move(image['x']+120,image['y']+90,steps=8);page.mouse.up()
+    native.wait_until(lambda: task(page)['meta']['count']==2)
+    result=task(page)
+    remainder=next(n for n in result['nodes'] if n['id']==before[0]['id'])
+    assert remainder['assetId']!=before[0]['assetId']
+    alpha=page.evaluate('''async id=>{const img=new Image();img.src=await window.__TAURI__.core.invoke('puzzle_asset',{assetId:id,preview:false});
+        await img.decode();const c=document.createElement('canvas');c.width=img.width;c.height=img.height;
+        const ctx=c.getContext('2d');ctx.drawImage(img,0,0);return ctx.getImageData(60,50,1,1).data[3];}''',remainder['assetId'])
+    assert alpha==0
+    stale=page.evaluate('''async task=>{try{await window.__TAURI__.core.invoke('puzzle_edit',{
+        taskId:task.meta.id,operations:[{type:'remove',ids:task.nodes.map(n=>n.id)}],expectedRevision:task.meta.revision-1});
+        return 'unexpected success';}catch(error){return String(error);}}''',result)
+    assert '重新框选区域' in stale,stale
+    assert task(page)['nodes']==result['nodes']
+    page.keyboard.press('Control+z');native.wait_until(lambda: task(page)['meta']['count']==1)
+    assert task(page)['nodes']==before
+    page.screenshot(path=str(ART/'region-cut-undo.png'))
+    page.locator('#quickClose').click();native.wait_until(lambda: process.poll() is not None)
+    assert process.returncode==0
+    print('Native region cut alpha, atomic stale-revision rejection and single undo passed',flush=True)
 
 
 def check_clipboard(page,context,process):
@@ -232,8 +274,12 @@ def check_clipboard(page,context,process):
 if __name__ == '__main__':
     executable = ROOT / 'src-tauri/target/debug/DtKit.exe'
     with sync_playwright() as playwright:
-        native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_quick)
-        native.run_case(playwright,executable,[],check_main)
+        if '--interaction-only' not in sys.argv:
+            native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_quick)
+            native.run_case(playwright,executable,[],check_main)
         native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_drawing)
-        native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_clipboard)
-    print('Native puzzle editor, independent copies, export, window controls and palette passed',flush=True)
+        native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_region_cut)
+        if '--interaction-only' not in sys.argv:
+            native.run_case(playwright,executable,['--tool','clipboard-puzzle'],check_clipboard)
+    print('Native puzzle live ink, region cut and undo passed' if '--interaction-only' in sys.argv
+          else 'Native puzzle editor, independent copies, export, window controls and palette passed',flush=True)

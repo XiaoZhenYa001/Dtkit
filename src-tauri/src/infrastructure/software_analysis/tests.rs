@@ -50,6 +50,69 @@ fn software(name: &str, path: Option<&str>, source: &str) -> Software {
     }
 }
 
+fn ownership_snapshot(items: Vec<Software>, warnings: Vec<String>) -> SoftwareSnapshot {
+    SoftwareSnapshot {
+        items,
+        warnings,
+        scanned_at: 0,
+        cached: false,
+    }
+}
+
+#[test]
+fn ownership_accepts_complete_catalog_with_only_the_shared_information_note() {
+    for warnings in [Vec::new(), vec![REGISTRATION_SIZE_NOTE.to_string()]] {
+        let items = ownership_from_snapshot(ownership_snapshot(
+            vec![software("Editor", Some(r"C:\Product\Editor"), "HKCU")],
+            warnings,
+        ))
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Editor");
+    }
+}
+
+#[test]
+fn ownership_rejects_partial_unreadable_truncated_and_future_warning_catalogs() {
+    for warning in [
+        "无法读取 HKLM 64 位软件登记：拒绝访问",
+        "软件列表达到 4096 项上限，已截断",
+        "软件列表读取达到 12 秒预算，当前列表可能不完整",
+        "Future enumeration warning",
+    ] {
+        let result = ownership_from_snapshot(ownership_snapshot(
+            vec![software(
+                "Wide vendor registration",
+                Some(r"C:\Vendor"),
+                "HKCU",
+            )],
+            vec![REGISTRATION_SIZE_NOTE.to_string(), warning.into()],
+        ));
+        assert!(result.unwrap_err().contains(warning));
+    }
+}
+
+#[test]
+fn ownership_uses_only_explicit_valid_install_locations() {
+    let registered = software("Registered", Some(r"C:\Registered"), "HKCU");
+    let mut inferred = software("Inferred", Some(r"C:\Inferred"), "HKCU");
+    inferred.reason = Some("安装目录由 DisplayIcon 路径推测，扫描前请确认目录归属".into());
+    let mut invalid = software("Invalid", Some(r"C:\Windows"), "HKCU");
+    invalid.can_analyze = false;
+    let items = ownership_from_snapshot(ownership_snapshot(
+        vec![
+            registered,
+            inferred,
+            invalid,
+            software("Missing", None, "HKCU"),
+        ],
+        Vec::new(),
+    ))
+    .unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].name, "Registered");
+}
+
 #[test]
 fn totals_and_direct_children_do_not_double_count_nested_directories() {
     let fixture = Fixture::new();

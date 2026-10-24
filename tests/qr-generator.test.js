@@ -4,6 +4,32 @@ import {
     DEFAULT_STYLE, normalizeStyle, relativeLuminance, contrastRatio,
     payloadMetrics, validateQrPayload, applyQrPrefix, createQrFilename
 } from '../src/tools/qr-generator/core.js';
+import { QR_DIRECTORY_KEY, readQrDirectoryPreference, writeQrDirectoryPreference } from '../src/tools/qr-generator/preferences.js';
+
+test('save directory is a durable preference including an explicit default choice', () => {
+    const records = new Map();
+    const storage = { getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value) };
+    assert.equal(readQrDirectoryPreference(storage), null);
+    assert.equal(writeQrDirectoryPreference('D:\\导出目录\\QR exports', storage), true);
+    assert.equal(readQrDirectoryPreference(storage), 'D:\\导出目录\\QR exports');
+    assert.equal(writeQrDirectoryPreference('', storage), true);
+    assert.equal(readQrDirectoryPreference(storage), '');
+    assert.equal(JSON.parse(records.get(QR_DIRECTORY_KEY)).version, 1);
+});
+
+test('unavailable or malformed save preferences do not break QR rendering or claim persistence', () => {
+    const unavailable = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('quota'); } };
+    assert.equal(readQrDirectoryPreference(unavailable), null);
+    assert.equal(writeQrDirectoryPreference('D:\\Exports', unavailable), false);
+    for (const raw of ['not JSON', 'null', '42', '[]', '{}', '{"version":2,"directory":"D:"}', '{"version":1,"directory":4}']) {
+        assert.equal(readQrDirectoryPreference({ getItem: () => raw }), null);
+    }
+    for (const directory of [null, 42, {}, [], 'a'.repeat(4097), 'D:\\bad\0path']) {
+        const storage = { getItem: () => JSON.stringify({ version: 1, directory }), setItem() { throw new Error('must not write'); } };
+        assert.equal(readQrDirectoryPreference(storage), null);
+        assert.equal(writeQrDirectoryPreference(directory, storage), false);
+    }
+});
 
 function approximately(actual, expected, tolerance = 1e-12) {
     assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} differs from ${expected}`);

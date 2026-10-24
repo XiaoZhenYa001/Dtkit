@@ -78,7 +78,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--pink',
         category: 'design',
         status: 'ready',
-        description: 'HEX, RGB, HSL 格式互转与调色。',
+        description: '屏幕与图片取色、透明度调色、颜色转换与色板收藏。',
         loader: () => import('./color-picker/index.js')
     },
     {
@@ -176,7 +176,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--cyan',
         category: 'utility',
         status: 'ready',
-        description: '安全预检后批量重命名、复制、移动或删除文件。',
+        description: '实时预览、编号与查找替换，批量重命名、复制、移动和可恢复删除。',
         loader: () => import('./file-batch/index.js')
     },
     {
@@ -277,7 +277,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--yellow',
         category: 'utility',
         status: 'ready',
-        description: '随手记录灵感与待办，自动保存为可置顶的桌面便签。',
+        description: '模板速记、清单与 Markdown，分类检索、批量整理和备份，让桌面便签随手可用。',
         loader: () => import('./sticky-notes/index.js')
     },
     {
@@ -287,7 +287,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--green',
         category: 'utility',
         status: 'ready',
-        description: '一目了然的每周课表，支持单双周、学期归档、导入导出与轻量桌面小部件。',
+        description: '周视图与日程、课程搜索、可视化周次、冲突预览和桌面小部件，从容安排每一周。',
         loader: () => import('./timetable/index.js')
     },
     {
@@ -297,7 +297,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--orange',
         category: 'design',
         status: 'ready',
-        description: '快捷截取虚拟桌面，并进行画笔、形状、箭头和文字标注。',
+        description: '区域与长截图、丰富标注、裁剪遮挡、本地文字识别与图片复制。',
         loader: () => import('./screenshot-annotator/index.js')
     }
 ]);

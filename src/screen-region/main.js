@@ -16,6 +16,7 @@ const inlineText = document.getElementById('regionInlineText');
 const brushCursor = document.getElementById('regionBrushCursor');
 const hint = document.getElementById('regionHint');
 const undoButton = document.getElementById('regionUndo');
+const redoButton = document.getElementById('regionRedo');
 
 const MIN_REGION_SIZE = 12;
 const PANEL_GAP = 8;
@@ -35,6 +36,33 @@ let annotations = [];
 let draftAnnotation = null;
 let finishing = false;
 let renderQueued = false;
+let undoStack = [];
+let redoStack = [];
+
+const snapshot = () => ({ selection: selection ? { ...selection } : null, annotations: annotations.slice() });
+function recordHistory(before = snapshot()) {
+    undoStack.push(before);
+    // Annotation entries are immutable once committed. Snapshots share them,
+    // avoiding a full copy of every stroke for each undo step.
+    let points = 0;
+    for (let index = undoStack.length - 1; index >= 0; index -= 1) {
+        points += undoStack[index].annotations.reduce((sum, object) => sum + (object.points?.length || 1), 0);
+        if (points > 120000 && index > 0) { undoStack.splice(0, index); break; }
+    }
+    if (undoStack.length > 40) undoStack.shift();
+    redoStack = [];
+    updateUndo();
+}
+function travelHistory(redo = false) {
+    if (interaction || !inlineText.hidden || finishing) return;
+    const from = redo ? redoStack : undoStack;
+    if (!from.length) return;
+    (redo ? undoStack : redoStack).push(snapshot());
+    const next = from.pop();
+    selection = next.selection ? { ...next.selection } : null;
+    annotations = next.annotations.slice();
+    updateUndo(); renderSelection(); queueRender();
+}
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const pointInSelection = (x, y) => selection
@@ -153,7 +181,11 @@ function drawAnnotation(ctx, object) {
     ctx.lineWidth = object.size;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    if (object.type === 'pen') {
+    if (object.type === 'pen' || object.type === 'highlight') {
+        if (object.type === 'highlight') { ctx.globalAlpha = .32; ctx.lineWidth = object.size * 3.6; }
+        if (object.points.length === 1) {
+            ctx.beginPath(); ctx.arc(object.points[0].x, object.points[0].y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill();
+        }
         if (object.points.length > 1) {
             ctx.beginPath();
             ctx.moveTo(object.points[0].x, object.points[0].y);
@@ -162,6 +194,8 @@ function drawAnnotation(ctx, object) {
                 const previous = object.points[index - 1];
                 ctx.quadraticCurveTo(previous.x, previous.y, (previous.x + point.x) / 2, (previous.y + point.y) / 2);
             }
+            const last = object.points.at(-1);
+            ctx.lineTo(last.x, last.y);
             ctx.stroke();
         }
     } else if (object.type === 'rect') {
@@ -172,6 +206,16 @@ function drawAnnotation(ctx, object) {
         ctx.beginPath();
         ctx.ellipse(box.left + box.width / 2, box.top + box.height / 2, box.width / 2, box.height / 2, 0, 0, Math.PI * 2);
         ctx.stroke();
+    } else if (object.type === 'line') {
+        ctx.beginPath(); ctx.moveTo(object.x1, object.y1); ctx.lineTo(object.x2, object.y2); ctx.stroke();
+    } else if (object.type === 'mask') {
+        const box = normalizeBox(object.x1, object.y1, object.x2, object.y2);
+        ctx.fillRect(box.left, box.top, box.width, box.height);
+    } else if (object.type === 'step') {
+        const radius = Math.max(12, object.size * 2.8);
+        ctx.beginPath(); ctx.arc(object.x, object.y, radius, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = `700 ${radius * 1.05}px "Segoe UI",sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(object.number), object.x, object.y + .5);
     } else if (object.type === 'arrow') {
         drawArrow(ctx, object);
     } else if (object.type === 'text') {
@@ -211,17 +255,19 @@ function queueRender() {
 
 function annotationAtStart(type, x, y) {
     const base = { type, color: colorInput.value, size: Number(strokeInput.value) };
-    if (type === 'pen') return { ...base, points: [{ x, y }] };
+    if (type === 'pen' || type === 'highlight') return { ...base, points: [{ x, y }] };
+    if (type === 'step') return { ...base, x, y, number: Math.max(0, ...annotations.filter(object => object.type === 'step').map(object => object.number)) + 1 };
     return { ...base, x1: x, y1: y, x2: x, y2: y };
 }
 
 function translateAnnotation(object, dx, dy) {
-    if (object.type === 'pen') return { ...object, points: object.points.map(point => ({ x: point.x + dx, y: point.y + dy })) };
-    if (object.type === 'text') return { ...object, x: object.x + dx, y: object.y + dy };
+    if (object.type === 'pen' || object.type === 'highlight') return { ...object, points: object.points.map(point => ({ x: point.x + dx, y: point.y + dy })) };
+    if (object.type === 'text' || object.type === 'step') return { ...object, x: object.x + dx, y: object.y + dy };
     return { ...object, x1: object.x1 + dx, y1: object.y1 + dy, x2: object.x2 + dx, y2: object.y2 + dy };
 }
 
 function setTool(tool) {
+    if (!inlineText.hidden) commitInlineText();
     activeTool = tool;
     document.body.dataset.tool = tool;
     toolbar.querySelectorAll('[data-tool]').forEach(button => {
@@ -229,14 +275,16 @@ function setTool(tool) {
         button.classList.toggle('is-active', active);
         button.setAttribute('aria-pressed', String(active));
     });
-    brushCursor.hidden = !['pen', 'mosaic'].includes(tool);
+    brushCursor.hidden = true;
 }
 
 function updateUndo() {
-    undoButton.disabled = annotations.length === 0;
+    undoButton.disabled = undoStack.length === 0;
+    redoButton.disabled = redoStack.length === 0;
 }
 
 function appendAnnotation(object) {
+    recordHistory();
     annotations.push(object);
     if (annotations.length > MAX_ANNOTATIONS) annotations.splice(0, annotations.length - MAX_ANNOTATIONS);
     updateUndo();
@@ -339,6 +387,7 @@ function startLongCaptureFromSelection(direction) {
         x: captureSource.x + rect.sourceX,
         y: captureSource.y + rect.sourceY,
         longDirection: direction,
+        longMode: document.getElementById('regionLongMode').value,
         maxSegments: 12
     });
 }
@@ -380,7 +429,7 @@ function confirmSelection() {
 }
 
 function beginSelection(event) {
-    interaction = { kind: 'select', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+    interaction = { kind: 'select', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, before: snapshot() };
     selection = { left: event.clientX, top: event.clientY, width: 0, height: 0 };
     annotations = [];
     canvas.setPointerCapture(event.pointerId);
@@ -390,13 +439,13 @@ function beginSelection(event) {
 function beginMove(event) {
     interaction = {
         kind: 'move', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
-        original: { ...selection }, annotations: structuredClone(annotations)
+        original: { ...selection }, annotations: annotations.slice(), before: snapshot()
     };
     canvas.setPointerCapture(event.pointerId);
 }
 
 function beginResize(event, handle) {
-    interaction = { kind: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, handle, original: { ...selection } };
+    interaction = { kind: 'resize', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, handle, original: { ...selection }, before: snapshot() };
     selectionElement.setPointerCapture(event.pointerId);
 }
 
@@ -431,6 +480,10 @@ canvas.addEventListener('pointerdown', event => {
         startInlineText(event.clientX, event.clientY);
         return;
     }
+    if (activeTool === 'step') {
+        appendAnnotation(annotationAtStart('step', event.clientX, event.clientY));
+        queueRender(); return;
+    }
     interaction = { kind: 'draw', pointerId: event.pointerId };
     draftAnnotation = annotationAtStart(activeTool, event.clientX, event.clientY);
     canvas.setPointerCapture(event.pointerId);
@@ -438,7 +491,7 @@ canvas.addEventListener('pointerdown', event => {
 });
 
 canvas.addEventListener('pointermove', event => {
-    if (['pen', 'mosaic'].includes(activeTool) && selection && pointInSelection(event.clientX, event.clientY)) {
+    if (['pen', 'highlight', 'mosaic'].includes(activeTool) && selection && pointInSelection(event.clientX, event.clientY)) {
         brushCursor.hidden = false;
         brushCursor.style.width = `${strokeInput.value}px`;
         brushCursor.style.height = `${strokeInput.value}px`;
@@ -464,7 +517,7 @@ canvas.addEventListener('pointermove', event => {
     } else if (interaction.kind === 'draw' && draftAnnotation) {
         const x = clamp(event.clientX, selection.left, selection.left + selection.width);
         const y = clamp(event.clientY, selection.top, selection.top + selection.height);
-        if (draftAnnotation.type === 'pen') {
+        if (draftAnnotation.type === 'pen' || draftAnnotation.type === 'highlight') {
             const events = event.getCoalescedEvents?.() || [event];
             events.forEach(sample => {
                 if (draftAnnotation.points.length >= MAX_PEN_POINTS) return;
@@ -478,6 +531,21 @@ canvas.addEventListener('pointermove', event => {
         } else {
             draftAnnotation.x2 = x;
             draftAnnotation.y2 = y;
+            if (event.shiftKey) {
+                const dx = x - draftAnnotation.x1, dy = y - draftAnnotation.y1;
+                if (['line', 'arrow'].includes(draftAnnotation.type)) {
+                    const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+                    const distance = Math.hypot(dx, dy);
+                    draftAnnotation.x2 = clamp(draftAnnotation.x1 + Math.cos(angle) * distance, selection.left, selection.left + selection.width);
+                    draftAnnotation.y2 = clamp(draftAnnotation.y1 + Math.sin(angle) * distance, selection.top, selection.top + selection.height);
+                } else if (['rect', 'ellipse'].includes(draftAnnotation.type)) {
+                    const side = Math.min(Math.max(Math.abs(dx), Math.abs(dy)),
+                        dx < 0 ? draftAnnotation.x1 - selection.left : selection.left + selection.width - draftAnnotation.x1,
+                        dy < 0 ? draftAnnotation.y1 - selection.top : selection.top + selection.height - draftAnnotation.y1);
+                    draftAnnotation.x2 = draftAnnotation.x1 + (dx < 0 ? -1 : 1) * side;
+                    draftAnnotation.y2 = draftAnnotation.y1 + (dy < 0 ? -1 : 1) * side;
+                }
+            }
         }
         queueRender();
     }
@@ -485,17 +553,22 @@ canvas.addEventListener('pointermove', event => {
 
 function endPointer(event) {
     if (!interaction || event.pointerId !== interaction.pointerId) return;
-    const kind = interaction.kind;
+    const { kind, before, original } = interaction;
     interaction = null;
+    if (event.type === 'pointercancel') {
+        if (before) { selection = before.selection; annotations = before.annotations; }
+        draftAnnotation = null; renderSelection(); queueRender(); return;
+    }
     if (kind === 'select') {
         if (!selection || selection.width < MIN_REGION_SIZE || selection.height < MIN_REGION_SIZE) selection = null;
-        else hint.classList.add('is-dismissed');
+        else { hint.classList.add('is-dismissed'); recordHistory(before); }
         renderSelection();
     } else if (kind === 'draw' && draftAnnotation) {
         appendAnnotation(draftAnnotation);
         draftAnnotation = null;
         queueRender();
     } else {
+        if (before && original && selection && ['left', 'top', 'width', 'height'].some(key => selection[key] !== original[key])) recordHistory(before);
         renderSelection();
     }
 }
@@ -547,11 +620,8 @@ document.querySelectorAll('[data-region-long-direction]').forEach(button => butt
 }));
 document.getElementById('regionConfirm').addEventListener('click', confirmSelection);
 document.getElementById('regionCancel').addEventListener('click', cancel);
-undoButton.addEventListener('click', () => {
-    annotations.pop();
-    updateUndo();
-    queueRender();
-});
+undoButton.addEventListener('click', () => travelHistory());
+redoButton.addEventListener('click', () => travelHistory(true));
 radiusInput.addEventListener('input', () => {
     radiusValue.textContent = radiusInput.value;
     renderSelection();
@@ -578,19 +648,36 @@ inlineText.addEventListener('blur', commitInlineText);
 
 document.addEventListener('keydown', event => {
     if (event.defaultPrevented) return;
+    if (event.key !== 'Escape' && event.target.closest('textarea,input,[contenteditable="true"]')) return;
     if (event.key === 'Escape' && !document.getElementById('regionLongMenu').hidden) closeLongMenu();
     else if (event.key === 'Escape') cancel();
     else if (event.key === 'Enter' && !event.ctrlKey && !event.altKey && !event.shiftKey && inlineText.hidden) confirmSelection();
-    else if (event.key.toLowerCase() === 'z' && event.ctrlKey && annotations.length) {
-        annotations.pop();
-        updateUndo();
-        queueRender();
+    else if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
+        event.preventDefault(); travelHistory(event.key.toLowerCase() === 'y' || event.shiftKey);
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault(); recordHistory();
+        selection = { left: 0, top: 0, width: innerWidth, height: innerHeight };
+        renderSelection(); queueRender(); hint.classList.add('is-dismissed');
+    } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        const tools = { v: 'move', r: 'rect', e: 'ellipse', a: 'arrow', l: 'line', p: 'pen', h: 'highlight', t: 'text', n: 'step', m: 'mosaic', b: 'mask' };
+        const tool = tools[event.key.toLowerCase()];
+        if (tool && !captureSource?.longDirection) { event.preventDefault(); setTool(tool); }
+        else if (selection && event.key.startsWith('Arrow') && !interaction) {
+            event.preventDefault(); recordHistory();
+            const amount = event.shiftKey ? 10 : 1;
+            const dx = clamp((event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0), -selection.left, innerWidth - selection.left - selection.width);
+            const dy = clamp((event.key === 'ArrowDown' ? amount : event.key === 'ArrowUp' ? -amount : 0), -selection.top, innerHeight - selection.top - selection.height);
+            selection = { ...selection, left: selection.left + dx, top: selection.top + dy };
+            annotations = annotations.map(object => translateAnnotation(object, dx, dy));
+            renderSelection(); queueRender();
+        }
     }
 });
 document.addEventListener('pointerdown', event => {
     if (!event.target.closest('#regionLongControl')) closeLongMenu();
 }, true);
 document.addEventListener('contextmenu', event => {
+    if (event.target.closest('textarea,input')) return;
     event.preventDefault();
     cancel();
 });
@@ -606,10 +693,13 @@ addEventListener('resize', () => {
 try {
     const capture = await invoke('get_screen_region_capture');
     captureSource = capture;
+    document.getElementById('regionLongMode').value = capture.longMode === 'automatic' ? 'automatic' : 'manual';
     if (capture.longDirection) {
         document.body.classList.add('is-long-mode');
         document.querySelector('.region-hint strong').textContent = '选择长截图滚动范围';
-        document.querySelector('.region-hint span').textContent = '松开后调整范围，确认才开始滚动拼接';
+        document.querySelector('.region-hint span').textContent = capture.longMode === 'manual'
+            ? '确认后自行滚动，稍停采集；Enter 完成，Esc 取消'
+            : '松开后调整范围，确认才开始自动滚动拼接';
     }
     const nextImage = new Image();
     nextImage.onload = () => {

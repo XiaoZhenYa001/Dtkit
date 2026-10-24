@@ -1,10 +1,10 @@
-import { containsArea, validateExportSize, wrappedLines } from './model.js';
+import { containsArea, visualBounds, validateExportSize, wrappedLines } from './model.js';
 
 const FONT = "'Segoe UI','Microsoft YaHei',sans-serif";
 function rounded(ctx, x, y, w, h, radius = 10) {
     ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.min(radius, w / 2, h / 2));
 }
-export async function renderPNG(task, area, loadOriginal, { scale = 1, transparent = false, selected = null, shouldContinue = () => true } = {}) {
+export async function renderPNG(task, area, loadOriginal, { scale = 1, transparent = false, selected = null, shouldContinue = () => true, eraseArea = null } = {}) {
     const size = validateExportSize(area, scale), canvas = document.createElement('canvas');
     canvas.width = size.w; canvas.height = size.h;
     const ctx = canvas.getContext('2d');
@@ -14,14 +14,14 @@ export async function renderPNG(task, area, loadOriginal, { scale = 1, transpare
     if (!transparent) { ctx.fillStyle = '#ffffff'; ctx.fillRect(area.x, area.y, area.w, area.h); }
     for (const node of task.nodes) {
         if(!shouldContinue()){canvas.width=canvas.height=1;throw new DOMException('导出已取消','AbortError');}
-        if (!containsArea(node, area) || (selected && !selected.has(node.id))) continue;
+        if (!containsArea(visualBounds(node), area) || (selected && !selected.has(node.id))) continue;
         const { x, y, w, h } = node;
         ctx.save(); ctx.translate(x, y);
         if (node.rotation) { ctx.translate(w / 2, h / 2); ctx.rotate(node.rotation * Math.PI / 180); ctx.translate(-w / 2, -h / 2); }
         if (node.type === 'image') {
             // Originals are decoded one at a time and immediately released after drawing.
             const image = await loadOriginal(node.assetId);
-            try { rounded(ctx, 0, 0, w, h); ctx.clip(); ctx.drawImage(image, 0, 0, w, h); }
+            try { ctx.drawImage(image, 0, 0, w, h); }
             finally { if (image.close) image.close(); else image.src = ''; }
         } else if (node.type === 'rect') {
             ctx.strokeStyle = node.color; ctx.lineWidth = 2; rounded(ctx, 1, 1, w - 2, h - 2, 7); ctx.stroke();
@@ -53,6 +53,7 @@ export async function renderPNG(task, area, loadOriginal, { scale = 1, transpare
         }
         ctx.restore();
     }
+    if (eraseArea) ctx.clearRect(eraseArea.x, eraseArea.y, eraseArea.w, eraseArea.h);
     return canvas.toDataURL('image/png');
     } finally { canvas.width = canvas.height = 1; }
 }

@@ -1,7 +1,7 @@
 import { registerTool } from '../toolRegistry.js';
 import './style.css';
 import { template, nodeContent, button, icon, escapeHTML as h } from './view.js';
-import { TOOLS, newId, newNode, clone, bounds, containsArea, toWorld, selectionArea, snapPosition, layoutNodes, diffOperations, exportArea } from './model.js';
+import { TOOLS, MAX_HISTORY_DATA, newId, newNode, clone, bounds, visualBounds, penGeometry, editHistory, fitsHistory, containsArea, toWorld, selectionArea, snapPosition, layoutNodes, diffOperations, exportArea } from './model.js';
 import { renderPNG, imageFilePNG, textHeight } from './render.js';
 
 const DRAG_TYPE = 'application/x-dtkit-puzzle';
@@ -17,10 +17,12 @@ class PuzzleEditor {
     constructor(root) {
         this.root = root; this.task = null; this.overview = null; this.camera = { x: 0, y: 0, z: 1 };
         this.selection = new Set(); this.mode = 'select'; this.space = false; this.gesture = null;
+        this.regionMode = 'copy'; this.regionBusy = false;
         this.undo = []; this.redo = []; this.queue = Promise.resolve(); this.disposed = false;
         this.controller = new AbortController(); this.elements = new Map(); this.assets = new Map();
         this.imageRequests = new Map(); this.jobs=new Set(); this.pending = 0; this.refreshTimer = null; this.frame = null;
         this.stage = root.querySelector('#puzzleStage'); this.world = root.querySelector('#puzzleWorld');
+        this.stage.tabIndex = 0;
         this.compact = document.documentElement.classList.contains('quick-tool--clipboard-puzzle');
         root.classList.toggle('is-compact', this.compact);
     }
@@ -41,6 +43,7 @@ class PuzzleEditor {
         try{await this.open(savedId,this.compact);}
         catch(error){if(savedId&&String(error).includes('拼图不存在或已过期')){this.expiredTaskId=savedId;await this.open();this.status('原临时拼图已过期 · 已创建新任务');}else throw error;}
         this.on(this.root, 'click', event => {
+            if (this.regionBusy) { this.status('正在处理区域，请稍候…'); return; }
             const tool = event.target.closest('[data-tool]');
             if (tool && tool !== this.stage) { this.setMode(tool.dataset.tool); return; }
             const action = event.target.closest('[data-action]'); if (action) this.guard(() => this.action(action.dataset.action, event, action));
@@ -78,7 +81,7 @@ class PuzzleEditor {
         this.on(window, 'blur', () => { this.space = false; this.cancelGesture(); });
         this.on(document, 'paste', event => {
             if (event.target.closest('input,textarea,[contenteditable=true]')) return;
-            event.preventDefault(); this.guard(() => this.paste());
+            event.preventDefault(); if (!this.regionBusy) this.guard(() => this.paste());
         });
         this.on(document, 'visibilitychange', () => { if (!document.hidden) this.scheduleRefresh(); });
         this.on(window, 'dtkit:power-state', event => { if (!event.detail?.suspended) this.scheduleRefresh(); });
@@ -115,7 +118,7 @@ class PuzzleEditor {
         if (this.disposed || this.refreshTimer) return;
         this.refreshTimer = setTimeout(() => {
             this.refreshTimer = null;
-            if (this.gesture || this.dragging || this.pending) { this.scheduleRefresh(); return; }
+            if (this.gesture || this.dragging || this.pending || this.regionBusy) { this.scheduleRefresh(); return; }
             this.guard(async () => {
                 await this.queue; if (!this.task || this.disposed) return;
                 const id = this.task.meta.id;
@@ -126,21 +129,20 @@ class PuzzleEditor {
             });
         }, 90);
     }
-    async edit(operations, history = true) {
+    async edit(operations, history = true, expectedRevision = null) {
         if (!operations.length || !this.task) return;
         const id = this.task.meta.id;
         const before = clone(this.task.nodes);
         const execute = async () => {
+            if (expectedRevision != null && (this.disposed || this.task?.meta.id !== id || this.task.meta.revision !== expectedRevision)) {
+                throw new Error('拼图已变化，请重新框选区域');
+            }
             this.pending++;
             try {
-                const result = await invoke('puzzle_edit', { taskId: id, operations });
+                const result = await invoke('puzzle_edit', { taskId: id, operations, expectedRevision });
                 if (this.task?.meta.id !== id || this.disposed) return;
                 if (history) {
-                    const inverse = diffOperations(result.nodes, before).filter(op => op.type !== 'remove' || op.ids.some(key => operations.some(o => o.nodes?.some(n => n.id === key))));
-                    // Only undo objects touched by this edit, preserving simultaneous clipboard captures.
-                    const touched = new Set(operations.flatMap(o => o.ids || o.nodes?.map(n => n.id) || []));
-                    const undoOps = inverse.map(op => op.type === 'remove' ? { ...op, ids: op.ids.filter(key => touched.has(key)) } : { ...op, nodes: op.nodes.filter(n => touched.has(n.id)) });
-                    this.recordHistory({ forward: clone(operations), inverse: undoOps });
+                    this.recordHistory(editHistory(before,result.nodes,operations));
                 }
                 this.task = result; this.render(); this.inspector(); this.status('已自动保留'); this.scheduleRefresh();
             } finally { this.pending--; }
@@ -149,7 +151,7 @@ class PuzzleEditor {
     }
     recordHistory(entry) {
         this.undo.push(entry); this.redo = [];
-        while (this.undo.length > 20 || JSON.stringify(this.undo).length > 3_000_000) this.undo.shift();
+        while (this.undo.length > 20 || JSON.stringify(this.undo).length > MAX_HISTORY_DATA) this.undo.shift();
     }
     acceptImport(task, previousIds) {
         if (this.disposed || this.task?.meta.id !== task.meta.id) return false;
@@ -180,7 +182,7 @@ class PuzzleEditor {
         const viewport = { x: (-c.x - 120) / c.z, y: (-c.y - 120) / c.z, w: (size.width + 240) / c.z, h: (size.height + 240) / c.z };
         const visible = new Set();
         for (const [order,node] of this.task.nodes.entries()) {
-            if (!containsArea(node, viewport)) continue;
+            if (!containsArea(visualBounds(node), viewport)) continue;
             visible.add(node.id); let el = this.elements.get(node.id);
             if (!el) { el = document.createElement('div'); el.className = 'puzzle-node'; el.dataset.nodeId = node.id; this.elements.set(node.id, el); this.world.append(el); }
             const signature = JSON.stringify([node.type, node.body, node.url, node.name, node.assetId, node.points, node.fontSize, node.color]);
@@ -200,8 +202,9 @@ class PuzzleEditor {
         this.root.querySelector('#puzzleCount').textContent = `${this.task.nodes.length} 项内容`;
         this.root.querySelector('#puzzleObjectCount').textContent = `${this.task.nodes.length} 个对象`;
         this.root.querySelector('#puzzleZoomValue').textContent = `${Math.round(c.z * 100)}%`;
-        this.root.querySelector('#puzzleEmpty').hidden = this.task.nodes.length > 0;
+        this.root.querySelector('#puzzleEmpty').hidden = this.task.nodes.length > 0 || this.gesture?.kind === 'pen';
         this.root.querySelector('[data-action=undo]').disabled = !this.undo.length;
+        this.renderInkPreview();
     }
     position(el, node) { for (const [key, value] of Object.entries({ left: node.x, top: node.y, width: node.w, height: node.h })) el.style[key] = `${value}px`; }
     async loadPreview(id, img) {
@@ -238,11 +241,20 @@ class PuzzleEditor {
         this.camera = { x: p.x - r.left - world.x * z, y: p.y - r.top - world.y * z, z }; this.scheduleRender();
     }
     setMode(mode) {
+        if (this.regionBusy) return;
         if (mode === 'image') { this.root.querySelector('#puzzleFileInput').click(); return; }
         this.cancelGesture(); this.mode = mode;
         this.root.querySelectorAll('.puzzle-tool-button[data-tool]').forEach(b => { b.classList.toggle('is-active', b.dataset.tool === mode); b.setAttribute('aria-pressed', String(b.dataset.tool === mode)); });
         const hint = this.root.querySelector('#puzzleModeHint');
-        hint.hidden = mode === 'select'; hint.textContent = mode === 'scissors' ? '框出区域，生成图片副本 · 原件保留' : mode === 'text' ? '点击画布插入文字' : '拖动画布绘制 · Esc 返回选择'; this.render();
+        hint.hidden = mode === 'select'; hint.textContent = mode === 'scissors' ? this.regionMode === 'cut' ? '框出区域剪切为新图片 · 原区域留空 · Ctrl Z 撤销' : '框出区域，生成图片副本 · 原件保留' : mode === 'text' ? '点击画布插入文字' : '拖动画布绘制 · Esc 返回选择'; this.render();
+    }
+    renderInkPreview() {
+        let el = this.world.querySelector('#puzzleInkPreview');
+        const gesture = this.gesture;
+        if (gesture?.kind !== 'pen') { if (el) el.hidden = true; return; }
+        if (!el) { el = document.createElement('div'); el.id = 'puzzleInkPreview'; el.className = 'puzzle-ink-preview'; el.setAttribute('aria-hidden','true'); this.world.append(el); }
+        const node = penGeometry(gesture.points);
+        this.position(el, node); el.innerHTML = nodeContent({ ...node, type: 'pen' }); el.hidden = false;
     }
     guides(lines) {
         const parent = this.root.querySelector('#puzzleGuides'); parent.replaceChildren();
@@ -253,8 +265,9 @@ class PuzzleEditor {
         this.position(el, { x: area.x * this.camera.z + this.camera.x, y: area.y * this.camera.z + this.camera.y, w: area.w * this.camera.z, h: area.h * this.camera.z });
     }
     pointerDown(event) {
-        if (!this.task || this.pending || event.target.closest('button,input,textarea') && !event.target.closest('.puzzle-resize')) return;
+        if (!this.task || this.pending || this.regionBusy || event.target.closest('button,input,textarea') && !event.target.closest('.puzzle-resize')) return;
         if (event.button !== 0 && event.button !== 1) return;
+        this.stage.focus({ preventScroll: true });
         const p = this.worldPoint(event), item = event.target.closest('[data-node-id]'), node = item && this.task.nodes.find(n => n.id === item.dataset.nodeId);
         if (this.space || event.button === 1) {
             event.preventDefault(); this.gesture = { kind: 'pan', start: { x: event.clientX, y: event.clientY }, camera: { ...this.camera } };
@@ -268,6 +281,7 @@ class PuzzleEditor {
         else {
             event.preventDefault(); this.gesture = { kind: this.mode === 'select' ? 'marquee' : this.mode, start: p, current: p, points: [p], additive: event.ctrlKey || event.metaKey };
             if (this.mode === 'select' && !this.gesture.additive) this.selection.clear();
+            if (this.mode === 'pen') { this.selection.clear(); this.render(); }
         }
         this.stage.setPointerCapture(event.pointerId); this.pointerId = event.pointerId;
     }
@@ -281,8 +295,13 @@ class PuzzleEditor {
             if (node.type === 'image' && !event.shiftKey) node.h = node.w * g.node.h / g.node.w;
             if (node.type === 'pen' || node.type === 'arrow') node.points = g.node.points.map(point => ({ x: point.x * node.w / g.node.w, y: point.y * node.h / g.node.h }));
             this.scheduleRender();
+        } else if (g.kind === 'pen') {
+            for (const sample of event.getCoalescedEvents?.().length ? event.getCoalescedEvents() : [event]) {
+                const point = this.worldPoint(sample);
+                if (g.points.length < 20_000 && Math.hypot(point.x - g.points.at(-1).x, point.y - g.points.at(-1).y) * this.camera.z > 2) g.points.push(point);
+            }
+            this.scheduleRender();
         } else {
-            if (g.kind === 'pen' && g.points.length < 20_000 && Math.hypot(p.x - g.points.at(-1).x, p.y - g.points.at(-1).y) * this.camera.z > 2) g.points.push(p);
             this.showArea(selectionArea(g.start, p), g.kind === 'scissors');
         }
     }
@@ -290,22 +309,23 @@ class PuzzleEditor {
         const g = this.gesture; if (!g) return;
         this.gesture = null; if (this.stage.hasPointerCapture(event.pointerId)) this.stage.releasePointerCapture(event.pointerId);
         this.root.querySelector('#puzzleSelection').hidden = true;
+        this.renderInkPreview();
         const p = this.worldPoint(event), area = selectionArea(g.start, p);
         if (g.kind === 'pan') return;
         if (g.kind === 'resize') { const after = clone(this.task.nodes); this.task.nodes = g.before; await this.edit(diffOperations(g.before, after)); return; }
         if (g.kind === 'marquee') { for (const node of this.task.nodes) if (containsArea(node, area)) this.selection.add(node.id); this.render(); this.inspector(); return; }
-        if (area.w * this.camera.z < 4 && area.h * this.camera.z < 4) return;
+        if (g.kind === 'pen') {
+            if (g.points.length < 20_000 && Math.hypot(p.x - g.points.at(-1).x,p.y - g.points.at(-1).y) > .01) g.points.push(p);
+            const stroke = penGeometry(g.points);
+            if ((stroke.w - 6) * this.camera.z < 4 && (stroke.h - 6) * this.camera.z < 4) { this.render(); return; }
+        } else if (area.w * this.camera.z < 4 && area.h * this.camera.z < 4) return;
         if (g.kind === 'scissors') {
             if (area.w < 1 || area.h < 1) return;
-            this.status('正在生成区域副本…');
-            const data = await renderPNG(this.task, area, id => this.original(id));
-            const asset = await invoke('puzzle_import_image', { dataUrl: data });
-            const node = newNode('image', { ...area, name: '区域副本', assetId: asset.assetId });
-            await this.edit([{ type: 'upsert', nodes: [node] }]); this.selection = new Set([node.id]); this.setMode('select'); this.status('已生成区域副本 · 可拖到其他窗口'); return;
+            await this.captureRegion(area); return;
         }
         const node = newNode(g.kind, { ...area, w: Math.max(2, area.w), h: Math.max(2, area.h), name: { rect: '矩形', pen: '笔迹', arrow: '箭头' }[g.kind] });
         if (g.kind === 'pen') {
-            const b = bounds(g.points.map(pt => ({ ...pt, w: 1, h: 1 }))); node.x = b.x - 3; node.y = b.y - 3; node.w = Math.max(6, b.w + 6); node.h = Math.max(6, b.h + 6); node.points = g.points.map(pt => ({ x: pt.x - node.x, y: pt.y - node.y }));
+            Object.assign(node, penGeometry(g.points));
         } else if (g.kind === 'arrow') node.points = [g.start, p].map(pt => ({ x: pt.x - node.x, y: pt.y - node.y }));
         await this.edit([{ type: 'upsert', nodes: [node] }]); this.selection = new Set([node.id]); this.setMode('select'); this.inspector();
     }
@@ -313,6 +333,44 @@ class PuzzleEditor {
         if (this.gesture?.before && this.task) this.task.nodes = this.gesture.before;
         this.gesture = null; if (this.pointerId != null && this.stage.hasPointerCapture(this.pointerId)) this.stage.releasePointerCapture(this.pointerId);
         this.root.querySelector('#puzzleSelection').hidden = true; this.guides([]); this.scheduleRender();
+    }
+    async captureRegion(area) {
+        const task = clone(this.task), cut = this.regionMode === 'cut';
+        const affected = task.nodes.filter(node => containsArea(visualBounds(node),area));
+        if (!affected.length) { this.status('框选区域没有内容'); return; }
+        this.regionBusy = true; this.root.setAttribute('aria-busy','true');
+        const active = () => !this.disposed && this.task?.meta.id === task.meta.id && this.task.meta.revision === task.meta.revision;
+        try {
+            this.status(cut ? '正在剪切区域…' : '正在生成区域副本…');
+            const options = { transparent: true, shouldContinue: active };
+            const data = await renderPNG(task, area, id => this.original(id), options);
+            if (!active()) throw new Error('拼图已变化，请重新框选区域');
+            const asset = await invoke('puzzle_import_image', { dataUrl: data });
+            const replacements = [];
+            if (cut) for (const original of affected) {
+                const box = visualBounds(original);
+                const remainder = await renderPNG({ ...task,nodes:[original] },box,id=>this.original(id),{ ...options,eraseArea:area });
+                if (!active()) throw new Error('拼图已变化，请重新框选区域');
+                const residual = await invoke('puzzle_import_image',{ dataUrl:remainder });
+                replacements.push(newNode('image',{ ...box,id:original.id,name:original.name || '剪切后的内容',assetId:residual.assetId,
+                    groupId:original.groupId,sourceUrl:original.sourceUrl,collectedAt:original.collectedAt }));
+            }
+            if (!active()) throw new Error('拼图已变化，请重新框选区域');
+            const node = newNode('image',{ ...area,x:cut ? area.x + area.w + 24 : area.x,name:cut ? '剪切区域' : '区域副本',assetId:asset.assetId });
+            const operations = [{ type:'upsert',nodes:[...replacements,node] }];
+            if (cut) {
+                const replacementMap = new Map(replacements.map(node=>[node.id,node]));
+                const after = [...task.nodes.map(node=>replacementMap.get(node.id) || node),node];
+                if (!fitsHistory(editHistory(task.nodes,after,operations))) {
+                    throw new Error('区域涉及的内容过多，无法保证撤销；请缩小剪切区域后重试');
+                }
+            }
+            await this.edit(operations,true,task.meta.revision);
+            if (!this.disposed && this.task?.meta.id === task.meta.id) {
+                this.selection = new Set([node.id]); this.regionBusy = false; this.setMode('select'); this.inspector();
+                this.status(cut ? '已剪切到右侧新图片 · 原区域留空 · Ctrl Z 可撤销' : '已生成区域副本 · 原件保留，可拖到其他窗口');
+            }
+        } finally { this.regionBusy = false; this.root.removeAttribute('aria-busy'); this.scheduleRefresh(); }
     }
     inspector() {
         const nodes = this.selected(), node = nodes.length === 1 ? nodes[0] : null, box = nodes.length ? bounds(nodes) : this.task.frame;
@@ -472,6 +530,11 @@ class PuzzleEditor {
         else if (action === 'zoom-out') this.zoom(1 / 1.2);
         else if (action === 'paper') { const types = ['dots','grid','plain']; await this.edit([{ type: 'configure', background: types[(types.indexOf(this.task.background) + 1) % 3] }],false); }
         else if (action === 'more') this.showMenu([['insert-text','text','插入文字'],['insert-link','link','插入链接'],['insert-note','note','插入便签'],'-',['undo','undo','撤销'],['redo','redo','重做'],['frame-content','frame','拼图框适应内容'],['retention','clock','保留与清理']],event);
+        else if (action === 'region-cut' || action === 'region-copy') {
+            this.regionMode = action === 'region-cut' ? 'cut' : 'copy';
+            this.root.querySelectorAll('#puzzleRegionModes [data-action]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.action===action)));
+            this.setMode('scissors');
+        }
         else if (['scissors','rect','arrow','pen'].includes(action)) this.setMode(action);
         else if (action === 'insert-image') this.root.querySelector('#puzzleFileInput').click();
         else if (action === 'insert-text') await this.editContent('text');
@@ -513,6 +576,7 @@ class PuzzleEditor {
         else if (action === 'confirm-delete-task') { await this.queue; await invoke('puzzle_remove',{ taskId: this.task.meta.id }); this.root.querySelector('#puzzleModal').hidden = true; await this.open(); }
     }
     keyDown(event) {
+        if (this.regionBusy) { if (event.ctrlKey || event.metaKey || event.key === 'Delete' || event.key === 'Backspace') event.preventDefault(); return; }
         if (event.target.closest('input,textarea,select,[contenteditable=true]')) return;
         const mod = event.ctrlKey || event.metaKey;
         if (event.code === 'Space') { event.preventDefault(); this.space = true; }
