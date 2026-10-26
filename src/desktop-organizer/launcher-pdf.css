@@ -1,0 +1,12 @@
+.pdf-preview{position:relative;display:flex;flex-direction:column;align-self:stretch;width:100%;height:100%;min-width:0;min-height:0;gap:10px}
+.pdf-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;font-size:12px;color:var(--space-muted)}
+.pdf-toolbar button{border:1px solid var(--space-line);border-radius:7px;padding:5px 9px;min-width:30px;background:var(--space-hover);font-size:12px;line-height:1.5}
+.pdf-toolbar button:hover:not(:disabled){background:var(--space-selected)}
+.pdf-toolbar label{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.pdf-toolbar input{width:54px;border:1px solid var(--space-line);border-radius:6px;background:var(--space-hover);padding:4px;text-align:center;font-size:12px}
+.pdf-toolbar-spacer{flex:1}.pdf-zoom{min-width:38px;text-align:center}.pdf-page-count{white-space:nowrap}
+.pdf-stage{display:block;flex:1;min-height:0;overflow:auto;border-radius:8px;background:#080f1d4d;padding:16px;overscroll-behavior:contain;text-align:center;outline-offset:-3px}
+.pdf-stage:focus-visible{outline:2px solid var(--space-blue)}
+.pdf-stage canvas{display:block;margin:0 auto;background:#fff;max-width:none;box-shadow:0 4px 22px #0005}
+.pdf-status{position:absolute;left:16px;right:16px;bottom:12px;margin:0;padding:7px 10px;border-radius:7px;background:#0c172be8;text-align:center;font-size:12px;color:var(--space-muted);pointer-events:none}
+@media(max-width:500px){.pdf-toolbar{gap:5px}.pdf-toolbar button{padding:4px 7px}.pdf-toolbar input{width:43px}.pdf-stage{padding:10px}.pdf-toolbar-spacer{display:none}}

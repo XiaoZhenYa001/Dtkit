@@ -26,28 +26,32 @@ use alarm_scheduler::{
     take_missed_alarm_triggers, AlarmScheduler,
 };
 use desktop::commands::*;
-use desktop::space::{
-    desktop_space_ready, desktop_space_set_regions, get_desktop_organizer_mode,
-    set_desktop_organizer_mode, DesktopSpaceManager,
-};
 use desktop::hotzone::{
     get_hotzone_pos, is_hotzone_running, stop_hotzone_monitor, update_hotzone_pos,
     update_panel_bounds, HotZoneConfig, HotZoneMonitor,
 };
+use desktop::space::{
+    desktop_space_hide, desktop_space_ready, desktop_space_show, get_desktop_organizer_mode,
+    set_desktop_organizer_mode, DesktopSpaceManager,
+};
+use desktop::space_settings::{get_desktop_space_settings, update_desktop_space_settings};
 use file_output::write_qr_code;
 use infrastructure::cleanup::{
     get_cleanup_status, restore_latest_cleanup, run_storage_cleanup, schedule_automatic_cleanup,
     set_automatic_cleanup_enabled, set_cleanup_retention_days, CleanupManager,
 };
+use infrastructure::clipboard_puzzle::{
+    puzzle_asset, puzzle_close, puzzle_collect, puzzle_copy, puzzle_copy_text, puzzle_edit,
+    puzzle_get, puzzle_import_content, puzzle_import_image, puzzle_open, puzzle_open_url,
+    puzzle_output, puzzle_overview, puzzle_remove, puzzle_retention, puzzle_take_clipboard,
+    PuzzleManager,
+};
 use infrastructure::context_menu::{
     scan_context_menu_items, set_context_menu_enabled, ContextMenuManager,
 };
-use infrastructure::clipboard_puzzle::{
-    puzzle_asset, puzzle_close, puzzle_collect, puzzle_copy, puzzle_copy_text,
-    puzzle_edit, puzzle_get, puzzle_import_content, puzzle_import_image, puzzle_open, puzzle_open_url, puzzle_output, puzzle_overview,
-    puzzle_remove, puzzle_retention, puzzle_take_clipboard, PuzzleManager,
+use infrastructure::file_batch::{
+    get_file_batch_status, preview_file_batch, restore_file_batch, start_file_batch,
 };
-use infrastructure::file_batch::{get_file_batch_status, preview_file_batch, restore_file_batch, start_file_batch};
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::launch::{create_tool_launcher, LaunchRuntime, LaunchTarget};
 use infrastructure::palette::{open_local_search_result, search_local_files, LocalSearchManager};
@@ -79,7 +83,8 @@ use infrastructure::screenshot::{
 };
 use infrastructure::screenshot_content::{copy_screenshot_to_clipboard, recognize_screenshot_text};
 use infrastructure::shortcuts::{
-    get_shortcut_bindings, handle_shortcut, replace_shortcut_bindings, ShortcutRegistry,
+    get_shortcut_bindings, handle_shortcut, remove_shortcut_binding, replace_shortcut_bindings,
+    upsert_shortcut_binding, ShortcutRegistry,
 };
 use infrastructure::snippets::{delete_snippet, save_snippet, search_snippets, SnippetManager};
 use infrastructure::software_analysis::{
@@ -87,18 +92,22 @@ use infrastructure::software_analysis::{
     release_software_analysis, reveal_software_location, SoftwareAnalysisManager,
 };
 use infrastructure::sticky_notes::{
-    close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note, import_sticky_notes,
-    list_sticky_notes, open_sticky_note, restore_sticky_note, save_sticky_note,
-    set_sticky_note_collapsed, set_sticky_notes_visible, trash_sticky_note, StickyNoteManager,
+    close_sticky_note, create_sticky_note, delete_sticky_note, get_sticky_note,
+    import_sticky_notes, list_sticky_notes, open_sticky_note, restore_sticky_note,
+    save_sticky_note, set_sticky_note_collapsed, set_sticky_notes_visible, trash_sticky_note,
+    StickyNoteManager,
 };
 use infrastructure::storage::{
     get_storage_layout, get_storage_usage, migrate_storage_root, StorageManager,
 };
-use infrastructure::timetable::{close_timetable_widget, open_timetable_widget, pin_timetable_widget};
 use infrastructure::system_assistant::{
-    add_system_startup_item, adopt_system_startup_backups, create_system_startup_recovery, forget_system_startup_backup,
-    open_system_startup_folder, open_system_startup_settings, reveal_system_startup_item, scan_system_startup_items,
-    set_system_startup_enabled, SystemAssistantManager,
+    add_system_startup_item, adopt_system_startup_backups, create_system_startup_recovery,
+    forget_system_startup_backup, open_system_startup_folder, open_system_startup_settings,
+    reveal_system_startup_item, scan_system_startup_items, set_system_startup_enabled,
+    SystemAssistantManager,
+};
+use infrastructure::timetable::{
+    close_timetable_widget, open_timetable_widget, pin_timetable_widget,
 };
 use infrastructure::tool_modules::{
     get_tool_module_settings, set_tool_module_enabled, ToolModuleManager,
@@ -113,7 +122,9 @@ use infrastructure::whiteboard::{
     release_whiteboard_edit, save_whiteboard, save_whiteboard_draft, take_over_whiteboard_edit,
     WhiteboardEditManager,
 };
-use system_actions::{lock_screen, open_project_page, open_release_page, run_program, schedule_shutdown};
+use system_actions::{
+    lock_screen, open_project_page, open_release_page, run_program, schedule_shutdown,
+};
 
 static APP_SUSPENDED: AtomicBool = AtomicBool::new(false);
 static DEEP_SLEEP_CLOSING: AtomicBool = AtomicBool::new(false);
@@ -397,7 +408,9 @@ fn main_sleep_ready(window: WebviewWindow, token: u64, ready: bool) -> Result<()
         return Ok(()); // A restored/newer window invalidated this old response.
     }
     if ready {
-        window.state::<PasswordVaultManager>().release_cached_index();
+        window
+            .state::<PasswordVaultManager>()
+            .release_cached_index();
         DEEP_SLEEP_CLOSING.store(true, Ordering::Relaxed);
         window.close().map_err(|error| {
             DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
@@ -787,7 +800,9 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                 }
                 let visibility_app = app_handle.clone();
                 let _ = app_handle.run_on_main_thread(move || {
-                    let _ = visibility_app.state::<DesktopSpaceManager>().show_classic_if_allowed(&window);
+                    let _ = visibility_app
+                        .state::<DesktopSpaceManager>()
+                        .show_classic_if_allowed(&window);
                 });
             }
         } else if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
@@ -928,7 +943,10 @@ pub fn run() {
             if let Err(error) = app.state::<ToolModuleManager>().restore(app.handle()) {
                 eprintln!("[ToolModuleManager] 忽略无效的已保存配置: {error}");
             }
-            if let Err(error) = app.state::<DesktopSpaceManager>().restore_config(app.handle()) {
+            if let Err(error) = app
+                .state::<DesktopSpaceManager>()
+                .restore_config(app.handle())
+            {
                 eprintln!("[DesktopSpace] 忽略无效的已保存配置: {error}");
             }
             launch_target(app.handle(), initial_target.clone()).map_err(std::io::Error::other)?;
@@ -975,8 +993,12 @@ pub fn run() {
                     .cancel_window(window.app_handle(), window.label());
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                window.state::<SoftwareAnalysisManager>().cancel_window(window.label());
-                window.state::<PuzzleManager>().release_window(window.label());
+                window
+                    .state::<SoftwareAnalysisManager>()
+                    .cancel_window(window.label());
+                window
+                    .state::<PuzzleManager>()
+                    .release_window(window.label());
                 window
                     .state::<WhiteboardEditManager>()
                     .release_window(window.label());
@@ -986,7 +1008,9 @@ pub fn run() {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
                 let minimized = window.is_minimized().unwrap_or(false);
                 if minimized {
-                    window.state::<SoftwareAnalysisManager>().cancel_window("main");
+                    window
+                        .state::<SoftwareAnalysisManager>()
+                        .cancel_window("main");
                 }
                 let mode = window.state::<ResourceGovernor>().mode();
                 let suspended = minimized && mode != MinimizeMode::Standard;
@@ -1025,7 +1049,9 @@ pub fn run() {
 
             // 右上角关闭只进入托盘；真正退出只允许由托盘菜单触发。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.state::<SoftwareAnalysisManager>().cancel_window(window.label());
+                window
+                    .state::<SoftwareAnalysisManager>()
+                    .cancel_window(window.label());
                 if window.label() == "desktop-organizer" {
                     desktop::hotzone::set_user_interacting(false);
                 }
@@ -1048,10 +1074,8 @@ pub fn run() {
                     if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
                         let _ = organizer_window.hide();
                     }
-                } else {
-                    if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
-                        let _ = organizer_window.close();
-                    }
+                } else if let Some(organizer_window) = app.get_webview_window("desktop-organizer") {
+                    let _ = organizer_window.close();
                 }
 
                 if close_behavior == MainWindowCloseBehavior::DestroyWebview {
@@ -1139,7 +1163,11 @@ pub fn run() {
             get_resource_snapshot,
             release_idle_resources,
             get_shortcut_bindings,
+            upsert_shortcut_binding,
+            remove_shortcut_binding,
             replace_shortcut_bindings,
+            get_desktop_space_settings,
+            update_desktop_space_settings,
             open_quick_host,
             dismiss_quick_host,
             touch_quick_host_activity,
@@ -1224,6 +1252,7 @@ pub fn run() {
             desktop_search,
             desktop_list_folder,
             desktop_open_file,
+            desktop_preview_file,
             desktop_locate_file,
             desktop_rename_file,
             desktop_get_file_path,
@@ -1231,6 +1260,7 @@ pub fn run() {
             desktop_get_icon,
             desktop_list_apps,
             desktop_save_app,
+            desktop_set_app_category,
             desktop_reset_app,
             desktop_open_app,
             desktop_locate_app,
@@ -1238,7 +1268,8 @@ pub fn run() {
             get_desktop_organizer_mode,
             set_desktop_organizer_mode,
             desktop_space_ready,
-            desktop_space_set_regions,
+            desktop_space_show,
+            desktop_space_hide,
             start_hotzone_monitor,
             stop_hotzone,
             get_hotzone_status,

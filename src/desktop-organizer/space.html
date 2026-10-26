@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>桌面空间 · DtKit</title>
+    <link rel="stylesheet" href="../assets/remixicon-subset.css">
+    <link rel="stylesheet" href="launcher.css">
+    <link rel="stylesheet" href="glass-material.css">
+</head>
+<body>
+    <main class="launcher" id="launcher" aria-label="桌面空间" aria-hidden="true" inert>
+        <div class="launcher-material liquid-glass" aria-hidden="true"></div>
+        <div class="launcher-inner">
+            <header class="launcher-header">
+                <h1><i class="ri-layout-grid-line" aria-hidden="true"></i><span>空间</span></h1>
+                <label class="launcher-search"><i class="ri-search-line" aria-hidden="true"></i><input id="spaceSearch" type="search" placeholder="搜索文件、文件夹与应用" aria-label="搜索文件、文件夹与应用" autocomplete="off" spellcheck="false"><kbd>Ctrl F</kbd></label>
+                <button id="refreshSpace" class="icon-button" type="button" aria-label="刷新空间" title="刷新 · F5"><i class="ri-refresh-line" aria-hidden="true"></i></button>
+                <button id="closeSpace" class="icon-button" type="button" aria-label="收起空间" title="收起 · Esc"><i class="ri-close-line" aria-hidden="true"></i></button>
+            </header>
+            <nav class="launcher-filters" aria-label="文件类别">
+                <span class="filter-indicator" aria-hidden="true"></span>
+                <button type="button" data-filter="all" aria-pressed="true">全部</button>
+                <button type="button" data-filter="app" aria-pressed="false">应用</button>
+                <button type="button" data-filter="document" aria-pressed="false">文档</button>
+                <button type="button" data-filter="folder" aria-pressed="false">文件夹</button>
+                <button type="button" data-filter="image" aria-pressed="false">图片</button>
+                <button type="button" data-filter="other" aria-pressed="false">其他</button>
+            </nav>
+            <nav class="launcher-breadcrumb" aria-label="当前位置" hidden><button id="folderBack" type="button" aria-label="返回上一层"><i class="ri-arrow-left-line" aria-hidden="true"></i></button><button id="folderRoot" type="button">空间</button><span id="folderTrail"></span><span aria-hidden="true">/</span><span id="folderName" aria-current="page"></span><button id="folderExternal" type="button" title="在资源管理器中打开当前文件夹" aria-label="在资源管理器中打开当前文件夹"><i class="ri-external-link-line" aria-hidden="true"></i></button></nav>
+            <div class="launcher-folder-summary" id="folderSummary" role="status" hidden></div>
+            <div class="launcher-lists" id="spaceLists">
+                <section class="launcher-pinned" id="pinnedSection" aria-labelledby="pinnedTitle" hidden><h2 id="pinnedTitle"><i class="ri-pushpin-line" aria-hidden="true"></i>固定</h2><div class="launcher-grid" id="pinnedGrid" data-lane="pinned"></div></section>
+                <section class="launcher-files" aria-labelledby="filesTitle"><h2 id="filesTitle" hidden>文件</h2><div class="launcher-grid" id="fileGrid" data-lane="root"></div></section>
+                <div class="launcher-empty" id="spaceEmpty" hidden><i class="ri-folder-2-line" aria-hidden="true"></i><p id="emptyMessage">这里还没有文件</p></div>
+                <div class="launcher-exits" aria-hidden="true" inert></div>
+            </div>
+            <footer class="launcher-footer"><span id="spaceStatus" role="status" aria-live="polite">正在读取文件…</span><span class="launcher-hints"><kbd>Enter</kbd>打开 <kbd>Space</kbd>预览 <kbd>Esc</kbd>退出</span></footer>
+        </div>
+        <section class="launcher-preview" id="filePreview" role="dialog" aria-modal="true" aria-label="快速预览" hidden>
+            <div class="preview-material" aria-hidden="true"></div>
+            <div class="preview-inner"><header><div><strong id="previewName"></strong><small id="previewDetails"></small></div><div class="preview-actions"><button type="button" id="previewOpen">打开文件<i class="ri-external-link-line" aria-hidden="true"></i></button><button type="button" id="previewClose" class="icon-button" aria-label="关闭快速预览"><i class="ri-close-line" aria-hidden="true"></i></button></div></header><div class="preview-content" id="previewContent" aria-live="polite"></div></div>
+        </section>
+        <menu class="launcher-menu" id="fileMenu" aria-label="文件操作" hidden><li><button type="button" data-action="open">打开<kbd>Enter</kbd></button></li><li><button type="button" data-action="preview">快速预览<kbd>Space</kbd></button></li><li><button type="button" data-action="pin">固定到空间</button></li><li class="menu-separator" role="separator"></li><li><button type="button" data-action="locate">在文件夹中显示</button></li><li><button type="button" data-action="copy">复制路径</button></li></menu>
+    </main>
+    <script type="module" src="launcher.js"></script>
+</body>
+</html>

@@ -32,7 +32,7 @@ function uniqueFiles(files) {
 }
 
 function orderCategoryFiles(state, key, files) {
-    const order = state.groupPresentation?.(key)?.order;
+    const order = state.categoryPreferences?.orders?.[key];
     if (!Array.isArray(order) || !order.length) return files;
     const positions = new Map();
     order.forEach((id, index) => {
@@ -98,7 +98,7 @@ export function renderCategoryListMarkup(state) {
     const categoryOrder = ['recent', 'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'];
     let html = '';
     const categoryName = (key, fallback) => {
-        const name = state.groupPresentation?.(key)?.name;
+        const name = state.categoryPreferences?.names?.[key];
         return typeof name === 'string' && name.trim() ? name.trim() : fallback;
     };
     const manualApps = filesForCategory(state, 'managed-apps');

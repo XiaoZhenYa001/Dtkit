@@ -144,7 +144,7 @@ async fn work<T: Send + 'static>(
 pub(crate) async fn puzzle_overview(app: AppHandle) -> Result<Overview, String> {
     work(app, |app| {
         let manager = app.state::<PuzzleManager>();
-        let mut repo = manager.repository(&app)?;
+        let mut repo = manager.repository(app)?;
         let collecting = manager
             .collection
             .lock()
@@ -181,7 +181,7 @@ pub(crate) async fn puzzle_open(
         } else {
             None
         };
-        let mut repo = manager.repository(&app)?;
+        let mut repo = manager.repository(app)?;
         let task = repo.open(
             &owner,
             task_id.as_deref().or(collecting.as_deref()),
@@ -228,14 +228,14 @@ pub(crate) async fn puzzle_edit(
 ) -> Result<Task, String> {
     work(app, move |app| {
         let manager = app.state::<PuzzleManager>();
-        let mut repository = manager.repository(&app)?;
+        let mut repository = manager.repository(app)?;
         if let Some(revision) = expected_revision {
             if repository.load(&task_id)?.meta.revision != revision {
                 return Err("拼图已在其他窗口更新，请重新框选区域".into());
             }
         }
         let task = repository.edit(&task_id, operations)?;
-        notify(&app, Some(&task));
+        notify(app, Some(&task));
         Ok(task)
     })
     .await
@@ -245,8 +245,8 @@ pub(crate) async fn puzzle_edit(
 pub(crate) async fn puzzle_copy(app: AppHandle, request: CopyRequest) -> Result<Task, String> {
     work(app, move |app| {
         let manager = app.state::<PuzzleManager>();
-        let task = manager.repository(&app)?.copy(request)?;
-        notify(&app, Some(&task));
+        let task = manager.repository(app)?.copy(request)?;
+        notify(app, Some(&task));
         Ok(task)
     })
     .await
@@ -270,8 +270,8 @@ pub(crate) async fn puzzle_remove(app: AppHandle, task_id: String) -> Result<(),
         if collecting {
             manager.stop_locked();
         }
-        manager.repository(&app)?.remove(&task_id)?;
-        notify(&app, None);
+        manager.repository(app)?.remove(&task_id)?;
+        notify(app, None);
         Ok(())
     })
     .await
@@ -283,7 +283,7 @@ pub(crate) async fn puzzle_retention(app: AppHandle, hours: u64) -> Result<(), S
         app.state::<PuzzleManager>()
             .repository(app)?
             .set_retention(hours)?;
-        notify(&app, None);
+        notify(app, None);
         Ok(())
     })
     .await
@@ -308,7 +308,7 @@ pub(crate) async fn puzzle_collect(
             {
                 return Err("剪贴板拼图模块已停用".into());
             }
-            manager.repository(&app)?.load(&id)?;
+            manager.repository(app)?.load(&id)?;
             *manager.collection.lock().map_err(|_| "收集状态不可用")? = Collection {
                 task_id: Some(id),
                 error: None,
@@ -322,7 +322,7 @@ pub(crate) async fn puzzle_collect(
                         task_id: None,
                         error: Some(error.clone()),
                     };
-                    notify(&app, None);
+                    notify(app, None);
                     return Err(error);
                 }
             }
@@ -332,7 +332,7 @@ pub(crate) async fn puzzle_collect(
             .lock()
             .map_err(|_| "收集状态不可用")?
             .clone();
-        notify(&app, None);
+        notify(app, None);
         Ok(result)
     })
     .await?;
@@ -452,7 +452,7 @@ pub(crate) async fn puzzle_asset(
 ) -> Result<String, String> {
     work(app, move |app| {
         let manager = app.state::<PuzzleManager>();
-        let bytes = manager.repository(&app)?.asset(&asset_id, preview)?;
+        let bytes = manager.repository(app)?.asset(&asset_id, preview)?;
         Ok(format!(
             "data:image/png;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -513,7 +513,7 @@ pub(crate) async fn puzzle_output(
                 == Some(&task_id);
             if collecting {
                 manager.stop_locked();
-                notify(&app, None);
+                notify(app, None);
             }
             Ok(())
         })

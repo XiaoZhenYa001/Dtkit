@@ -6,8 +6,10 @@ function notify(message, type, fallback) {
     else if (fallback) fallback.textContent = message;
 }
 
-function targetKey(target) {
-    return target?.kind === 'palette' ? 'palette' : `tool:${target?.toolId || ''}`;
+export function targetKey(target) {
+    if (target?.kind === 'palette') return 'palette';
+    if (target?.kind === 'desktopSpace') return 'desktopSpace';
+    return `tool:${target?.toolId || ''}`;
 }
 
 function displayKeys(accelerator) {
@@ -61,31 +63,58 @@ export function mountShortcutBinding(container, options) {
     const { signal } = controller;
     const view = createMarkup(options);
     let bindings = [];
-    let recording = false;
+    let recording = false, ready = false, busy = false, revision = 0, lastError = '';
+    const idleHint = options.hint || (options.compact ? '仅弹出当前工具' : '唤起轻量命令面板');
 
     const binding = () => bindings.find(item => targetKey(item.target) === key);
     const render = () => {
         renderKeys(view.record, binding()?.accelerator);
         view.record.classList.toggle('is-recording', recording);
-        view.record.disabled = !invoke;
-        view.clear.disabled = !invoke || !binding();
-        view.hint.textContent = recording
+        view.record.disabled = !invoke || !ready || busy;
+        view.clear.disabled = !invoke || !ready || !binding() || busy;
+        const unavailable = binding()?.registered === false;
+        view.root.dataset.status = unavailable ? 'unregistered' : 'ready';
+        view.hint.textContent = lastError || (recording
             ? '请按包含 Ctrl、Alt、Shift 或 Win 的组合键'
-            : (options.compact ? '仅弹出当前工具' : '唤起轻量命令面板');
+            : busy ? '正在保存…' : unavailable ? `快捷键未注册：${binding().registrationError || '请更换组合键或重试'}` : idleHint);
+    };
+    const accept = result => {
+        if (signal.aborted || !Array.isArray(result)) return;
+        revision++; bindings = result; ready = true; render();
+    };
+    const refresh = async () => {
+        const request = ++revision;
+        const result = await invoke('get_shortcut_bindings');
+        if (!signal.aborted && request === revision) accept(result);
+    };
+    const save = async (command, args, message) => {
+        if (!invoke || busy) return;
+        busy = true; recording = false; lastError = ''; revision++; render();
+        let committed = false;
+        try {
+            await invoke(command, args);
+            committed = true;
+            // Fetch the latest state rather than rendering an edit response that
+            // may already be superseded by a concurrent edit in another WebView.
+            await refresh();
+            if (!signal.aborted) { announce(); notify(message, '', view.hint); }
+        } catch (error) { lastError = `快捷键${committed ? '已保存，状态刷新失败' : '保存失败'}：${error}`; }
+        finally { busy = false; if (!signal.aborted) render(); }
+    };
+    const announce = () => {
+        window.dispatchEvent(new CustomEvent('dtkit:shortcut-bindings-changed', { detail: { bindings } }));
     };
 
     view.record.addEventListener('click', event => {
-        event.stopPropagation(); recording = !recording; render();
-    }, { signal });
-    view.clear.addEventListener('click', async event => {
         event.stopPropagation();
-        if (!invoke) return;
-        try {
-            bindings = await invoke('replace_shortcut_bindings', {
-                bindings: bindings.filter(item => targetKey(item.target) !== key)
-            });
-            recording = false; render(); notify(`已清除“${options.label}”快捷键`, '', view.hint);
-        } catch (error) { notify(`快捷键清除失败：${error}`, 'error', view.hint); }
+        if (busy) return;
+        lastError = ''; recording = !recording;
+        if (recording) window.dispatchEvent(new CustomEvent('dtkit:shortcut-recording-started', { detail: view.root }));
+        render();
+    }, { signal });
+    view.clear.addEventListener('click', event => {
+        event.stopPropagation();
+        void save('remove_shortcut_binding', { target }, `已清除“${options.label}”快捷键`);
     }, { signal });
     document.addEventListener('keydown', async event => {
         if (!recording) return;
@@ -96,20 +125,30 @@ export function mountShortcutBinding(container, options) {
         if (!event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
             notify('系统级快捷键至少需要一个修饰键', 'error', view.hint); return;
         }
-        const conflict = bindings.find(item => item.accelerator === candidate && targetKey(item.target) !== key);
-        if (conflict) { notify(`快捷键 ${candidate} 已被其他工具使用`, 'error', view.hint); return; }
-        const next = bindings.filter(item => targetKey(item.target) !== key);
-        next.push({ accelerator: candidate, target, enabled: true });
-        try {
-            bindings = await invoke('replace_shortcut_bindings', { bindings: next });
-            recording = false; render(); notify(`“${options.label}”快捷键已更新`, '', view.hint);
-        } catch (error) { notify(`快捷键保存失败：${error}`, 'error', view.hint); }
+        await save('upsert_shortcut_binding', { binding: { accelerator: candidate, target, enabled: true } }, `“${options.label}”快捷键已更新`);
     }, { signal, capture: true });
 
     container.replaceChildren(view.root);
     render();
-    if (invoke) invoke('get_shortcut_bindings').then(result => {
-        if (!signal.aborted) { bindings = result; render(); }
-    }).catch(error => { if (!signal.aborted) view.hint.textContent = `读取失败：${error}`; });
+    if (invoke) {
+        const reload = () => refresh().catch(error => { if (!signal.aborted) view.hint.textContent = `读取失败：${error}`; });
+        window.addEventListener('dtkit:shortcut-bindings-changed', event => {
+            if (Array.isArray(event.detail?.bindings)) accept(event.detail.bindings);
+            else reload();
+        }, { signal });
+        const listen = window.__TAURI__?.event?.listen;
+        if (typeof listen === 'function') {
+            let unlisten = null;
+            Promise.resolve(listen('shortcut-bindings-changed', event => accept(event.payload)))
+                .then(dispose => { if (signal.aborted) dispose(); else unlisten = dispose; })
+                .catch(error => { if (!signal.aborted) view.hint.textContent = `同步失败：${error}`; });
+            signal.addEventListener('abort', () => unlisten?.(), { once: true });
+        }
+        window.addEventListener('focus', reload, { signal });
+        window.addEventListener('dtkit:shortcut-recording-started', event => {
+            if (event.detail !== view.root && recording) { recording = false; render(); }
+        }, { signal });
+        reload();
+    }
     return () => controller.abort();
 }

@@ -139,7 +139,9 @@ pub(crate) async fn finish_tool_only_if_idle(app: AppHandle) {
         has_mirrors: app
             .state::<super::region_mirror::RegionMirrorManager>()
             .has_active_mirrors(),
-        has_collection: app.state::<super::clipboard_puzzle::PuzzleManager>().has_active_collection(),
+        has_collection: app
+            .state::<super::clipboard_puzzle::PuzzleManager>()
+            .has_active_collection(),
         has_maintenance: app.state::<super::cleanup::CleanupManager>().is_running()
             || app.state::<LaunchRuntime>().has_active_operations(),
     };

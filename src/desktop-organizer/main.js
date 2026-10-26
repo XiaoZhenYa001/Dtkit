@@ -8,10 +8,7 @@ import {
     readDesktopSnapshot,
     writeDesktopSnapshot
 } from './snapshot.js';
-import {
-    reconcileFileCategories,
-    isValidFileCategoryKey
-} from './categories.js';
+import { isValidFileCategoryKey, reconcileFileCategories } from './categories.js';
 import { createDesktopOrganizerState } from './store.js';
 import { buildSearchIndex, querySearchIndex } from './search.js';
 import {
@@ -25,13 +22,18 @@ import {
 } from './views/file-view.js';
 import { createFolderController } from './folder-controller.js';
 import { createCategoryController } from './category-controller.js';
+import { CATEGORY_STORAGE_KEY } from './category-storage.js';
 import { createFileActions } from './file-actions.js';
 import { createWindowController } from './window-controller.js';
-import { createDesktopSpaceView } from './space-view.js';
-import { createInteractionGate, createPresentationTransition } from './presentation-controller.js';
-import { prepareDesktopHost } from './desktop-host.js';
+import { createInteractionGate } from './presentation-controller.js';
+import {
+    CLASSIC_CATEGORY_STORAGE_KEY,
+    readClassicCategoryPreferences,
+    writeClassicCategoryPreferences,
+    migrateClassicCategoryPath
+} from './classic-preferences.js';
+import { LAUNCHER_STORAGE_KEY, readLauncherPreferences, migrateLauncherPath } from './launcher-model.js';
 import { createIconHydrator } from './icon-hydration.js';
-import './desktop-host.css';
 import {
     getDesktopOrganizerSettings,
     normalizeDesktopOrganizerPresentation,
@@ -40,7 +42,6 @@ import {
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
-const isDesktopHost = new URLSearchParams(window.location.search).get('host') === 'desktop';
 
 // ============================================
 // 状态管理
@@ -54,8 +55,6 @@ const elements = {
     panel: document.getElementById('panel'),
     dragHandle: document.getElementById('dragHandle'),
     categoryList: document.getElementById('categoryList'),
-    spaceView: document.getElementById('desktopSpaceView'),
-    stage: document.querySelector('.organizer-content'),
     appearanceBtn: document.getElementById('appearanceBtn'),
     appearancePanel: document.getElementById('appearancePanel'),
     searchInput: document.getElementById('searchInput'),
@@ -84,14 +83,9 @@ const elements = {
 };
 
 const appWindow = getCurrentWindow();
-const interactions = isDesktopHost ? { set() {}, clear() {} } : createInteractionGate({ invoke, window });
+const interactions = createInteractionGate({ invoke, window });
 let presentation = normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings());
-presentation.presentation = isDesktopHost ? 'space' : 'classic';
-const desktopRegions = isDesktopHost ? prepareDesktopHost({ document, window, invoke }) : null;
-let appAssignmentDepth = 0, pendingAppRescan = false;
-const windowController = isDesktopHost ? {
-    async loadPreferences() {}, async syncHotzonePosition() {}, async cancelInteractions() {}
-} : createWindowController({
+const windowController = createWindowController({
     invoke,
     appWindow,
     state,
@@ -128,7 +122,6 @@ function renderCategoryList() {
         `;
         return;
     }
-    spaceView.render(presentation);
     elements.categoryList.innerHTML = renderCategoryListMarkup(state);
     elements.categoryList.scrollTop = scrollTop;
     elements.statusText.textContent = `共 ${state.files.total_count} 个项目`;
@@ -163,7 +156,12 @@ const categoryController = createCategoryController({
     state,
     storage: globalThis.localStorage,
     renderCategories: renderCategoryList,
-    categorySubmenu: elements.categorySubmenu
+    categorySubmenu: elements.categorySubmenu,
+    onError: message => {
+        const feedback = document.getElementById('categoryFeedback');
+        feedback.textContent = message; feedback.hidden = !message;
+        if (message) setDesktopStatus(message);
+    }
 });
 const loadCustomCategories = categoryController.load;
 const saveCustomCategories = categoryController.save;
@@ -173,6 +171,7 @@ const moveFileToCategory = categoryController.moveFile;
 const getFileCustomCategory = categoryController.categoryForFile;
 const updateCategorySubmenu = categoryController.updateSubmenu;
 
+const renameMetadataWarnings = new Map();
 const fileActions = createFileActions({
     invoke,
     state,
@@ -180,44 +179,45 @@ const fileActions = createFileActions({
     saveCategories: saveCustomCategories,
     loadDesktopFiles,
     refreshCurrentView,
-    onRename: (oldPath, newPath) => spaceView.migratePath(oldPath, newPath)
+    onRename: (oldPath, newPath) => {
+        const next = migrateClassicCategoryPath(state.categoryPreferences, oldPath, newPath);
+        state.categoryPreferences = next;
+        const errors = [];
+        try {
+            writeClassicCategoryPreferences(globalThis.localStorage, next);
+        } catch (error) { errors.push(error); }
+        try {
+            const launcherPreferences = globalThis.localStorage.getItem(LAUNCHER_STORAGE_KEY);
+            if (launcherPreferences !== null) {
+                const current = readLauncherPreferences(globalThis.localStorage);
+                globalThis.localStorage.setItem(LAUNCHER_STORAGE_KEY, JSON.stringify(migrateLauncherPath(current, oldPath, newPath)));
+            }
+        } catch (error) { errors.push(error); }
+        if (errors.length) {
+            console.warn('[DesktopOrganizer] 文件已重命名，固定/排序设置同步失败', ...errors);
+            renameMetadataWarnings.set(oldPath, `文件已重命名，固定/排序设置同步失败 · ${errors.map(String).join('；')}`);
+        }
+    }
 });
 const openFile = fileActions.open;
 const locateFile = fileActions.locate;
-const renameFile = fileActions.rename;
+const renameFile = async (path, newName) => {
+    renameMetadataWarnings.delete(path);
+    await fileActions.rename(path, newName);
+    const warning = renameMetadataWarnings.get(path);
+    renameMetadataWarnings.delete(path);
+    if (warning) setDesktopStatus(warning);
+};
 const copyToClipboard = fileActions.copyToClipboard;
 
-const spaceView = createDesktopSpaceView({
-    root: elements.spaceView,
-    state,
-    storage: globalThis.localStorage,
-    onSelect: selectFileItem,
-    onOpen: async file => {
-        if (file.is_folder) {
-            spaceView.close();
-            await enterFolder({ path: file.path, name: file.name });
-        } else await openFile(file.path, file.app_id || '');
-    },
-    onContextMenu: showContextMenu,
-    onAssign: assignSpaceFile,
-    hydrateIcons: hydrateVisibleAppIcons,
-    onInteraction: active => interactions.set('space', active),
-    onError: error => setDesktopStatus(`操作失败 · ${String(error).slice(0, 100)}`)
-});
-state.groupPresentation = key => spaceView.getGroupDisplay(key);
-
 function syncViewVisibility() {
-    const showSpace = presentation.presentation === 'space' && (isDesktopHost || !state.isSearching && !state.folderView.active);
-    elements.spaceView.hidden = !showSpace;
-    elements.categoryList.hidden = isDesktopHost ? !state.folderView.active || presentation.presentation !== 'space' : showSpace || state.isSearching;
+    elements.categoryList.hidden = state.isSearching;
     elements.categoryList.style.display = elements.categoryList.hidden ? 'none' : 'block';
-    elements.searchResults.hidden = !state.isSearching || isDesktopHost && presentation.presentation !== 'space';
+    elements.searchResults.hidden = !state.isSearching;
     elements.searchResults.style.display = elements.searchResults.hidden ? 'none' : 'block';
-    desktopRegions?.schedule();
 }
 function currentView() {
-    return state.isSearching ? elements.searchResults : state.folderView.active || presentation.presentation === 'classic'
-        ? elements.categoryList : elements.spaceView;
+    return state.isSearching ? elements.searchResults : elements.categoryList;
 }
 function restoreSelection() {
     if (!state.selectedFile) return;
@@ -225,79 +225,16 @@ function restoreSelection() {
         item.classList.toggle('selected', item.dataset.path === state.selectedFile.path);
     }
 }
-async function assignSpaceFile(file, categoryKey) {
-    if (!isValidFileCategoryKey(categoryKey, state.customCategories)) throw new Error('分类已不存在，请刷新后重试');
-    if (!file.app_id) {
-        const next = { ...state.fileCategories, [file.path]: categoryKey };
-        // Commit persistence before the drag replaces its placeholder. A failed
-        // write leaves both the original category and the live source node intact.
-        globalThis.localStorage.setItem('desktop_organizer_file_categories', JSON.stringify(next));
-        state.fileCategories = next;
-        return;
-    }
-    appAssignmentDepth++;
-    try {
-        const category = categoryKey.startsWith('app_category_')
-            ? decodeURIComponent(categoryKey.slice('app_category_'.length)) : categoryKey;
-        await invoke('desktop_save_app', { request: {
-            path: file.path, name: file.name, category, hidden: false,
-            manual: !!file.app_manual, iconPath: null
-        } });
-        file.app_category = category;
-        const live = state.files?.applications?.find(app => app.app_id === file.app_id);
-        if (live) live.app_category = category;
-    } finally {
-        appAssignmentDepth--;
-        // The file grid commits its placeholder before an app-index refresh can render.
-        if (!appAssignmentDepth && pendingAppRescan) {
-            pendingAppRescan = false;
-            setTimeout(() => void loadDesktopFiles(), 400);
-        }
-    }
-}
-
-const presentationTransition = createPresentationTransition({
-    stage: elements.stage, getView: currentView,
-    reducedMotion: () => presentation.reducedMotion || window.matchMedia('(prefers-reduced-motion: reduce)').matches
-});
 function syncAppearanceControls() {
-    document.body.dataset.appearance = presentation.appearance;
-    document.body.dataset.presentation = presentation.presentation;
+    document.body.dataset.presentation = 'classic';
     document.body.dataset.reducedMotion = String(presentation.reducedMotion);
-    for (const [attribute, key] of [['presentationChoice', 'presentation'], ['layoutChoice', 'layout'], ['appearanceChoice', 'appearance']]) {
-        elements.appearancePanel.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}]`).forEach(button => {
-            button.setAttribute('aria-pressed', String(button.dataset[attribute] === presentation[key]));
-        });
-    }
-    document.getElementById('spaceLayoutChoices').hidden = presentation.presentation !== 'space';
     document.getElementById('organizerReducedMotion').checked = presentation.reducedMotion;
 }
-function applyPresentation(settings, { animate = true } = {}) {
+function applyPresentation(settings) {
     const next = normalizeDesktopOrganizerPresentation(settings);
-    // Each native host owns one presentation. Keep its current view intact
-    // while native retires or hides it, including before the IPC is dispatched.
-    if (next.presentation !== (isDesktopHost ? 'space' : 'classic')) return;
-    if (JSON.stringify(next) === JSON.stringify(presentation)) return;
-    const oldView = currentView(), focused = document.activeElement;
-    const scroll = { classic: elements.categoryList.scrollTop, search: elements.searchResults.scrollTop };
-    const render = () => {
-        presentation = next;
-        spaceView.close();
-        syncAppearanceControls();
-        spaceView.render(presentation);
-        if (!state.folderView.active && state.files) elements.categoryList.innerHTML = renderCategoryListMarkup(state);
-        elements.categoryList.scrollTop = scroll.classic;
-        elements.searchResults.scrollTop = scroll.search;
-        syncViewVisibility(); restoreSelection();
-        if (oldView.contains(focused)) {
-            const match = [...currentView().querySelectorAll('.file-item')].find(item => item.dataset.path === state.selectedFile?.path && item.getClientRects().length);
-            (match || elements.searchInput).focus({ preventScroll: true });
-        }
-        queueMicrotask(() => hydrateVisibleAppIcons(currentView()));
-    };
-    if (animate && !next.reducedMotion) presentationTransition.run(render);
-    else { presentationTransition.cancel(); render(); }
-    desktopRegions?.schedule();
+    if (next.reducedMotion === presentation.reducedMotion) return;
+    presentation = next;
+    syncAppearanceControls();
 }
 let appearanceAnimation = null;
 function closeAppearance() {
@@ -308,9 +245,8 @@ function closeAppearance() {
 }
 elements.appearanceBtn.addEventListener('click', () => {
     if (!elements.appearancePanel.hidden) { closeAppearance(); return; }
-    spaceView.close(); hideContextMenu(); hideBlankContextMenu();
+    hideContextMenu(); hideBlankContextMenu();
     elements.appearancePanel.hidden = false;
-    desktopRegions?.positionPopover();
     elements.appearanceBtn.setAttribute('aria-expanded', 'true');
     interactions.set('appearance', true);
     if (!presentation.reducedMotion && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -319,29 +255,20 @@ elements.appearanceBtn.addEventListener('click', () => {
 });
 elements.appearancePanel.addEventListener('click', async event => {
     if (event.target.closest('[data-appearance-close]')) { closeAppearance(); elements.appearanceBtn.focus({ preventScroll: true }); return; }
-    const button = event.target.closest('[data-presentation-choice], [data-layout-choice], [data-appearance-choice]');
-    if (!button) return;
-    const patch = button.dataset.presentationChoice ? { presentation: button.dataset.presentationChoice }
-        : button.dataset.layoutChoice ? { layout: button.dataset.layoutChoice } : { appearance: button.dataset.appearanceChoice };
-    if (isDesktopHost && !button.dataset.presentationChoice) patch.presentation = 'space';
-    try {
-        await updateDesktopOrganizerPresentation(patch);
-        applyPresentation(getDesktopOrganizerSettings());
-    }
-    catch (error) { document.getElementById('appearanceFeedback').textContent = `保存失败：${error}`; }
 });
 document.getElementById('organizerReducedMotion').addEventListener('change', async event => {
     try {
-        await updateDesktopOrganizerPresentation({ reducedMotion: event.target.checked, ...(isDesktopHost ? { presentation: 'space' } : {}) });
+        await updateDesktopOrganizerPresentation({ reducedMotion: event.target.checked });
         applyPresentation(getDesktopOrganizerSettings());
     }
     catch (error) { document.getElementById('appearanceFeedback').textContent = `保存失败：${error}`; }
 });
 window.addEventListener('dtkit:desktop-organizer-presentation-changed', () => applyPresentation(getDesktopOrganizerSettings()));
 window.addEventListener('storage', event => {
+    if (event.key === CATEGORY_STORAGE_KEY && loadCustomCategories() && !state.folderView.active) renderCategoryList();
     if (event.key === 'dtkit_desktop_organizer') applyPresentation(getDesktopOrganizerSettings());
-    if (event.key === 'dtkit_desktop_space_v1') {
-        spaceView.reloadMetadata();
+    if (event.key === CLASSIC_CATEGORY_STORAGE_KEY) {
+        state.categoryPreferences = readClassicCategoryPreferences(globalThis.localStorage);
         if (!state.folderView.active) renderCategoryList();
     }
 });
@@ -350,26 +277,6 @@ document.addEventListener('click', event => {
 });
 document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !elements.appearancePanel.hidden) { event.preventDefault(); closeAppearance(); elements.appearanceBtn.focus({ preventScroll: true }); }
-});
-function toggleDesktopSearch(open) {
-    if (!isDesktopHost) return;
-    const container = elements.searchInput.closest('.search-container');
-    container.hidden = !open;
-    document.getElementById('desktopSearchButton').setAttribute('aria-expanded', String(open));
-    if (open) {
-        spaceView.close(); closeAppearance();
-        elements.searchInput.focus({ preventScroll: true });
-    } else {
-        elements.searchInput.value = '';
-        elements.searchInput.dispatchEvent(new Event('input'));
-    }
-    desktopRegions.schedule();
-}
-document.getElementById('desktopSearchButton').addEventListener('click', () => {
-    toggleDesktopSearch(elements.searchInput.closest('.search-container').hidden);
-});
-document.getElementById('desktopCategoryButton').addEventListener('click', () => {
-    spaceView.close(); closeAppearance(); showCreateCategoryDialog();
 });
 const legacyPopupObserver = new MutationObserver(() => {
     const open = [elements.contextMenu, elements.blankContextMenu, elements.renameDialog, elements.createCategoryDialog, elements.manageCategoriesDialog]
@@ -464,10 +371,10 @@ function searchFiles(query) {
 // 键盘快捷键
 // ============================================
 function visibleFileItems(currentItem) {
-    const root = currentItem.closest('#searchResultsList, .folder-browser__list, .category-files, .space-file-grid')
+    const root = currentItem.closest('#searchResultsList, .folder-browser__list, .category-files')
         || (state.isSearching ? elements.searchResultsList : elements.categoryList);
     return [...root.querySelectorAll('.file-item')]
-        .filter(item => item.getClientRects().length > 0 && !item.closest('[data-presentation-ghost]'));
+        .filter(item => item.getClientRects().length > 0);
 }
 
 function moveFileFocus(currentItem, key) {
@@ -489,9 +396,26 @@ function moveFileFocus(currentItem, key) {
 }
 
 document.addEventListener('keydown', async (e) => {
-    if (e.target.closest?.('#appearancePanel, .space-editor')) return;
-    // 如果重命名对话框打开，不处理快捷键（除了在输入框内的处理）
-    if (getComputedStyle(elements.renameDialog).display !== 'none') {
+    if (e.target.closest?.('#appearancePanel')) return;
+    const activeDialog = [elements.renameDialog, elements.createCategoryDialog, elements.manageCategoriesDialog]
+        .find(dialog => dialog && getComputedStyle(dialog).display !== 'none');
+    if (activeDialog) {
+        // Dialog controls own their keys, including during their exit animation.
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (activeDialog === elements.renameDialog) hideRenameDialog();
+            else if (activeDialog === elements.createCategoryDialog) hideCreateCategoryDialog();
+            else hideManageCategoriesDialog();
+        }
+        if (e.key === 'Tab') {
+            const controls = [...activeDialog.querySelectorAll('button:not(:disabled),input:not(:disabled),select,textarea,[tabindex="0"]')]
+                .filter(control => control.getClientRects().length);
+            const first = controls[0], last = controls.at(-1);
+            if (first && (e.shiftKey && (document.activeElement === first || !activeDialog.contains(document.activeElement))
+                || !e.shiftKey && (document.activeElement === last || !activeDialog.contains(document.activeElement)))) {
+                e.preventDefault(); (e.shiftKey ? last : first).focus();
+            }
+        }
         return;
     }
     
@@ -501,11 +425,11 @@ document.addEventListener('keydown', async (e) => {
         if (e.key === 'Escape') {
             elements.searchInput.value = '';
             elements.searchInput.dispatchEvent(new Event('input'));
-            if (isDesktopHost) toggleDesktopSearch(false);
         }
         return;
     }
 
+    if (e.isComposing || e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) return;
     const focusedFile = e.target.closest?.('.file-item');
     if (focusedFile && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
         if (moveFileFocus(focusedFile, e.key)) e.preventDefault();
@@ -514,7 +438,7 @@ document.addEventListener('keydown', async (e) => {
     
     // 获取当前选中的文件
     const selectedItem = [...currentView().querySelectorAll('.file-item.selected')]
-        .find(item => item.getClientRects().length && !item.closest('[hidden], [data-presentation-ghost]'));
+        .find(item => item.getClientRects().length && !item.closest('[hidden]'));
     
     if (selectedItem && state.selectedFile) {
         const { path, name, isFolder, appId } = state.selectedFile;
@@ -554,7 +478,6 @@ document.addEventListener('keydown', async (e) => {
     // Ctrl+F 或 / - 聚焦搜索框
     if ((e.ctrlKey && e.key === 'f') || (e.key === '/' && !e.ctrlKey && !e.altKey)) {
         e.preventDefault();
-        if (isDesktopHost) toggleDesktopSearch(true);
         elements.searchInput.focus();
         elements.searchInput.select();
     }
@@ -574,7 +497,6 @@ document.addEventListener('keydown', async (e) => {
 function selectFileItem(fileItem) {
     // 移除之前的选中状态
     document.querySelectorAll('.file-item.selected').forEach(item => {
-        if (item.closest('[data-presentation-ghost]')) return;
         item.classList.remove('selected');
     });
     
@@ -711,7 +633,11 @@ elements.searchResultsList?.addEventListener('dblclick', async (e) => {
 });
 
 // 右键菜单
+let contextMenuCloseTimer = null, blankContextMenuCloseTimer = null;
+
 function showContextMenu(e, fileItem) {
+    clearTimeout(contextMenuCloseTimer);
+    elements.contextMenu.classList.remove('closing');
     e.preventDefault();
     hideBlankContextMenu();
     
@@ -767,10 +693,11 @@ function showContextMenu(e, fileItem) {
 }
 
 function hideContextMenu() {
-    if (elements.contextMenu.style.display === 'none') return;
+    if (getComputedStyle(elements.contextMenu).display === 'none') return;
+    clearTimeout(contextMenuCloseTimer);
     elements.contextMenu.querySelector('.has-submenu')?.classList.remove('is-open');
     elements.contextMenu.classList.add('closing');
-    setTimeout(() => {
+    contextMenuCloseTimer = setTimeout(() => {
         elements.contextMenu.style.display = 'none';
         elements.contextMenu.classList.remove('closing');
     }, 150);
@@ -779,6 +706,8 @@ function hideContextMenu() {
 // 空白区域右键菜单
 function showBlankContextMenu(e) {
     e.preventDefault();
+    clearTimeout(blankContextMenuCloseTimer);
+    elements.blankContextMenu.classList.remove('closing');
     hideContextMenu();
     
     elements.blankContextMenu.style.display = 'block';
@@ -803,9 +732,10 @@ function showBlankContextMenu(e) {
 }
 
 function hideBlankContextMenu() {
-    if (!elements.blankContextMenu || elements.blankContextMenu.style.display === 'none') return;
+    if (!elements.blankContextMenu || getComputedStyle(elements.blankContextMenu).display === 'none') return;
+    clearTimeout(blankContextMenuCloseTimer);
     elements.blankContextMenu.classList.add('closing');
-    setTimeout(() => {
+    blankContextMenuCloseTimer = setTimeout(() => {
         elements.blankContextMenu.style.display = 'none';
         elements.blankContextMenu.classList.remove('closing');
     }, 150);
@@ -830,7 +760,6 @@ elements.searchResultsList?.addEventListener('contextmenu', (e) => {
 
 // 面板空白区域右键
 elements.panel.addEventListener('contextmenu', (e) => {
-    if (isDesktopHost && e.target.closest('.space-view, .desktop-tools, .appearance-panel')) return;
     // 只在非文件区域触发
     if (!e.target.closest('.file-item') && !e.target.closest('.context-menu')) {
         showBlankContextMenu(e);
@@ -849,7 +778,8 @@ elements.contextMenu.addEventListener('click', async (e) => {
     
     // 如果点击的是有子菜单的项，不处理
     if (menuItem.classList.contains('has-submenu')) {
-        menuItem.classList.toggle('is-open');
+        e.stopPropagation();
+        openCategorySubmenu();
         return;
     }
     
@@ -875,21 +805,28 @@ elements.contextMenu.addEventListener('click', async (e) => {
 });
 
 // 分类子菜单点击
-elements.categorySubmenu?.addEventListener('click', (e) => {
+elements.categorySubmenu?.addEventListener('click', async (e) => {
     e.stopPropagation();
     const submenuItem = e.target.closest('.submenu-item');
     if (!submenuItem || !state.selectedFile) return;
     
     const categoryKey = submenuItem.dataset.category;
-    const { path } = state.selectedFile;
-    
-    if (categoryKey === 'null') {
-        moveFileToCategory(path, null);
-    } else {
-        moveFileToCategory(path, categoryKey);
-    }
-    
+    const { path, appId } = state.selectedFile;
     hideContextMenu();
+    if (appId) {
+        const category = categoryKey === 'null' ? 'program' : categoryKey;
+        if (category !== 'program' && !isValidFileCategoryKey(category, state.customCategories)) return;
+        let saved = false;
+        try {
+            await invoke('desktop_set_app_category', { path, category });
+            saved = true;
+            if (scanPromise) await scanPromise.catch(() => {});
+            // Also refresh locally if the cross-window notification is missed.
+            await loadDesktopFiles();
+        } catch (error) { setDesktopStatus(`${saved ? '应用分类已保存，刷新失败' : '应用分类保存失败'} · ${String(error)}`); }
+    } else {
+        moveFileToCategory(path, categoryKey === 'null' ? null : categoryKey);
+    }
 });
 
 // 空白区域菜单操作
@@ -966,7 +903,7 @@ elements.createCategoryConfirmBtn?.addEventListener('click', () => {
     }
     
     if (!createCategory(name, selectedCategoryIcon)) {
-        elements.categoryNameInput.setCustomValidity('分类名称已存在');
+        elements.categoryNameInput.setCustomValidity(categoryController.error || '分类名称已存在');
         elements.categoryNameInput.reportValidity();
         elements.categoryNameInput.addEventListener('input', () => elements.categoryNameInput.setCustomValidity(''), { once: true });
         return;
@@ -975,7 +912,9 @@ elements.createCategoryConfirmBtn?.addEventListener('click', () => {
 });
 
 elements.categoryNameInput?.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
     if (e.key === 'Enter') {
+        e.preventDefault();
         elements.createCategoryConfirmBtn.click();
     } else if (e.key === 'Escape') {
         hideCreateCategoryDialog();
@@ -989,6 +928,7 @@ function showManageCategoriesDialog() {
     renderManageCategoriesList();
     elements.manageCategoriesDialog.style.display = 'flex';
     elements.manageCategoriesDialog.classList.remove('closing');
+    requestAnimationFrame(() => elements.manageCategoriesCloseBtn.focus());
 }
 
 function hideManageCategoriesDialog() {
@@ -1010,7 +950,7 @@ function renderManageCategoriesList() {
     }
     
     elements.customCategoriesList.innerHTML = state.customCategories.map(cat => {
-        const fileCount = Object.values(state.fileCategories).filter(k => k === cat.key).length;
+        const fileCount = filesForCategory(state, cat.key).length;
         return `
             <div class="category-manage-item" data-key="${cat.key}">
                 <span class="category-manage-icon">${cat.icon}</span>
@@ -1143,13 +1083,11 @@ document.addEventListener('visibilitychange', async () => {
         hideContextMenu();
         hideRenameDialog();
         closeAppearance();
-        spaceView.close();
-        presentationTransition.cancel();
         
         await windowController.cancelInteractions();
         interactions.clear();
     } else {
-        applyPresentation(getDesktopOrganizerSettings(), { animate: false });
+        applyPresentation(getDesktopOrganizerSettings());
         if (Date.now() - lastSuccessfulScanAt < LIVE_RESCAN_INTERVAL_MS) return;
         // 只在窗口重新可见时刷新，不使用后台轮询。
         if (state.folderView.active) {
@@ -1177,14 +1115,6 @@ elements.categorySubmenu?.addEventListener('pointerleave', scheduleSubmenuClose)
 // 窗口失去焦点时关闭右键菜单
 window.addEventListener('blur', () => {
     hideContextMenu();
-    if (isDesktopHost) {
-        hideBlankContextMenu(); closeAppearance();
-        // Explorer receives clicks outside the shaped window, so its blank area
-        // cannot generate a DOM click. Losing focus closes temporary surfaces,
-        // while an unfinished name edit stays available when the user returns.
-        if (elements.spaceView.querySelector('.space-overlay')?.hidden) spaceView.closeTransients();
-        if (!elements.searchInput.closest('.search-container').hidden) toggleDesktopSearch(false);
-    }
 });
 
 // ============================================
@@ -1192,63 +1122,28 @@ window.addEventListener('blur', () => {
 // ============================================
 async function init() {
     await loadUserPreferences();
+    state.categoryPreferences = readClassicCategoryPreferences(globalThis.localStorage);
     loadCustomCategories();
     await window.__TAURI__.event?.listen('desktop-app-index-changed', async () => {
         appIconCache.clear();
-        if (appAssignmentDepth) { pendingAppRescan = true; return; }
         const pendingScan = scanPromise;
-        if (pendingScan) await pendingScan;
+        if (pendingScan) await pendingScan.catch(() => {});
         await loadDesktopFiles();
     });
     await window.__TAURI__.event?.listen('desktop-organizer-presentation-changed', () => {
         // Native acknowledgements can complete out of order during rapid clicks.
         // Shared persisted preferences always contain the latest complete choice.
-        applyPresentation(getDesktopOrganizerSettings(), { animate: !document.hidden });
+        applyPresentation(getDesktopOrganizerSettings());
     });
-    if (isDesktopHost) {
-        await window.__TAURI__.event?.listen('desktop-space-hiding', () => desktopRegions.retire());
-        await window.__TAURI__.event?.listen('desktop-organizer-mode-changed', event => {
-            const mode = event.payload;
-            if (!mode) return;
-            if (!mode.enabled || mode.presentation !== 'space') {
-                spaceView.close(); closeAppearance(); presentationTransition.cancel();
-                elements.panel.hidden = true;
-            } else {
-                elements.panel.hidden = false;
-                applyPresentation({ ...getDesktopOrganizerSettings(), presentation: 'space' });
-            }
-            desktopRegions.schedule();
-        });
-        await window.__TAURI__.event?.listen('desktop-space-workarea-changed', event => { spaceView.setDisplays(event.payload?.displays); desktopRegions.setDisplays(event.payload?.displays); desktopRegions.schedule(); });
-        await window.__TAURI__.event?.listen('desktop-space-close-transients', () => {
-            desktopRegions.cancelGestures(); spaceView.cancelGestures();
-            spaceView.closeTransients(); desktopRegions.closeTools(); closeAppearance(); hideContextMenu(); hideBlankContextMenu();
-            if (!elements.searchInput.closest('.search-container').hidden) toggleDesktopSearch(false);
-        });
-        await window.__TAURI__.event?.listen('desktop-space-refresh', () => void loadDesktopFiles());
-    }
     hydrateCachedDesktopSnapshot();
     await loadDesktopFiles();
-    if (isDesktopHost) {
-        const viewport = await invoke('desktop_space_ready');
-        spaceView.setDisplays(viewport?.displays);
-        desktopRegions.setDisplays(viewport?.displays);
-        // Hidden WebViews may suspend animation frames. Initial bounds are read
-        // synchronously before native shows the non-empty desktop window region.
-        desktopRegions.arrange();
-        desktopRegions.start();
-        await desktopRegions.flush();
-        desktopRegions.enter();
-    } else await windowController.syncHotzonePosition();
+    await windowController.syncHotzonePosition();
 }
 
 init();
 
 window.addEventListener('pagehide', () => {
     appIconHydrator.destroy();
-    presentationTransition.cancel();
-    spaceView.destroy();
     legacyPopupObserver.disconnect();
-    desktopRegions?.destroy();
     interactions.clear();
 });

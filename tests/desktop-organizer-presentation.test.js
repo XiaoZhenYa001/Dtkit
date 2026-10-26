@@ -45,7 +45,7 @@ test('old settings retain classic presentation and monitor behavior until the us
     });
     const module = await freshModule('legacy');
     assert.deepEqual(module.normalizeDesktopOrganizerPresentation(module.getDesktopOrganizerSettings()), {
-        presentation: 'classic', layout: 'shelf', appearance: 'warm', reducedMotion: false
+        presentation: 'classic', reducedMotion: false
     });
     assert.equal(await module.bootstrapDesktopOrganizer(), true);
     assert.deepEqual(environment.nativeCommands, ['get_desktop_organizer_mode', 'set_desktop_organizer_mode']);
@@ -58,7 +58,7 @@ test('invalid stored presentation values cannot escape the supported choices', a
         })
     });
     const module = await freshModule('validation');
-    const defaults = { presentation: 'classic', layout: 'shelf', appearance: 'warm', reducedMotion: false };
+    const defaults = { presentation: 'classic', reducedMotion: false };
     assert.deepEqual(module.normalizeDesktopOrganizerPresentation(null), defaults);
     assert.deepEqual(module.normalizeDesktopOrganizerPresentation(module.getDesktopOrganizerSettings()), defaults);
 });
@@ -74,18 +74,19 @@ test('choosing desktop space persists preferences and notifies both the local an
     const preferences = await module.updateDesktopOrganizerPresentation({
         presentation: 'space', layout: 'zones', appearance: 'liquid', reducedMotion: true
     });
-    assert.deepEqual(preferences, { presentation: 'space', layout: 'zones', appearance: 'liquid', reducedMotion: true });
+    assert.deepEqual(preferences, { presentation: 'space', reducedMotion: true });
     assert.deepEqual(JSON.parse(environment.values.get(STORAGE_KEY)), {
         enabled: false, autoAnalyze: false, ...preferences
     });
     assert.deepEqual(nativeEvents, [{ name: 'desktop-organizer-presentation-changed', payload: { preferences } }]);
-    assert.equal(environment.localEvents.length, 1);
-    assert.equal(environment.localEvents[0].type, 'dtkit:desktop-organizer-presentation-changed');
-    assert.deepEqual(environment.localEvents[0].detail, { preferences });
+    const presentationEvents = environment.localEvents.filter(event => event.type === 'dtkit:desktop-organizer-presentation-changed');
+    assert.equal(presentationEvents.length, 1);
+    assert.deepEqual(presentationEvents[0].detail, { preferences });
+    assert.ok(environment.localEvents.some(event => event.type === 'dtkit:shortcut-bindings-changed'));
     assert.deepEqual(environment.nativeCommands, ['set_desktop_organizer_mode'], 'top-level choices persist the mutually exclusive native mode');
 });
 
-test('partial appearance changes preserve layout, enablement and future unrelated settings', async t => {
+test('saving supported preferences retires old layouts and materials while preserving enablement and future settings', async t => {
     const environment = installEnvironment(t, {
         [STORAGE_KEY]: JSON.stringify({
             enabled: true, autoAnalyze: false, presentation: 'space', layout: 'drawer',
@@ -93,10 +94,9 @@ test('partial appearance changes preserve layout, enablement and future unrelate
         })
     });
     const module = await freshModule('partial');
-    await module.updateDesktopOrganizerPresentation({ appearance: 'liquid', enabled: false, autoAnalyze: true });
+    await module.updateDesktopOrganizerPresentation({ reducedMotion: false, appearance: 'liquid', enabled: false, autoAnalyze: true });
     assert.deepEqual(JSON.parse(environment.values.get(STORAGE_KEY)), {
-        enabled: true, autoAnalyze: false, presentation: 'space', layout: 'drawer',
-        appearance: 'liquid', reducedMotion: true, futurePreference: 'keep'
+        enabled: true, autoAnalyze: false, presentation: 'space', reducedMotion: false, futurePreference: 'keep'
     });
 });
 
@@ -105,15 +105,15 @@ test('rapid selections persist their final value and carry complete preference p
     const module = await freshModule('rapid');
     await Promise.all([
         module.updateDesktopOrganizerPresentation({ presentation: 'space' }),
-        module.updateDesktopOrganizerPresentation({ layout: 'drawer' }),
-        module.updateDesktopOrganizerPresentation({ appearance: 'liquid' }),
-        module.updateDesktopOrganizerPresentation({ layout: 'zones' })
+        module.updateDesktopOrganizerPresentation({ reducedMotion: true }),
+        module.updateDesktopOrganizerPresentation({ reducedMotion: false }),
+        module.updateDesktopOrganizerPresentation({ reducedMotion: true })
     ]);
     assert.deepEqual(module.normalizeDesktopOrganizerPresentation(module.getDesktopOrganizerSettings()), {
-        presentation: 'space', layout: 'zones', appearance: 'liquid', reducedMotion: false
+        presentation: 'space', reducedMotion: true
     });
     assert.deepEqual(environment.localEvents.at(-1).detail.preferences, {
-        presentation: 'space', layout: 'zones', appearance: 'liquid', reducedMotion: false
+        presentation: 'space', reducedMotion: true
     });
 });
 
@@ -134,5 +134,5 @@ test('a transient cross-window event failure keeps the saved choice available on
     const module = await freshModule('event-failure');
     await module.updateDesktopOrganizerPresentation({ presentation: 'space', appearance: 'liquid' });
     assert.equal(module.getDesktopOrganizerSettings().presentation, 'space');
-    assert.equal(module.getDesktopOrganizerSettings().appearance, 'liquid');
+    assert.equal(module.getDesktopOrganizerSettings().appearance, undefined);
 });

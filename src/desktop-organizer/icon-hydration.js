@@ -1,18 +1,18 @@
-const TARGETS = '.file-item:not(.space-file)[data-app-id]:not([data-icon-loaded]), [data-space-icon][data-app-id]:not([data-icon-loaded])';
+const TARGETS = '.file-item[data-app-id]:not([data-icon-loaded]),.file-item[data-icon-kind="file"]:not([data-icon-loaded])';
 
 // Extraction can touch disk and the Windows shell. Keep a small, shared work
 // queue, while every view paints its ordinary icon immediately.
 export function createIconHydrator({ invoke, cache = new Map(), document: doc, window: win, concurrency = 4, cacheLimit = 256 }) {
     const watched = new Set(), pending = new Map(), queue = [];
-    let active = 0, destroyed = false;
+    let active = 0, destroyed = false, revision = 0;
     const limit = Math.max(1, Math.min(4, concurrency));
     const capacity = Math.max(1, cacheLimit);
     function forget(target) { observer?.unobserve(target); watched.delete(target); }
-    function paint(target, icon) {
-        if (destroyed || !target.isConnected) return;
+    function paint(target, icon, path) {
+        if (destroyed || !target.isConnected || target.dataset.path !== path) return;
         target.dataset.iconLoaded = 'true';
         if (!icon) return;
-        const holder = target.matches('.file-icon') ? target : target.querySelector('.file-icon');
+        const holder = target.querySelector('.file-icon');
         if (!holder) return;
         const image = doc.createElement('img');
         image.src = icon; image.className = 'file-icon-img'; image.alt = ''; image.loading = 'lazy';
@@ -30,12 +30,12 @@ export function createIconHydrator({ invoke, cache = new Map(), document: doc, w
             for (const target of job.targets) if (!target.isConnected) job.targets.delete(target);
             if (!job.targets.size) { pending.delete(job.path); continue; }
             active++;
-            Promise.resolve().then(() => invoke('desktop_get_app_icon', { path: job.path })).catch(() => null)
+            Promise.resolve().then(() => invoke(job.command, { path: job.path })).catch(() => null)
                 .then(icon => {
-                    if (destroyed) return;
+                    if (destroyed || job.revision !== revision) return;
                     remember(job.path, icon);
-                    for (const target of job.targets) paint(target, icon);
-                }).finally(() => { active--; pending.delete(job.path); pump(); });
+                    for (const target of job.targets) paint(target, icon, job.path);
+                }).finally(() => { active--; if (pending.get(job.path) === job) pending.delete(job.path); pump(); });
         }
     }
     function load(target) {
@@ -45,13 +45,14 @@ export function createIconHydrator({ invoke, cache = new Map(), document: doc, w
         if (!path) return;
         if (cache.has(path)) {
             const icon = cache.get(path);
-            remember(path, icon); paint(target, icon);
+            remember(path, icon); paint(target, icon, path);
             return;
         }
         const existing = pending.get(path);
         if (existing) existing.targets.add(target);
         else {
-            const job = { path, targets: new Set([target]) };
+            const job = { path, targets: new Set([target]), revision,
+                command: target.dataset.iconKind === 'file' ? 'desktop_get_icon' : 'desktop_get_app_icon' };
             pending.set(path, job); queue.push(job);
         }
         pump();
@@ -64,13 +65,14 @@ export function createIconHydrator({ invoke, cache = new Map(), document: doc, w
         for (const target of watched) if (!target.isConnected) forget(target);
         for (const job of pending.values()) for (const target of job.targets) if (!target.isConnected) job.targets.delete(target);
         for (const target of root.querySelectorAll(TARGETS)) {
-            if (target.closest('[data-presentation-ghost]') || watched.has(target)) continue;
+            if (watched.has(target)) continue;
             if (!observer) { load(target); continue; }
             watched.add(target); observer.observe(target);
         }
     }
     return {
         hydrate,
+        invalidate() { revision++; cache.clear(); pending.clear(); queue.length = 0; },
         destroy() {
             destroyed = true; observer?.disconnect(); watched.clear(); queue.length = 0;
             for (const job of pending.values()) job.targets.clear();

@@ -1,66 +1,56 @@
 import {
     bootstrapDesktopOrganizer,
     getDesktopOrganizerSettings,
+    getDesktopOrganizerShortcutWarning,
+    clearDesktopOrganizerShortcutWarning,
     normalizeDesktopOrganizerPresentation,
     setDesktopOrganizerEnabled,
     updateDesktopOrganizerPresentation
 } from '../../core/desktopOrganizer.js';
 import { showToast } from '../../core/utils.js';
 import { showConfirmDialog } from './modal.js';
+import { mountShortcutBinding } from '../../core/shortcutBindingControl.js';
+import { mountSpaceSettingsPanel } from './space-settings-panel.js';
+import { applyGlassSettings } from '../../desktop-organizer/glass-material.js';
+import { getSpaceSettings, subscribeSpaceSettings } from '../../desktop-organizer/space-preferences.js';
 
 let initialized = false;
 
 const PRESENTATION_CHOICES = [
-    { value: 'classic', name: '原有桌面整理', description: '保留熟悉的分类侧栏，轻巧快速', preview: 'classic' },
-    { value: 'space', name: '桌面空间', description: '直接在电脑桌面收纳文件与应用', preview: 'space' }
-];
-const LAYOUT_CHOICES = [
-    { value: 'shelf', name: '收纳架', description: '自由摆放、靠边停靠，分组可拆出' },
-    { value: 'islands', name: '独立卡片', description: '收起为文件夹，点击展开' },
-    { value: 'drawer', name: '边缘抽屉', description: '从右侧展开，需要时再出现' },
-    { value: 'zones', name: '展开分区', description: '各个分区同时可见' }
+    { value: 'classic', name: '分类侧栏', description: '右上角热区呼出，按分类快速访问文件', preview: 'classic' },
+    { value: 'space', name: '桌面空间', description: '快捷键呼出的横向玻璃文件面板', preview: 'space' }
 ];
 
 function presentationPreview(type) {
     return `<span class="desktop-presentation-preview desktop-presentation-preview--${type}" aria-hidden="true">
         <span class="desktop-preview-clock">10:08</span>
         <span class="desktop-preview-sidebar"><span></span><span></span><span></span><span></span><span></span></span>
-        <span class="desktop-preview-folders">${Array.from({ length: 4 }, () => '<span><i></i><i></i><i></i><i></i></span>').join('')}</span>
-        <span class="desktop-preview-dock"><i></i><i></i><i></i><i></i></span>
+        <span class="desktop-preview-space${type === 'space' ? ' liquid-glass' : ''}" data-appearance="dark"><span class="desktop-preview-search"></span><span class="desktop-preview-files">${Array.from({ length: 8 }, () => '<i></i>').join('')}</span></span>
     </span>`;
 }
 
 function presentationSettingsMarkup() {
-    return `<div class="desktop-presentation-heading"><span>整理方式</span><span class="desktop-presentation-hint">切换时平滑过渡</span></div>
+    return `<div class="desktop-presentation-heading"><span>整理方式</span></div>
         <div class="desktop-presentation-cards" role="radiogroup" aria-label="桌面整理方式">
-            ${PRESENTATION_CHOICES.map(choice => `<label class="desktop-presentation-card">
+            ${PRESENTATION_CHOICES.map(choice => `<div class="desktop-presentation-option"><label class="desktop-presentation-card">
                 <input type="radio" name="desktopOrganizerPresentation" value="${choice.value}" data-organizer-presentation="${choice.value}">
                 ${presentationPreview(choice.preview)}
                 <span class="desktop-presentation-card-title">${choice.name}<span class="desktop-presentation-check" aria-hidden="true">✓</span></span>
                 <span class="desktop-presentation-card-desc">${choice.description}</span>
-            </label>`).join('')}
+            </label>${choice.value === 'space' ? '<button type="button" id="desktopSpaceSettingsButton" class="desktop-space-settings-button" aria-label="桌面空间设置" title="桌面空间设置" aria-controls="desktopSpaceSettingsPage" aria-expanded="false"><i class="ri-settings-3-line" aria-hidden="true"></i></button>' : ''}</div>`).join('')}
         </div>
         <div class="desktop-space-options" id="desktopSpaceOptions"><div class="desktop-space-options-inner">
-            <div class="desktop-presentation-heading"><span>收纳布局</span></div>
-            <div class="desktop-layout-choices" role="radiogroup" aria-label="桌面空间收纳布局">
-                ${LAYOUT_CHOICES.map(choice => `<label class="desktop-layout-choice">
-                    <input type="radio" name="desktopOrganizerLayout" value="${choice.value}" data-organizer-layout="${choice.value}">
-                    <span class="desktop-layout-preview desktop-layout-preview--${choice.value}" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-                    <span class="desktop-layout-name">${choice.name}</span><span class="desktop-layout-desc">${choice.description}</span>
-                </label>`).join('')}
+            <div class="desktop-space-launch-row"><div><strong>横向玻璃空间</strong><p id="desktopSpaceLaunchHint">需要时呼出，固定常用文件并拖动排序。空闲时不占桌面。</p></div>
+                <div class="desktop-space-launch-actions"><button type="button" id="openDesktopSpace" class="settings-action-btn">打开空间</button><button type="button" id="desktopSpaceSettingsAction" class="settings-action-btn desktop-space-settings-action" aria-controls="desktopSpaceSettingsPage" aria-expanded="false">空间设置</button></div>
             </div>
-            <div class="desktop-appearance-row"><span class="desktop-presentation-label">界面风格</span>
-                <div class="desktop-appearance-choices" role="radiogroup" aria-label="桌面空间界面风格">
-                    <span class="desktop-appearance-pill" aria-hidden="true"></span>
-                    <label><input type="radio" name="desktopOrganizerAppearance" value="warm" data-organizer-appearance="warm"><span class="desktop-appearance-swatch desktop-appearance-swatch--warm" aria-hidden="true"></span>暖色</label>
-                    <label><input type="radio" name="desktopOrganizerAppearance" value="liquid" data-organizer-appearance="liquid"><span class="desktop-appearance-swatch desktop-appearance-swatch--liquid" aria-hidden="true"></span>液态玻璃</label>
-                </div>
-            </div>
+            <div id="desktopSpaceShortcut" class="desktop-space-shortcut"></div>
+            <p id="desktopSpaceShortcutNotice" class="desktop-presentation-error" role="status" hidden></p>
         </div></div>
-        <div class="desktop-presentation-motion-row"><div><label class="desktop-presentation-label" for="desktopReducedMotion">减少动态</label><span class="desktop-presentation-motion-desc">减少伸展与位移动画</span></div>
+        <div class="desktop-presentation-motion-row"><div><label class="desktop-presentation-label" for="desktopReducedMotion">减少动态</label><span class="desktop-presentation-motion-desc">减少面板与文件的位移动画</span></div>
             <label class="settings-toggle"><input type="checkbox" class="settings-toggle-input" id="desktopReducedMotion"><span class="settings-toggle-slider"></span></label>
         </div>
-        <p class="desktop-presentation-error" role="alert" hidden></p>`;
+        <p class="desktop-presentation-error" role="alert" hidden></p>
+        <section id="desktopSpaceSettingsPage" class="space-detail-page" aria-label="桌面空间设置" hidden></section>`;
 }
 
 export function initDesktopOrganizerPresentationSettings() {
@@ -68,37 +58,51 @@ export function initDesktopOrganizerPresentationSettings() {
     if (!container || container.dataset.initialized === 'true') return;
     container.dataset.initialized = 'true';
     container.innerHTML = presentationSettingsMarkup();
+    const cardMaterial = container.querySelector('.desktop-presentation-preview--space .desktop-preview-space');
+    applyGlassSettings(cardMaterial, getSpaceSettings());
+    const disposeCardMaterial = subscribeSpaceSettings(settings => applyGlassSettings(cardMaterial, settings));
+    window.addEventListener('pagehide', disposeCardMaterial, { once: true });
     const spaceOptions = container.querySelector('#desktopSpaceOptions');
-    const appearanceChoices = container.querySelector('.desktop-appearance-choices');
-    const appearancePill = container.querySelector('.desktop-appearance-pill');
+    const openButton = container.querySelector('#openDesktopSpace');
     const motionToggle = container.querySelector('#desktopReducedMotion');
-    const errorMessage = container.querySelector('.desktop-presentation-error');
-    let revision = 0;
+    const errorMessage = container.querySelector('.desktop-presentation-error[role="alert"]');
+    let revision = 0, opening = false;
+    const settingsButton = container.querySelector('#desktopSpaceSettingsButton');
+    const settingsButtons = [settingsButton, container.querySelector('#desktopSpaceSettingsAction')];
+    let settingsReturnButton = settingsButton;
+    const details = mountSpaceSettingsPanel(container.querySelector('#desktopSpaceSettingsPage'), {
+        onBack: () => {
+            details.hide(); delete container.dataset.detail;
+            settingsButtons.forEach(button => button.setAttribute('aria-expanded', 'false'));
+            settingsReturnButton.focus();
+        },
+        onOpen: () => launchSpace()
+    });
+    settingsButtons.forEach(button => button.addEventListener('click', () => {
+        settingsReturnButton = button; container.dataset.detail = 'space';
+        settingsButtons.forEach(entry => entry.setAttribute('aria-expanded', 'true'));
+        void details.show();
+    }));
 
-    function positionAppearancePill() {
-        const selectedLabel = appearanceChoices.querySelector('input:checked')?.closest('label');
-        if (!selectedLabel || !selectedLabel.offsetWidth) return;
-        appearancePill.style.width = `${selectedLabel.offsetWidth}px`;
-        appearancePill.style.transform = `translateX(${selectedLabel.offsetLeft - 4}px)`;
-    }
+    mountShortcutBinding(container.querySelector('#desktopSpaceShortcut'), {
+        label: '桌面空间', icon: 'ri-layout-grid-line', compact: false,
+        hint: '首次启用默认 Ctrl + Alt + D，可在此更改', target: { kind: 'desktopSpace' }
+    });
 
     function applyPreferences(preferences, animate = false) {
+        const enabled = getDesktopOrganizerSettings().enabled === true;
         container.dataset.presentation = preferences.presentation;
-        container.dataset.appearance = preferences.appearance;
         container.classList.toggle('desktop-presentation-reduced-motion', preferences.reducedMotion);
-        for (const [key, attribute] of [
-            ['presentation', 'data-organizer-presentation'],
-            ['layout', 'data-organizer-layout'],
-            ['appearance', 'data-organizer-appearance']
-        ]) {
+        for (const [key, attribute] of [['presentation', 'data-organizer-presentation']]) {
             container.querySelectorAll(`[${attribute}]`).forEach(input => {
                 const wasSelected = input.closest('label').classList.contains('is-selected');
                 const isSelected = input.value === preferences[key];
                 input.checked = isSelected;
+                input.disabled = opening;
                 input.closest('label').classList.toggle('is-selected', isSelected);
                 if (animate && isSelected && !wasSelected && !preferences.reducedMotion
                     && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-                    const preview = input.closest('label').querySelector('.desktop-presentation-preview, .desktop-layout-preview');
+                    const preview = input.closest('label').querySelector('.desktop-presentation-preview');
                     preview?.animate?.([
                         { transform: 'scale(.975)', opacity: .82 },
                         { transform: 'scale(1)', opacity: 1 }
@@ -110,20 +114,29 @@ export function initDesktopOrganizerPresentationSettings() {
         spaceOptions.inert = preferences.presentation !== 'space';
         spaceOptions.setAttribute('aria-hidden', String(preferences.presentation !== 'space'));
         motionToggle.checked = preferences.reducedMotion;
+        motionToggle.closest('.desktop-presentation-motion-row').hidden = preferences.presentation === 'space';
+        openButton.disabled = opening || preferences.presentation !== 'space';
+        openButton.textContent = opening ? '正在打开…' : enabled ? '打开空间' : '启用并打开';
+        container.querySelector('#desktopSpaceLaunchHint').textContent = enabled
+            ? '需要时呼出，固定常用文件并拖动排序。空闲时不占桌面。'
+            : '空间尚未启用，点击“启用并打开”即可开始使用。';
+        const shortcutNotice = container.querySelector('#desktopSpaceShortcutNotice');
+        shortcutNotice.textContent = getDesktopOrganizerShortcutWarning();
+        shortcutNotice.hidden = !enabled || !shortcutNotice.textContent;
+        const mainToggle = document.getElementById('desktopOrganizerToggle');
+        if (mainToggle) mainToggle.checked = enabled;
+        setSubSettingsVisibility(document.getElementById('desktopOrganizerSubSettings'), enabled);
         const enableDescription = document.getElementById('desktopOrganizerEnableDescription');
         if (enableDescription) enableDescription.textContent = preferences.presentation === 'space'
-            ? '收纳区域直接显示在电脑桌面，停用原有右上角热区'
+            ? '用独立快捷键呼出横向玻璃空间，空闲时不占桌面'
             : '鼠标移至屏幕右上角热区可触发分类侧栏';
-        positionAppearancePill();
     }
 
     applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
     container.addEventListener('change', async event => {
         const control = event.target;
         const key = control.matches('[data-organizer-presentation]') ? 'presentation'
-            : control.matches('[data-organizer-layout]') ? 'layout'
-                : control.matches('[data-organizer-appearance]') ? 'appearance'
-                    : control === motionToggle ? 'reducedMotion' : null;
+            : control === motionToggle ? 'reducedMotion' : null;
         if (!key) return;
         const value = key === 'reducedMotion' ? control.checked : control.value;
         const requestRevision = ++revision;
@@ -136,13 +149,19 @@ export function initDesktopOrganizerPresentationSettings() {
         } catch (error) {
             if (requestRevision !== revision) return;
             applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
-            errorMessage.textContent = '未能保存选择，请重试。';
+            errorMessage.textContent = `${key === 'presentation' ? '切换桌面整理方式失败' : '保存设置失败'}：${String(error)}`;
             errorMessage.hidden = false;
             console.error('[DesktopOrganizer] 保存桌面外观失败', error);
         }
     });
     window.addEventListener('dtkit:desktop-organizer-presentation-changed', () => {
         applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
+    });
+    window.addEventListener('dtkit:shortcut-bindings-changed', event => {
+        if (event.detail?.bindings?.some(binding => binding.target?.kind === 'desktopSpace' && binding.registered !== false)) {
+            clearDesktopOrganizerShortcutWarning();
+            applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
+        }
     });
     window.addEventListener('storage', event => {
         if (event.key === 'dtkit_desktop_organizer') {
@@ -154,7 +173,30 @@ export function initDesktopOrganizerPresentationSettings() {
             applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
         }).catch(error => console.error('[DesktopOrganizer] 监听外观同步失败', error));
     }
-    if (typeof ResizeObserver === 'function') new ResizeObserver(positionAppearancePill).observe(appearanceChoices);
+    async function launchSpace() {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke || opening) return;
+        opening = true;
+        const mainToggle = document.getElementById('desktopOrganizerToggle');
+        if (mainToggle) mainToggle.disabled = true;
+        applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
+        errorMessage.hidden = true;
+        let phase = '启用';
+        try {
+            if (normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()).presentation !== 'space') {
+                await updateDesktopOrganizerPresentation({ presentation: 'space' });
+            }
+            if (!getDesktopOrganizerSettings().enabled) await setDesktopOrganizerEnabled(true);
+            phase = '打开';
+            await invoke('desktop_space_show');
+        } catch (error) { errorMessage.textContent = `${phase}空间失败：${String(error)}`; errorMessage.hidden = false; throw error; }
+        finally {
+            opening = false;
+            if (mainToggle) mainToggle.disabled = false;
+            applyPreferences(normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings()));
+        }
+    }
+    openButton.addEventListener('click', () => void launchSpace().catch(() => {}));
 }
 
 function setSubSettingsVisibility(element, visible) {
@@ -190,6 +232,7 @@ export async function initDesktopOrganizerSettings() {
             await bootstrapDesktopOrganizer();
             mainToggle.checked = getDesktopOrganizerSettings().enabled;
             setSubSettingsVisibility(subSettings, mainToggle.checked);
+            window.dispatchEvent(new CustomEvent('dtkit:desktop-organizer-presentation-changed'));
         } catch (error) {
             console.error('启动桌面整理失败:', error);
         }
@@ -202,8 +245,8 @@ export async function initDesktopOrganizerSettings() {
             willEnable ? '开启桌面整理' : '关闭桌面整理',
             isSpace
                 ? (willEnable
-                    ? '开启后，收纳区域会显示在电脑桌面。原桌面图标由你自行控制显示。确定要开启吗？'
-                    : '关闭后，桌面收纳区域会移除。确定要关闭吗？')
+                    ? '开启后，可用独立快捷键呼出横向玻璃空间。确定要开启吗？'
+                    : '关闭后，桌面空间快捷键将不再呼出面板。确定要关闭吗？')
                 : (willEnable
                     ? '开启后，鼠标移至屏幕右上角热区将触发侧边栏。确定要开启吗？'
                     : '关闭后，热区触发将不再可用。确定要关闭吗？')
@@ -217,6 +260,7 @@ export async function initDesktopOrganizerSettings() {
         try {
             await setDesktopOrganizerEnabled(willEnable);
             setSubSettingsVisibility(subSettings, willEnable);
+            window.dispatchEvent(new CustomEvent('dtkit:desktop-organizer-presentation-changed'));
             showToast(willEnable ? '桌面整理已开启' : '桌面整理已关闭');
         } catch (error) {
             mainToggle.checked = !willEnable;

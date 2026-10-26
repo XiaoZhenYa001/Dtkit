@@ -20,8 +20,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost http: https:; frame-src 'self' data:; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; style-src 'self' blob:; script-src 'self' blob: 'sha256-IRvRgE4f3ELMhL1zvDbHvNilBTcgBxUbMeaEWkMJJMM='",
-      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost http: https: ws://127.0.0.1:1420; frame-src 'self' data:; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; style-src 'self' blob: 'unsafe-inline'; script-src 'self' blob: 'sha256-IRvRgE4f3ELMhL1zvDbHvNilBTcgBxUbMeaEWkMJJMM='",
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost http: https:; frame-src 'self' data:; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; style-src 'self' blob:; script-src 'self' blob: 'wasm-unsafe-eval' 'sha256-IRvRgE4f3ELMhL1zvDbHvNilBTcgBxUbMeaEWkMJJMM='",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost http: https: ws://127.0.0.1:1420; frame-src 'self' data:; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; style-src 'self' blob: 'unsafe-inline'; script-src 'self' blob: 'wasm-unsafe-eval' 'sha256-IRvRgE4f3ELMhL1zvDbHvNilBTcgBxUbMeaEWkMJJMM='",
       "assetProtocol": {
         "enable": true,
         "scope": [

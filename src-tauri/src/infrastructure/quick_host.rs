@@ -102,8 +102,14 @@ impl QuickHostManager {
         )
         .title("DtKit 快捷窗口")
         .disable_drag_drop_handler()
-        .inner_size(if is_puzzle { 680.0 } else { 760.0 }, if is_puzzle { 480.0 } else { 580.0 })
-        .min_inner_size(if is_puzzle { 480.0 } else { 560.0 }, if is_puzzle { 360.0 } else { 400.0 })
+        .inner_size(
+            if is_puzzle { 680.0 } else { 760.0 },
+            if is_puzzle { 480.0 } else { 580.0 },
+        )
+        .min_inner_size(
+            if is_puzzle { 480.0 } else { 560.0 },
+            if is_puzzle { 360.0 } else { 400.0 },
+        )
         .resizable(true)
         .decorations(false)
         .transparent(false)
@@ -133,7 +139,8 @@ impl QuickHostManager {
                     let minimized = window.is_minimized().unwrap_or(false);
                     if suspended.swap(minimized, Ordering::Relaxed) != minimized {
                         if minimized {
-                            app_handle.state::<super::software_analysis::SoftwareAnalysisManager>()
+                            app_handle
+                                .state::<super::software_analysis::SoftwareAnalysisManager>()
                                 .cancel_window(&window_label);
                         }
                         crate::set_webview_memory_target(&window, minimized);

@@ -310,11 +310,7 @@ fn platform_owner_hash() -> Result<String, String> {
         if needed == 0 || needed > 64 * 1024 {
             return Err("账户身份信息无效".into());
         }
-        let mut buffer = vec![
-            0usize;
-            (needed as usize + std::mem::size_of::<usize>() - 1)
-                / std::mem::size_of::<usize>()
-        ];
+        let mut buffer = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
         GetTokenInformation(
             token.0,
             TokenUser,
@@ -341,7 +337,7 @@ fn platform_owner_hash() -> Result<String, String> {
 }
 
 fn read_store_file(path: &Path) -> Result<RegistryBackupStore, String> {
-    let file = match fs::File::open(&path) {
+    let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(RegistryBackupStore::default())
@@ -671,7 +667,7 @@ fn registry_source(id: &str) -> Option<RegistrySource> {
 }
 
 fn decode_text(bytes: &[u8]) -> Option<String> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
     let mut wide = bytes
@@ -1200,9 +1196,9 @@ fn scan_startup_folders(
                 entry.can_toggle = false;
                 entry.disabled_reason = Some("原位置已有同名文件，未开放恢复操作".to_string());
             }
-            if record.is_some() && record.unwrap().stored_path.exists() && !legacy {
+            if let Some(record) = record.filter(|record| record.stored_path.exists() && !legacy) {
                 entry.can_toggle = false;
-                entry.disabled_reason = Some(format!("旧启动文件仍保留在 {}，与新启动文件同名。请先通过“旧文件位置”妥善保存旧文件；未开放覆盖或遗弃操作", record.unwrap().stored_path.display()));
+                entry.disabled_reason = Some(format!("旧启动文件仍保留在 {}，与新启动文件同名。请先通过“旧文件位置”妥善保存旧文件；未开放覆盖或遗弃操作", record.stored_path.display()));
             }
             items.push(entry);
         }
@@ -2685,8 +2681,10 @@ mod tests {
     #[test]
     fn machine_account_namespace_preserves_foreign_root_journals() {
         let (layout, root) = temporary_layout();
-        let mut foreign = RegistryBackupStore::default();
-        foreign.owner_hash = Some("f".repeat(64));
+        let mut foreign = RegistryBackupStore {
+            owner_hash: Some("f".repeat(64)),
+            ..Default::default()
+        };
         foreign.registry_items.push(backup());
         let original = PathBuf::from(r"C:\ForeignProfile\Programs\Startup\Old.lnk");
         foreign.folder_items.push(FolderBackup {
@@ -2716,9 +2714,11 @@ mod tests {
     #[test]
     fn unbound_legacy_records_require_review_and_preserve_original_bytes() {
         let (layout, root) = temporary_layout();
-        let mut legacy = RegistryBackupStore::default();
-        legacy.version = 1;
-        legacy.owner_hash = None;
+        let mut legacy = RegistryBackupStore {
+            version: 1,
+            owner_hash: None,
+            ..Default::default()
+        };
         legacy.registry_items.push(backup());
         let path = legacy_store_path(&layout);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2763,9 +2763,11 @@ mod tests {
     #[test]
     fn starting_fresh_preserves_unclaimed_records_and_never_overwrites_namespace() {
         let (layout, root) = temporary_layout();
-        let mut legacy = RegistryBackupStore::default();
-        legacy.version = 1;
-        legacy.owner_hash = None;
+        let mut legacy = RegistryBackupStore {
+            version: 1,
+            owner_hash: None,
+            ..Default::default()
+        };
         legacy.registry_items.push(backup());
         let path = legacy_store_path(&layout);
         fs::create_dir_all(path.parent().unwrap()).unwrap();

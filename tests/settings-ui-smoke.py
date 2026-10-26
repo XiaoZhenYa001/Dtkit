@@ -1,11 +1,25 @@
 import os
+import atexit
+import functools
+import http.server
+import threading
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 
-BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
-SCREENSHOT_DIR = Path(r"C:\tmp\dtkit-settings-refactor")
+BASE_URL = os.environ.get('DTKIT_TEST_BASE_URL')
+if not BASE_URL:
+    class QuietHandler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *_): pass
+    handler = functools.partial(QuietHandler, directory=str(Path(__file__).resolve().parents[1] / 'dist'))
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    atexit.register(server.server_close)
+    atexit.register(server.shutdown)
+    BASE_URL = f'http://127.0.0.1:{server.server_port}'
+SCREENSHOT_DIR = Path(__file__).resolve().parents[1] / 'tests' / 'artifacts' / 'settings'
 
 
 def open_settings(page):
@@ -49,6 +63,8 @@ with sync_playwright() as playwright:
                         filesCopied: 12, bytesCopied: 2048, previousRoot: 'D:\\DtKit'
                     };
                     if (command === 'get_shortcut_bindings') return window.__shortcutBindings;
+                    if (command === 'upsert_shortcut_binding') { window.__shortcutBindings = window.__shortcutBindings.filter(item => JSON.stringify(item.target) !== JSON.stringify(args.binding.target)); window.__shortcutBindings.push(args.binding); return window.__shortcutBindings; }
+                    if (command === 'remove_shortcut_binding') { window.__shortcutBindings = window.__shortcutBindings.filter(item => JSON.stringify(item.target) !== JSON.stringify(args.target)); return window.__shortcutBindings; }
                     if (command === 'replace_shortcut_bindings') {
                         window.__shortcutBindings = args.bindings;
                         return window.__shortcutBindings;
@@ -105,11 +121,23 @@ with sync_playwright() as playwright:
     layout = page.evaluate("""() => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
-        contentHeight: document.querySelector('#settingsView .settings-content').getBoundingClientRect().height
+        scrollerHeight: document.querySelector('.content-area').getBoundingClientRect().height,
+        viewportHeight: innerHeight
     })""")
-    assert layout["scrollWidth"] <= layout["clientWidth"]
-    assert layout["contentHeight"] < 2600
+    assert layout["scrollWidth"] <= layout["clientWidth"], layout
+    assert 0 < layout["scrollerHeight"] <= layout["viewportHeight"], layout
     page.screenshot(path=str(SCREENSHOT_DIR / "settings-desktop-top.png"), full_page=True)
+    # The number of shortcut rows may grow. Check actual navigation and bounded
+    # scrolling instead of imposing a fixed height on all settings combined.
+    targets = page.locator('.settings-side-nav__item').evaluate_all('nodes => nodes.map(node => node.hash)')
+    for target in targets:
+        page.locator(f'.settings-side-nav__item[href="{target}"]').click()
+        page.wait_for_function("""selector => {
+            const section = document.querySelector(selector + ' .settings-section-header').getBoundingClientRect();
+            const viewport = document.querySelector('.content-area').getBoundingClientRect();
+            return section.top >= viewport.top - 1 && section.bottom <= viewport.bottom + 1;
+        }""", arg=target)
+        assert page.locator(f'.settings-side-nav__item[href="{target}"]').get_attribute('aria-current') == 'true'
 
     download_path = r"D:\Downloads\DtKit Refactor"
     page.locator("#downloadPathInput").fill(download_path)
@@ -117,7 +145,7 @@ with sync_playwright() as playwright:
     assert page.evaluate("localStorage.getItem('dtkit_downloadPath')") == download_path + r"\Downloads"
     page.locator('#storageRootStatus').filter(has_text='目录可用').wait_for()
 
-    shortcut = page.locator('#shortcutBindings .shortcut-binding__record')
+    shortcut = page.locator('#shortcutBindings button[aria-label="设置“万能命令面板”的快捷键"]')
     page.locator('#shortcutStatus').filter(has_text='各工具的专属快捷键').wait_for()
     shortcut.click()
     assert "is-recording" in (shortcut.get_attribute("class") or "")
@@ -166,21 +194,22 @@ with sync_playwright() as playwright:
     assert organizer_settings["enabled"] is True
 
     page.locator('#openDesktopAppManager').click()
-    page.locator('#dynamicToolContainer[data-tool-id="desktop-app-manager"]').wait_for(state='visible')
-    page.locator('#appManagerList .app-manager-row').first.wait_for(state='visible')
-    assert page.locator('#appManagerList .app-manager-row').count() == 2
-    assert page.locator('#appManagerList').filter(has_text='Steam').is_visible()
+    tool = page.frame_locator('iframe.tool-page-frame:not([hidden])')
+    tool.locator('#appManagerList .app-manager-row').first.wait_for(state='visible')
+    assert tool.locator('#appManagerList .app-manager-row').count() == 2
+    assert tool.locator('#appManagerList').filter(has_text='Steam').is_visible()
     assert page.locator('.tab').filter(has_text='应用与图标管理').count() == 1
-    page.locator('#appManagerList .app-manager-row').first.click()
-    page.locator('#appManagerCategoryToggle').click()
-    category_options = page.locator('#appManagerCategoryOptions [role="option"]').evaluate_all(
+    tool.locator('#appManagerList .app-manager-row').first.click()
+    tool.locator('#appManagerCategoryToggle').click()
+    category_options = tool.locator('#appManagerCategoryOptions [role="option"]').evaluate_all(
         "options => options.map(option => option.dataset.categoryValue)"
     )
-    assert '工作' in category_options
+    assert 'custom_1' in category_options
+    assert tool.locator('#appManagerCategoryOptions [data-category-value="custom_1"]').text_content() == '工作'
     assert '游戏' in category_options
-    page.locator('#appManagerCategory').fill('媒体')
-    assert page.locator('#appManagerCategory').input_value() == '媒体'
-    app_layout = page.evaluate("""() => ({
+    tool.locator('#appManagerCategory').fill('媒体')
+    assert tool.locator('#appManagerCategory').input_value() == '媒体'
+    app_layout = tool.locator('html').evaluate("""() => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
         workspaceWidth: document.querySelector('.app-manager-workspace').getBoundingClientRect().width
@@ -223,4 +252,4 @@ with sync_playwright() as playwright:
     assert not mobile_errors, f"Mobile page errors: {mobile_errors}"
     browser.close()
 
-print(f"Settings UI smoke test passed; content height: {layout['contentHeight']:.0f}px")
+print('Settings UI smoke test passed; all section links, bounded scrolling, shortcuts and desktop controls verified')

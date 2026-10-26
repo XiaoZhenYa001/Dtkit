@@ -223,7 +223,7 @@ mod tests {
         let root = PathBuf::from("C:/Users/demo/Documents");
         assert!(is_within_common_root(
             Path::new("C:/Users/demo/Documents/report.txt"),
-            &[root.clone()]
+            std::slice::from_ref(&root)
         ));
         assert!(!is_within_common_root(
             Path::new("C:/Users/demo/Documents-old/report.txt"),

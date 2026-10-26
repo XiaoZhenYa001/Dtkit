@@ -14,18 +14,10 @@ const AUTO_CLEANUP_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub(crate) struct CleanupPolicy {
     pub(crate) automatic_enabled: bool,
     pub(crate) last_automatic_run_at: Option<i64>,
-}
-
-impl Default for CleanupPolicy {
-    fn default() -> Self {
-        Self {
-            automatic_enabled: false,
-            last_automatic_run_at: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -607,7 +599,7 @@ fn is_link_like(metadata: &fs::Metadata) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        return metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
     #[cfg(not(windows))]
     false

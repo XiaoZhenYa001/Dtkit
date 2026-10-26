@@ -125,11 +125,11 @@ pub struct DesktopFile {
     pub children_truncated: bool,           // 文件夹预览是否已截断
     pub icon: Option<String>,               // 文件图标（Base64 PNG）
     #[serde(default)]
-    pub app_id: Option<String>,             // 开始菜单或手动添加的应用 ID
+    pub app_id: Option<String>, // 开始菜单或手动添加的应用 ID
     #[serde(default)]
-    pub app_category: Option<String>,       // 用户在应用管理页指定的展示分类
+    pub app_category: Option<String>, // 用户在应用管理页指定的展示分类
     #[serde(default)]
-    pub app_manual: bool,                   // 用户显式添加的持久应用
+    pub app_manual: bool, // 用户显式添加的持久应用
 }
 
 /// 分类后的桌面文件

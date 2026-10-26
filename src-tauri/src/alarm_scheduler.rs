@@ -896,7 +896,7 @@ mod tests {
         assert!(scheduler.has_pending_work().await);
         {
             let mut pending = scheduler.missed_triggers.lock().await;
-            persist_and_clear_pending(&path, &mut *pending).unwrap();
+            persist_and_clear_pending(&path, &mut pending).unwrap();
         }
         assert!(!scheduler.has_pending_work().await);
         assert_eq!(

@@ -34,7 +34,9 @@ MOCK = r"""
       if (command === 'get_storage_layout') return {root:'D:\\DtKit',downloads:'D:\\DtKit\\Downloads',writable:true,warning:null};
       if (command === 'get_tool_module_settings') return [];
       if (command === 'set_tool_module_enabled') return args.enabled ? [] : [args.toolId];
-      if (command === 'get_shortcut_bindings') return [];
+      if (command === 'get_shortcut_bindings') return window.__portableBindings || [];
+      if (command === 'upsert_shortcut_binding') { window.__portableBindings = (window.__portableBindings || []).filter(item => JSON.stringify(item.target) !== JSON.stringify(args.binding.target)); window.__portableBindings.push(args.binding); return window.__portableBindings; }
+      if (command === 'remove_shortcut_binding') { window.__portableBindings = (window.__portableBindings || []).filter(item => JSON.stringify(item.target) !== JSON.stringify(args.target)); return window.__portableBindings; }
       if (command === 'replace_shortcut_bindings') return args.bindings || [];
       if (command === 'search_snippets') return {items:snippets,total:2,truncated:false};
       if (command === 'save_snippet') return snippets[0];

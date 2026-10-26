@@ -471,6 +471,8 @@ impl PasswordVaultManager {
         }
     }
 
+    // Keep the vault query dimensions explicit at this shared search boundary.
+    #[allow(clippy::too_many_arguments)]
     fn search_cached(
         &self,
         vault_path: &Path,
@@ -899,6 +901,7 @@ impl PasswordIndexCache {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn search_page(
         &self,
         scope: &SearchScope,
@@ -1143,26 +1146,24 @@ fn parse_json_import(bytes: &[u8]) -> Result<ParsedImport, String> {
             if let Some(entry) = imported_record(imported) {
                 entries.push(entry);
             }
+        } else if candidates.len() < 100 {
+            let id = Uuid::new_v4().to_string();
+            let source = format!("第 {} 条", index + 1);
+            issues.push(import_issue(
+                id.clone(),
+                true,
+                source.clone(),
+                &imported,
+                errors,
+            ));
+            candidates.push(PendingCandidate {
+                id,
+                source,
+                entry: imported,
+            });
         } else {
-            if candidates.len() < 100 {
-                let id = Uuid::new_v4().to_string();
-                let source = format!("第 {} 条", index + 1);
-                issues.push(import_issue(
-                    id.clone(),
-                    true,
-                    source.clone(),
-                    &imported,
-                    errors,
-                ));
-                candidates.push(PendingCandidate {
-                    id,
-                    source,
-                    entry: imported,
-                });
-            } else {
-                uneditable_invalid += 1;
-                wipe_string(&mut imported.password);
-            }
+            uneditable_invalid += 1;
+            wipe_string(&mut imported.password);
         }
     }
     if uneditable_invalid > issues.iter().filter(|issue| !issue.editable).count() {
@@ -1326,26 +1327,24 @@ fn parse_csv_import(bytes: &[u8]) -> Result<ParsedImport, String> {
             if let Some(entry) = imported_record(imported) {
                 entries.push(entry);
             }
+        } else if candidates.len() < 100 {
+            let id = Uuid::new_v4().to_string();
+            let source = format!("第 {source_line} 行");
+            issues.push(import_issue(
+                id.clone(),
+                true,
+                source.clone(),
+                &imported,
+                errors,
+            ));
+            candidates.push(PendingCandidate {
+                id,
+                source,
+                entry: imported,
+            });
         } else {
-            if candidates.len() < 100 {
-                let id = Uuid::new_v4().to_string();
-                let source = format!("第 {source_line} 行");
-                issues.push(import_issue(
-                    id.clone(),
-                    true,
-                    source.clone(),
-                    &imported,
-                    errors,
-                ));
-                candidates.push(PendingCandidate {
-                    id,
-                    source,
-                    entry: imported,
-                });
-            } else {
-                uneditable_invalid += 1;
-                wipe_string(&mut imported.password);
-            }
+            uneditable_invalid += 1;
+            wipe_string(&mut imported.password);
         }
     }
     if uneditable_invalid > issues.iter().filter(|issue| !issue.editable).count() {
@@ -1378,6 +1377,8 @@ fn load_settings(storage: &StorageManager) -> PasswordSettings {
 }
 
 #[tauri::command]
+// Native state arguments are injected alongside the existing IPC fields.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn list_passwords(
     app: AppHandle,
     storage: tauri::State<'_, StorageManager>,
@@ -2408,6 +2409,7 @@ fn write_export(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn export_password_entries(
     app: AppHandle,
     storage: tauri::State<'_, StorageManager>,

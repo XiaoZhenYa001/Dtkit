@@ -114,7 +114,6 @@ test('desktop organizer bounds file access and avoids expensive unbounded scans'
     assert.doesNotMatch(commands, /files\.total_count \+= 1/);
     assert.doesNotMatch(commands, /PathBuf::from\(path\)\.canonicalize/);
     assert.match(organizerUi, /category-name">我的应用/);
-    assert.match(organizerUi, /file\.app_manual \? 0 : file\.app_id \? 2 : 1/);
     assert.match(commands, /pub y: i32/);
     assert.match(organizerUi, /invoke\('clamp_desktop_organizer_window'\)/);
     assert.match(organizerUi, /screenBounds\.x/);

@@ -144,12 +144,39 @@ test('desktop organizer state instances do not share mutable collections', () =>
 
 test('desktop search keeps the preferred app entry and supports command filters', () => {
     const manualSteam = { name: 'Steam', path: 'C:\\Steam.lnk', category: 'program', app_id: 'steam', app_manual: true };
-    const duplicateSteam = { name: 'Steam.exe', path: 'C:\\Steam.exe', category: 'program' };
+    const duplicateSteam = { name: 'Steam.exe', path: 'C:\\Steam.exe', category: 'program', app_id: 'steam' };
     const image = { name: 'Steam Logo.png', path: 'C:\\Steam Logo.png', category: 'image' };
     const index = buildSearchIndex({ applications: [manualSteam], programs: [duplicateSteam], images: [image] });
 
     assert.deepEqual(querySearchIndex(index, 'steam').map(file => file.path), [manualSteam.path, image.path]);
     assert.deepEqual(querySearchIndex(index, '/a steam').map(file => file.path), [manualSteam.path]);
+});
+
+test('desktop search preserves same-named files, folders, and applications before command filtering', () => {
+    const report = { name: 'report.txt', path: 'C:\\Desktop\\report.txt', category: 'document' };
+    const otherReport = { ...report, path: 'C:\\Public\\Desktop\\report.txt' };
+    const folder = { name: 'Editor', path: 'C:\\Desktop\\Editor', category: 'folder', is_folder: true };
+    const app = { name: 'Editor.exe', path: 'C:\\Apps\\Editor.exe', category: 'program', app_id: 'editor-one' };
+    const otherApp = { ...app, path: 'D:\\Apps\\Editor.exe', app_id: 'editor-two' };
+    const index = buildSearchIndex({ documents: [report, otherReport], folders: [folder], applications: [app, otherApp] });
+
+    assert.deepEqual(querySearchIndex(index, 'report').map(file => file.path), [report.path, otherReport.path]);
+    assert.deepEqual(querySearchIndex(index, 'Editor').map(file => file.path).sort(), [folder.path, app.path, otherApp.path].sort());
+    assert.deepEqual(querySearchIndex(index, '/a Editor').map(file => file.path), [app.path, otherApp.path]);
+    assert.deepEqual(querySearchIndex(index, '/f Editor'), [folder]);
+});
+
+test('desktop search deduplicates canonical paths and keeps application metadata', () => {
+    const app = { name: 'Editor', path: 'C:\\Desktop\\Editor.lnk', category: 'program', app_id: 'editor' };
+    const shortcut = { name: 'Editor.lnk', path: 'c:/desktop/EDITOR.lnk', category: 'program' };
+    const document = { name: 'report.txt', path: 'C:\\Desktop\\report.txt', category: 'document' };
+    const duplicateDocument = { ...document, path: '\\\\?\\C:\\Desktop\\REPORT.txt' };
+    const networkDocument = { ...document, path: '\\\\server\\share\\report.txt' };
+    const duplicateNetworkDocument = { ...document, path: '\\\\?\\UNC\\SERVER\\share\\report.txt' };
+    const index = buildSearchIndex({ documents: [document, duplicateDocument, networkDocument, duplicateNetworkDocument], programs: [shortcut], applications: [app] });
+
+    assert.deepEqual(querySearchIndex(index, 'editor'), [app]);
+    assert.deepEqual(querySearchIndex(index, 'report'), [document, networkDocument]);
 });
 
 test('category view routes applications into every visible custom category', () => {

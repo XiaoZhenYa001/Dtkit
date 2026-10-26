@@ -341,7 +341,7 @@ fn dib_to_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .and_then(|n| n.checked_add(palette.checked_mul(4)?))
         .ok_or("位图容量无效")?;
     if compression != 0 {
-        let base = if header == 40 { 40 } else { 40 };
+        let base = 40;
         if u32_at(bytes, base)? != 0x00ff0000
             || u32_at(bytes, base + 4)? != 0x0000ff00
             || u32_at(bytes, base + 8)? != 0x000000ff
@@ -349,7 +349,7 @@ fn dib_to_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
             return Err("暂不支持这种位图颜色掩码".into());
         }
     }
-    let stride = ((w as usize * bits as usize + 31) / 32) * 4;
+    let stride = (w as usize * bits as usize).div_ceil(32) * 4;
     let size = stride.checked_mul(h as usize).ok_or("位图容量无效")?;
     let pixels = bytes
         .get(offset..offset.checked_add(size).ok_or("位图容量无效")?)

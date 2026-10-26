@@ -56,7 +56,7 @@ fn raw(key: &RegKey, name: &str) -> Result<Option<RawValue>, String> {
     }
 }
 fn text_value(value: &RawValue) -> Option<String> {
-    if !matches!(value.kind, 1 | 2) || value.bytes.len() % 2 != 0 {
+    if !matches!(value.kind, 1 | 2) || !value.bytes.len().is_multiple_of(2) {
         return None;
     }
     let bytes: Vec<u16> = value

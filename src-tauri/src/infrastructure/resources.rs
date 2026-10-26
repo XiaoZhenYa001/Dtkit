@@ -315,7 +315,9 @@ pub(crate) async fn get_resource_snapshot(app: AppHandle) -> Result<ResourceSnap
             .has_active_share()
             .await,
         storage: app.state::<StorageManager>().usage()?,
-        clipboard_collection_active: app.state::<super::clipboard_puzzle::PuzzleManager>().has_active_collection(),
+        clipboard_collection_active: app
+            .state::<super::clipboard_puzzle::PuzzleManager>()
+            .has_active_collection(),
     })
 }
 
@@ -324,7 +326,8 @@ pub(crate) async fn release_idle_resources(
     app: AppHandle,
 ) -> Result<ResourceReleaseResult, String> {
     app.state::<PasswordVaultManager>().release_cached_index();
-    app.state::<super::software_analysis::SoftwareAnalysisManager>().release_idle_cache();
+    app.state::<super::software_analysis::SoftwareAnalysisManager>()
+        .release_idle_cache();
     let quick_host_released = app.state::<QuickHostManager>().release_hidden(&app);
     let hidden_organizer_released =
         app.get_webview_window("desktop-organizer")
@@ -370,8 +373,10 @@ mod tests {
         policy.max_workers_on_battery = 8;
         policy.max_workers_on_ac = 4;
         assert!(governor.set_policy(policy).is_err());
-        let mut policy = ResourcePolicy::default();
-        policy.cache_limit_bytes = 1;
+        let policy = ResourcePolicy {
+            cache_limit_bytes: 1,
+            ..Default::default()
+        };
         assert!(governor.set_policy(policy).is_err());
     }
 

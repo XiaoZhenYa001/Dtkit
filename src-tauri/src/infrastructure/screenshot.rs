@@ -255,9 +255,9 @@ async fn show_session_window(window: WebviewWindow, session_label: String) -> Re
                 .lock()
                 .map_err(|_| "截图状态不可用".to_string())
                 .and_then(|sessions| {
-                    if !sessions
+                    if sessions
                         .get(&session_label)
-                        .is_some_and(|session| !session.cancelled.load(Ordering::Acquire))
+                        .is_none_or(|session| session.cancelled.load(Ordering::Acquire))
                     {
                         return Ok(false);
                     }
@@ -1113,6 +1113,9 @@ fn capture_manual_long_region(
 }
 
 #[cfg(target_os = "windows")]
+// Worker inputs and the public capture IPC fields stay separate to preserve
+// the existing capture protocol and its cancellation/ownership boundaries.
+#[allow(clippy::too_many_arguments)]
 async fn run_automatic_long_capture(
     app: &AppHandle,
     rect: CaptureRect,
@@ -1180,6 +1183,7 @@ async fn run_automatic_long_capture(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_screen_region_capture(
     window: WebviewWindow,
     manager: tauri::State<'_, ScreenRegionCaptureManager>,
@@ -1387,6 +1391,7 @@ pub(crate) fn get_screen_region_capture(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn finish_screen_region_capture(
     window: WebviewWindow,
     manager: tauri::State<'_, ScreenRegionCaptureManager>,

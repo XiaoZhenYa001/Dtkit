@@ -5,14 +5,10 @@ const DEFAULT_SETTINGS = Object.freeze({
 });
 const PRESENTATION_DEFAULTS = Object.freeze({
     presentation: 'classic',
-    layout: 'shelf',
-    appearance: 'warm',
     reducedMotion: false
 });
 const PRESENTATION_VALUES = Object.freeze({
-    presentation: ['classic', 'space'],
-    layout: ['shelf', 'islands', 'drawer', 'zones'],
-    appearance: ['warm', 'liquid']
+    presentation: ['classic', 'space']
 });
 const PRESENTATION_KEYS = Object.keys(PRESENTATION_DEFAULTS);
 
@@ -20,6 +16,10 @@ let mutationQueue = Promise.resolve();
 let presentationRevision = 0;
 let bootstrapPromise = null;
 let lifecycleInitialized = false;
+let shortcutWarning = '';
+
+export function getDesktopOrganizerShortcutWarning() { return shortcutWarning; }
+export function clearDesktopOrganizerShortcutWarning() { shortcutWarning = ''; }
 
 function serializeMutation(operation) {
     const pending = mutationQueue.then(operation, operation);
@@ -32,21 +32,18 @@ export function normalizeDesktopOrganizerPresentation(settings) {
     return {
         presentation: PRESENTATION_VALUES.presentation.includes(source.presentation)
             ? source.presentation : PRESENTATION_DEFAULTS.presentation,
-        layout: PRESENTATION_VALUES.layout.includes(source.layout)
-            ? source.layout : PRESENTATION_DEFAULTS.layout,
-        appearance: PRESENTATION_VALUES.appearance.includes(source.appearance)
-            ? source.appearance : PRESENTATION_DEFAULTS.appearance,
         reducedMotion: source.reducedMotion === true
     };
 }
 
 function validateStoredPresentation(settings) {
+    const { layout, appearance, ...current } = settings;
     // Keep the legacy enablement settings shape until presentation preferences are saved.
     // Both old installations and fresh installations receive presentation defaults through
     // normalizeDesktopOrganizerPresentation.
-    return PRESENTATION_KEYS.some(key => Object.hasOwn(settings, key))
-        ? { ...settings, ...normalizeDesktopOrganizerPresentation(settings) }
-        : settings;
+    return PRESENTATION_KEYS.some(key => Object.hasOwn(current, key))
+        ? { ...current, ...normalizeDesktopOrganizerPresentation(current) }
+        : current;
 }
 
 export function getDesktopOrganizerSettings() {
@@ -132,11 +129,16 @@ async function applyRuntime(settings) {
     };
     // Another WebView can change the native mode while this module stays alive.
     // Every top-level action must reach the shared manager; local caches are stale.
-    await invoke('set_desktop_organizer_mode', mode);
+    const result = await invoke('set_desktop_organizer_mode', mode);
+    shortcutWarning = mode.enabled && mode.presentation === 'space' && typeof result?.shortcutWarning === 'string'
+        ? result.shortcutWarning : '';
+    if (typeof globalThis.window?.dispatchEvent === 'function' && typeof globalThis.CustomEvent === 'function') {
+        globalThis.window.dispatchEvent(new CustomEvent('dtkit:shortcut-bindings-changed', { detail: null }));
+    }
     return true;
 }
 
-// Keep the public lifecycle names for existing callers. Space owns a desktop layer;
+// Keep lifecycle names for existing callers. Space owns a shortcut launcher;
 // only classic starts the upper-right monitor, through the native mode manager.
 export async function startDesktopOrganizerMonitor() {
     return serializeMutation(() => applyRuntime({ ...getDesktopOrganizerSettings(), enabled: true }));

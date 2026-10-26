@@ -30,6 +30,8 @@ with sync_playwright() as playwright:
     context.set_default_timeout(10_000)
     context.add_init_script("""
         window.__appCategory = 'program';
+        window.__managerCategory = 'custom_1';
+        window.__savedRequests = [];
         window.__eventListeners = {};
         localStorage.setItem('desktop_organizer_custom_categories', JSON.stringify([
             { key: 'custom_1', name: '工作', icon: '💼' }
@@ -51,12 +53,13 @@ with sync_playwright() as playwright:
             folders: [desktopEntry('Folder', 'folder', true)], others: [desktopEntry('misc.bin', 'other')], total_count: 4
         });
         window.__TAURI__ = {
-            core: { invoke: async command => {
+            core: { invoke: async (command, args) => {
                 if (command === 'desktop_scan') return desktopFiles();
                 if (command === 'desktop_list_apps') return [
-                    { id: 'app-steam', name: 'Steam', path: 'C:/Start Menu/Steam.lnk', source: 'start-menu', category: '游戏', icon: null, hidden: false, manual: false },
+                    { id: 'app-steam', name: 'Steam', path: 'C:/Start Menu/Steam.lnk', source: 'start-menu', category: window.__managerCategory, icon: null, hidden: false, manual: false },
                     { id: 'app-tool', name: 'Tool', path: 'D:/Apps/Tool.exe', source: 'manual', category: '开发', icon: null, hidden: false, manual: true }
                 ];
+                if (command === 'desktop_save_app') { window.__savedRequests.push(args.request); window.__managerCategory = args.request.category; return null; }
                 if (command === 'get_storage_layout') return { root: 'D:/DtKit', downloads: 'D:/DtKit/Downloads', writable: true, warning: null };
                 if (command === 'get_shortcut_bindings') return [];
                 if (command === 'get_cleanup_status') return { policy: { automaticEnabled: false, lastAutomaticRunAt: null }, usage: { cacheBytes: 0, logBytes: 0, recoveryBytes: 0, tempTransferBytes: 0, jobBytes: 0 }, latestRecoveryBatchId: null, running: false, cacheRetentionDays: 7, logRetentionDays: 7 };
@@ -94,7 +97,15 @@ with sync_playwright() as playwright:
     manager.locator('#openDesktopAppManager').click()
     tool = manager.frame_locator('iframe.tool-page-frame:not([hidden])')
     tool.locator('#appManagerList .app-manager-row').first.click()
-    assert tool.locator('#appManagerCategory').input_value() == '游戏'
+    assert tool.locator('#appManagerCategory').input_value() == '工作'
+    tool.locator('#appManagerName').fill('Steam renamed')
+    tool.locator('[data-app-action="save"]').click()
+    tool.locator('#appManagerStatus').filter(has_text='应用信息已保存').wait_for()
+    assert tool.locator('#appManagerCategory').input_value() == '工作'
+    assert manager.evaluate("window.__savedRequests.at(-1).category") == 'custom_1'
+    tool.locator('#appManagerSearch').fill('工作')
+    assert tool.locator('#appManagerList .app-manager-row').count() == 1
+    tool.locator('#appManagerSearch').fill('')
     tool.locator('#appManagerCategoryToggle').click()
     category_menu = tool.locator('#appManagerCategoryOptions')
     assert category_menu.is_visible()
@@ -102,11 +113,21 @@ with sync_playwright() as playwright:
         "nodes => nodes.map(node => node.dataset.categoryValue)"
     )
     assert options[0] == 'program'
-    assert set(options) == {'program', '最近使用', '文件夹', '其他', '工作', '游戏', '开发'}
-    category_menu.locator('[data-category-value="工作"]').click()
+    assert set(options) == {'program', 'recent', 'folder', 'other', 'custom_1', '开发'}
+    assert category_menu.locator('[data-category-value="custom_1"]').text_content() == '工作'
+    assert 'custom_1' not in category_menu.inner_text()
+    category_menu.locator('[data-category-value="custom_1"]').click()
     assert tool.locator('#appManagerCategory').input_value() == '工作'
+    tool.locator('[data-app-action="save"]').click()
+    tool.locator('#appManagerStatus').filter(has_text='应用信息已保存').wait_for()
+    assert manager.evaluate("window.__savedRequests.at(-1).category") == 'custom_1'
     tool.locator('#appManagerCategory').fill('媒体')
     assert tool.locator('#appManagerCategory').input_value() == '媒体'
+    tool.locator('[data-app-action="save"]').click()
+    tool.locator('#appManagerStatus').filter(has_text='应用信息已保存').wait_for()
+    assert manager.evaluate("window.__savedRequests.at(-1).category") == '媒体'
+    tool.locator('#appManagerSearch').fill('媒体')
+    assert tool.locator('#appManagerList .app-manager-row').count() == 1
     manager.close()
     context.close()
     browser.close()

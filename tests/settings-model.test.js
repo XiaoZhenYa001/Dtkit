@@ -37,3 +37,10 @@ test('shortcut conflicts exclude the shortcut currently being edited', () => {
     assert.deepEqual(findShortcutConflict(shortcuts, 'second', 'Ctrl+A'), ['first', 'Ctrl+A']);
     assert.equal(findShortcutConflict(shortcuts, 'first', 'Ctrl+A'), null);
 });
+import { targetKey } from '../src/core/shortcutBindingControl.js';
+
+test('desktop space shortcuts have their own identity alongside tools and the command palette', () => {
+    assert.equal(targetKey({ kind: 'desktopSpace' }), 'desktopSpace');
+    assert.notEqual(targetKey({ kind: 'desktopSpace' }), targetKey({ kind: 'palette' }));
+    assert.notEqual(targetKey({ kind: 'desktopSpace' }), targetKey({ kind: 'tool', toolId: 'desktopSpace' }));
+});

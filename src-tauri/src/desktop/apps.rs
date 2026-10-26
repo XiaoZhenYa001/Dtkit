@@ -14,7 +14,8 @@ const MAX_SCAN_DEPTH: usize = 8;
 const MAX_ICON_BYTES: u64 = 4 * 1024 * 1024;
 const APP_INDEX_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
-static START_MENU_CACHE: OnceLock<Mutex<Option<(Instant, Vec<PathBuf>)>>> = OnceLock::new();
+type StartMenuSnapshot = Option<(Instant, Vec<PathBuf>)>;
+static START_MENU_CACHE: OnceLock<Mutex<StartMenuSnapshot>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,16 +73,6 @@ fn normalized_path(path: &Path) -> String {
         .to_lowercase()
 }
 
-fn normalized_name(value: &str) -> String {
-    let normalized = value.trim().to_lowercase();
-    for suffix in [".exe", ".lnk", ".url"] {
-        if let Some(name) = normalized.strip_suffix(suffix) {
-            return name.trim().to_string();
-        }
-    }
-    normalized
-}
-
 fn app_id(path: &Path) -> String {
     let digest = Sha256::digest(normalized_path(path).as_bytes());
     format!("app-{}", &hex::encode(digest)[..16])
@@ -89,21 +80,33 @@ fn app_id(path: &Path) -> String {
 
 fn allowed_app_extension(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str(),
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
         "exe" | "lnk" | "url"
     )
 }
 
 fn allowed_indexed_app_extension(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str(),
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
         "exe" | "lnk"
     )
 }
 
 fn allowed_icon_extension(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str(),
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
         "png" | "jpg" | "jpeg" | "ico"
     )
 }
@@ -111,10 +114,22 @@ fn allowed_icon_extension(path: &Path) -> bool {
 fn start_menu_roots() -> Vec<PathBuf> {
     let mut roots = Vec::with_capacity(2);
     if let Some(app_data) = std::env::var_os("APPDATA") {
-        roots.push(PathBuf::from(app_data).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+        roots.push(
+            PathBuf::from(app_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs"),
+        );
     }
     if let Some(program_data) = std::env::var_os("ProgramData") {
-        roots.push(PathBuf::from(program_data).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+        roots.push(
+            PathBuf::from(program_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs"),
+        );
     }
     roots
 }
@@ -126,13 +141,23 @@ fn scan_start_menu_paths() -> Vec<PathBuf> {
         queue.push_back((root, 0usize));
     }
     while let Some((directory, depth)) = queue.pop_front() {
-        if found.len() >= MAX_DISCOVERED_APPS { break; }
-        let Ok(entries) = fs::read_dir(directory) else { continue; };
+        if found.len() >= MAX_DISCOVERED_APPS {
+            break;
+        }
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
         for entry in entries.flatten() {
-            if found.len() >= MAX_DISCOVERED_APPS { break; }
+            if found.len() >= MAX_DISCOVERED_APPS {
+                break;
+            }
             let path = entry.path();
-            let Ok(metadata) = fs::symlink_metadata(&path) else { continue; };
-            if metadata.file_type().is_symlink() { continue; }
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
             if metadata.is_dir() && depth < MAX_SCAN_DEPTH {
                 queue.push_back((path, depth + 1));
             } else if metadata.is_file() && allowed_indexed_app_extension(&path) {
@@ -166,16 +191,24 @@ fn config_path(storage: &StorageManager) -> Result<PathBuf, String> {
 }
 
 fn load_overrides(storage: &StorageManager) -> AppOverrides {
-    let Ok(path) = config_path(storage) else { return AppOverrides::default(); };
-    fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+    let Ok(path) = config_path(storage) else {
+        return AppOverrides::default();
+    };
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
 }
 
 fn save_overrides(storage: &StorageManager, overrides: &AppOverrides) -> Result<(), String> {
     let path = config_path(storage)?;
-    let parent = path.parent().ok_or_else(|| "应用配置路径无效".to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "应用配置路径无效".to_string())?;
     fs::create_dir_all(parent).map_err(|error| format!("创建应用配置目录失败: {error}"))?;
     let temporary = parent.join(format!(".{APP_CONFIG_FILE}.{}.tmp", uuid::Uuid::new_v4()));
-    let bytes = serde_json::to_vec_pretty(overrides).map_err(|error| format!("序列化应用配置失败: {error}"))?;
+    let bytes = serde_json::to_vec_pretty(overrides)
+        .map_err(|error| format!("序列化应用配置失败: {error}"))?;
     fs::write(&temporary, bytes).map_err(|error| format!("写入应用配置失败: {error}"))?;
     let backup = parent.join(format!(".{APP_CONFIG_FILE}.backup"));
     if path.exists() {
@@ -183,7 +216,9 @@ fn save_overrides(storage: &StorageManager, overrides: &AppOverrides) -> Result<
         fs::rename(&path, &backup).map_err(|error| format!("备份旧应用配置失败: {error}"))?;
     }
     if let Err(error) = fs::rename(&temporary, &path) {
-        if backup.exists() { let _ = fs::rename(&backup, &path); }
+        if backup.exists() {
+            let _ = fs::rename(&backup, &path);
+        }
         let _ = fs::remove_file(&temporary);
         return Err(format!("提交应用配置失败: {error}"));
     }
@@ -192,40 +227,87 @@ fn save_overrides(storage: &StorageManager, overrides: &AppOverrides) -> Result<
 }
 
 fn custom_icon_data(storage: &StorageManager, file_name: &str) -> Option<String> {
-    if file_name.is_empty() || file_name.contains(['/', '\\']) { return None; }
-    let path = storage.layout().ok()?.kits.join("DesktopOrganizer").join("Icons").join(file_name);
+    if file_name.is_empty() || file_name.contains(['/', '\\']) {
+        return None;
+    }
+    let path = storage
+        .layout()
+        .ok()?
+        .kits
+        .join("DesktopOrganizer")
+        .join("Icons")
+        .join(file_name);
     let metadata = fs::metadata(&path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_ICON_BYTES { return None; }
+    if !metadata.is_file() || metadata.len() > MAX_ICON_BYTES {
+        return None;
+    }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    let mime = match extension.as_str() { "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "ico" => "image/x-icon", _ => return None };
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "ico" => "image/x-icon",
+        _ => return None,
+    };
     let encoded = base64::engine::general_purpose::STANDARD.encode(fs::read(path).ok()?);
     Some(format!("data:{mime};base64,{encoded}"))
 }
 
-pub(crate) fn list_desktop_apps(storage: &StorageManager, include_hidden: bool, refresh_index: bool) -> Result<Vec<DesktopApp>, String> {
+pub(crate) fn list_desktop_apps(
+    storage: &StorageManager,
+    include_hidden: bool,
+    refresh_index: bool,
+) -> Result<Vec<DesktopApp>, String> {
     let overrides = load_overrides(storage);
-    let override_map = overrides.items.iter().map(|item| (normalized_path(Path::new(&item.path)), item)).collect::<HashMap<_, _>>();
+    let override_map = overrides
+        .items
+        .iter()
+        .map(|item| (normalized_path(Path::new(&item.path)), item))
+        .collect::<HashMap<_, _>>();
     let mut paths = discover_start_menu_paths(refresh_index);
-    paths.extend(overrides.items.iter().filter(|item| item.manual).map(|item| PathBuf::from(&item.path)));
+    paths.extend(
+        overrides
+            .items
+            .iter()
+            .filter(|item| item.manual)
+            .map(|item| PathBuf::from(&item.path)),
+    );
     let mut seen = HashSet::new();
-    let mut seen_names = HashSet::new();
     let mut apps = Vec::new();
     for path in paths {
-        if !path.is_file() || !allowed_app_extension(&path) { continue; }
+        if !path.is_file() || !allowed_app_extension(&path) {
+            continue;
+        }
         let key = normalized_path(&path);
-        if !seen.insert(key.clone()) { continue; }
+        if !seen.insert(key.clone()) {
+            continue;
+        }
         let custom = override_map.get(&key).copied();
         let hidden = custom.is_some_and(|item| item.hidden);
-        if hidden && !include_hidden { continue; }
-        let default_name = path.file_stem().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "未命名应用".to_string());
-        let display_name = custom.filter(|item| !item.name.trim().is_empty()).map(|item| item.name.trim().to_string()).unwrap_or(default_name);
-        if !custom.is_some_and(|item| item.manual) && !seen_names.insert(normalized_name(&display_name)) { continue; }
+        if hidden && !include_hidden {
+            continue;
+        }
+        let default_name = path
+            .file_stem()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名应用".to_string());
+        let display_name = custom
+            .filter(|item| !item.name.trim().is_empty())
+            .map(|item| item.name.trim().to_string())
+            .unwrap_or(default_name);
         apps.push(DesktopApp {
             id: app_id(&path),
             name: display_name,
             path: path.to_string_lossy().to_string(),
-            source: if custom.is_some_and(|item| item.manual) { "manual" } else { "start-menu" }.to_string(),
-            category: custom.filter(|item| !item.category.trim().is_empty()).map(|item| item.category.trim().to_string()).unwrap_or_else(|| "program".to_string()),
+            source: if custom.is_some_and(|item| item.manual) {
+                "manual"
+            } else {
+                "start-menu"
+            }
+            .to_string(),
+            category: custom
+                .filter(|item| !item.category.trim().is_empty())
+                .map(|item| item.category.trim().to_string())
+                .unwrap_or_else(|| "program".to_string()),
             icon: custom.and_then(|item| custom_icon_data(storage, &item.icon_file)),
             hidden,
             manual: custom.is_some_and(|item| item.manual),
@@ -237,51 +319,172 @@ pub(crate) fn list_desktop_apps(storage: &StorageManager, include_hidden: bool, 
 
 fn validate_app_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
-    if !path.is_file() || !allowed_app_extension(&path) { return Err("请选择有效的 .exe、.lnk 或 .url 应用文件".to_string()); }
+    if !path.is_file() || !allowed_app_extension(&path) {
+        return Err("请选择有效的 .exe、.lnk 或 .url 应用文件".to_string());
+    }
     Ok(path)
 }
 
-pub(crate) fn save_desktop_app(storage: &StorageManager, request: SaveDesktopAppRequest) -> Result<(), String> {
+pub(crate) fn save_desktop_app(
+    storage: &StorageManager,
+    request: SaveDesktopAppRequest,
+) -> Result<(), String> {
     let app_path = validate_app_path(&request.path)?;
-    if request.name.chars().count() > 160 || request.category.chars().count() > 80 { return Err("应用名称或分类过长".to_string()); }
+    if request.name.chars().count() > 160 || request.category.chars().count() > 80 {
+        return Err("应用名称或分类过长".to_string());
+    }
     let mut overrides = load_overrides(storage);
     let key = normalized_path(&app_path);
-    let existing_index = overrides.items.iter().position(|item| normalized_path(Path::new(&item.path)) == key);
-    let existing_icon = existing_index.and_then(|index| { let value = overrides.items[index].icon_file.clone(); (!value.is_empty()).then_some(value) }).unwrap_or_default();
+    let existing_index = overrides
+        .items
+        .iter()
+        .position(|item| normalized_path(Path::new(&item.path)) == key);
+    let existing_icon = existing_index
+        .and_then(|index| {
+            let value = overrides.items[index].icon_file.clone();
+            (!value.is_empty()).then_some(value)
+        })
+        .unwrap_or_default();
     let previous_icon = existing_icon.clone();
-    let icon_file = if let Some(icon_path) = request.icon_path.as_deref().filter(|value| !value.is_empty()) {
+    let icon_file = if let Some(icon_path) = request
+        .icon_path
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         let source = PathBuf::from(icon_path);
         let metadata = fs::metadata(&source).map_err(|error| format!("读取图标失败: {error}"))?;
-        if !metadata.is_file() || metadata.len() > MAX_ICON_BYTES || !allowed_icon_extension(&source) { return Err("图标必须是小于 4MB 的 PNG、JPG 或 ICO 文件".to_string()); }
-        let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("png").to_ascii_lowercase();
+        if !metadata.is_file()
+            || metadata.len() > MAX_ICON_BYTES
+            || !allowed_icon_extension(&source)
+        {
+            return Err("图标必须是小于 4MB 的 PNG、JPG 或 ICO 文件".to_string());
+        }
+        let extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("png")
+            .to_ascii_lowercase();
         let file_name = format!("{}.{}", app_id(&app_path), extension);
-        let directory = storage.layout()?.kits.join("DesktopOrganizer").join("Icons");
+        let directory = storage
+            .layout()?
+            .kits
+            .join("DesktopOrganizer")
+            .join("Icons");
         fs::create_dir_all(&directory).map_err(|error| format!("创建图标目录失败: {error}"))?;
-        fs::copy(&source, directory.join(&file_name)).map_err(|error| format!("保存自定义图标失败: {error}"))?;
+        fs::copy(&source, directory.join(&file_name))
+            .map_err(|error| format!("保存自定义图标失败: {error}"))?;
         file_name
-    } else { existing_icon };
-    let item = AppOverride { path: app_path.to_string_lossy().to_string(), name: request.name.trim().to_string(), category: request.category.trim().to_string(), icon_file: icon_file.clone(), hidden: request.hidden, manual: request.manual || existing_index.and_then(|index| overrides.items.get(index)).is_some_and(|item| item.manual) };
-    if let Some(index) = existing_index { overrides.items[index] = item; } else if overrides.items.len() < MAX_DISCOVERED_APPS { overrides.items.push(item); } else { return Err("应用管理记录已达到 1200 条上限".to_string()); }
+    } else {
+        existing_icon
+    };
+    let item = AppOverride {
+        path: app_path.to_string_lossy().to_string(),
+        name: request.name.trim().to_string(),
+        category: request.category.trim().to_string(),
+        icon_file: icon_file.clone(),
+        hidden: request.hidden,
+        manual: request.manual
+            || existing_index
+                .and_then(|index| overrides.items.get(index))
+                .is_some_and(|item| item.manual),
+    };
+    if let Some(index) = existing_index {
+        overrides.items[index] = item;
+    } else if overrides.items.len() < MAX_DISCOVERED_APPS {
+        overrides.items.push(item);
+    } else {
+        return Err("应用管理记录已达到 1200 条上限".to_string());
+    }
     if let Err(error) = save_overrides(storage, &overrides) {
         if !icon_file.is_empty() && icon_file != previous_icon {
-            if let Ok(layout) = storage.layout() { let _ = fs::remove_file(layout.kits.join("DesktopOrganizer").join("Icons").join(&icon_file)); }
+            if let Ok(layout) = storage.layout() {
+                let _ = fs::remove_file(
+                    layout
+                        .kits
+                        .join("DesktopOrganizer")
+                        .join("Icons")
+                        .join(&icon_file),
+                );
+            }
         }
         return Err(error);
     }
     if !previous_icon.is_empty() && previous_icon != icon_file {
-        if let Ok(layout) = storage.layout() { let _ = fs::remove_file(layout.kits.join("DesktopOrganizer").join("Icons").join(previous_icon)); }
+        if let Ok(layout) = storage.layout() {
+            let _ = fs::remove_file(
+                layout
+                    .kits
+                    .join("DesktopOrganizer")
+                    .join("Icons")
+                    .join(previous_icon),
+            );
+        }
     }
     Ok(())
+}
+
+fn change_category(
+    overrides: &mut AppOverrides,
+    path: &Path,
+    category: &str,
+) -> Result<(), String> {
+    let category = category.trim();
+    if category.is_empty() || category.chars().count() > 80 {
+        return Err("应用分类为空或过长".into());
+    }
+    let key = normalized_path(path);
+    if let Some(item) = overrides
+        .items
+        .iter_mut()
+        .find(|item| normalized_path(Path::new(&item.path)) == key)
+    {
+        item.category = category.to_string();
+    } else if overrides.items.len() < MAX_DISCOVERED_APPS {
+        overrides.items.push(AppOverride {
+            path: path.to_string_lossy().to_string(),
+            category: category.to_string(),
+            ..Default::default()
+        });
+    } else {
+        return Err("应用管理记录已达到 1200 条上限".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn set_desktop_app_category(
+    storage: &StorageManager,
+    path: &str,
+    category: &str,
+) -> Result<(), String> {
+    let path = validate_app_path(path)?;
+    if !known_app_path(storage, &path) {
+        return Err("应用不在桌面整理的受管索引中".into());
+    }
+    let mut overrides = load_overrides(storage);
+    change_category(&mut overrides, &path, category)?;
+    save_overrides(storage, &overrides)
 }
 
 pub(crate) fn reset_desktop_app(storage: &StorageManager, path: &str) -> Result<(), String> {
     let mut overrides = load_overrides(storage);
     let key = normalized_path(Path::new(path));
-    if let Some(index) = overrides.items.iter().position(|item| normalized_path(Path::new(&item.path)) == key) {
+    if let Some(index) = overrides
+        .items
+        .iter()
+        .position(|item| normalized_path(Path::new(&item.path)) == key)
+    {
         let removed = overrides.items.remove(index);
         save_overrides(storage, &overrides)?;
         if !removed.icon_file.is_empty() {
-            if let Ok(layout) = storage.layout() { let _ = fs::remove_file(layout.kits.join("DesktopOrganizer").join("Icons").join(removed.icon_file)); }
+            if let Ok(layout) = storage.layout() {
+                let _ = fs::remove_file(
+                    layout
+                        .kits
+                        .join("DesktopOrganizer")
+                        .join("Icons")
+                        .join(removed.icon_file),
+                );
+            }
         }
     }
     Ok(())
@@ -289,8 +492,13 @@ pub(crate) fn reset_desktop_app(storage: &StorageManager, path: &str) -> Result<
 
 pub(crate) fn known_app_path(storage: &StorageManager, candidate: &Path) -> bool {
     let key = normalized_path(candidate);
-    discover_start_menu_paths(false).iter().any(|path| normalized_path(path) == key)
-        || load_overrides(storage).items.iter().any(|item| normalized_path(Path::new(&item.path)) == key)
+    discover_start_menu_paths(false)
+        .iter()
+        .any(|path| normalized_path(path) == key)
+        || load_overrides(storage)
+            .items
+            .iter()
+            .any(|item| normalized_path(Path::new(&item.path)) == key)
 }
 
 #[cfg(test)]
@@ -301,14 +509,48 @@ mod tests {
     fn automatic_index_excludes_url_helpers_but_manual_validation_keeps_compatibility() {
         assert!(allowed_indexed_app_extension(Path::new("Steam.lnk")));
         assert!(allowed_indexed_app_extension(Path::new("Steam.exe")));
-        assert!(!allowed_indexed_app_extension(Path::new("Steam Support Center.url")));
+        assert!(!allowed_indexed_app_extension(Path::new(
+            "Steam Support Center.url"
+        )));
         assert!(allowed_app_extension(Path::new("manually-added.url")));
     }
 
     #[test]
-    fn duplicate_names_ignore_case_and_common_executable_suffixes() {
-        assert_eq!(normalized_name(" Steam "), normalized_name("steam.LNK"));
-        assert_eq!(normalized_name("Tool.exe"), "tool");
+    fn category_update_preserves_the_other_application_overrides() {
+        let mut overrides = AppOverrides {
+            items: vec![AppOverride {
+                path: r"C:\Apps\Editor.exe".into(),
+                name: "My Editor".into(),
+                category: "program".into(),
+                icon_file: "custom.png".into(),
+                hidden: true,
+                manual: true,
+            }],
+        };
+        change_category(&mut overrides, Path::new("c:/apps/EDITOR.exe"), "custom_1").unwrap();
+        assert_eq!(overrides.items.len(), 1);
+        let item = &overrides.items[0];
+        assert_eq!(item.category, "custom_1");
+        assert_eq!(item.name, "My Editor");
+        assert_eq!(item.icon_file, "custom.png");
+        assert!(item.hidden && item.manual);
+        let path = item.path.clone();
+        change_category(&mut overrides, Path::new(&path), "program").unwrap();
+        assert_eq!(overrides.items[0].category, "program");
+        assert!(change_category(&mut overrides, Path::new("other.exe"), "").is_err());
+        assert_eq!(overrides.items.len(), 1);
+    }
+
+    #[test]
+    fn equal_app_names_do_not_imply_equal_application_identity() {
+        assert_ne!(
+            app_id(Path::new(r"C:\Editor\Editor.exe")),
+            app_id(Path::new(r"D:\Editor\Editor.exe"))
+        );
+        assert_ne!(
+            app_id(Path::new(r"C:\Desktop\Editor.lnk")),
+            app_id(Path::new(r"C:\Start Menu\Editor.lnk"))
+        );
     }
 
     #[test]

@@ -29,6 +29,13 @@ test('production CSP rejects inline styles while development CSP supports Vite H
     assert.ok(getDirective(devCsp, 'style-src').includes("'unsafe-inline'"));
     assert.ok(getDirective(devCsp, 'connect-src').includes('ws://127.0.0.1:1420'));
 
+    // Local PDF image decoders use WebAssembly; JavaScript eval stays blocked.
+    for (const policy of [csp, devCsp]) {
+        const script = getDirective(policy, 'script-src');
+        assert.ok(script.includes("'wasm-unsafe-eval'"));
+        assert.ok(!script.includes("'unsafe-eval'"));
+    }
+
     const runnerSource = readFileSync(resolve('src/preview-runner.js'));
     const runnerHash = `'sha256-${createHash('sha256').update(runnerSource).digest('base64')}'`;
     assert.ok(

@@ -31,13 +31,15 @@ export function createFileActions({
         try {
             const newPath = await invoke('desktop_rename_file', { oldPath, newName });
             const migratedCategories = migrateFileCategory(state.fileCategories, oldPath, newPath);
+            let categoryWarning = '';
             if (migratedCategories !== state.fileCategories) {
                 state.fileCategories = migratedCategories;
-                saveCategories();
+                if (saveCategories() === false) categoryWarning = '文件已重命名，分类设置尚未保存，请在存储恢复后刷新重试';
             }
             await onRename?.(oldPath, newPath);
             await loadDesktopFiles();
             if (state.folderView.active) await refreshCurrentView();
+            if (categoryWarning) setStatus(categoryWarning);
         } catch (error) {
             console.error('重命名失败:', error);
             alert(`重命名失败: ${error}`);

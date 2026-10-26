@@ -23,6 +23,62 @@ function stateWith(files, extras = {}) {
     };
 }
 
+function categoryStore(initial = []) {
+    const values = new Map([['desktop_organizer_custom_categories', JSON.stringify(initial)]]);
+    let fail = false;
+    return { values, fail(value) { fail = value; }, storage: {
+        getItem: key => values.get(key) ?? null,
+        setItem(key, value) { if (fail) throw new Error('disk full'); values.set(key, value); }
+    } };
+}
+
+test('category mutations commit only after storage succeeds and can be retried', () => {
+    const store = categoryStore(), state = stateWith({}), errors = [];
+    const controller = createCategoryController({ state, storage: store.storage, renderCategories() {}, onError: error => errors.push(error) });
+    controller.load();
+    store.fail(true);
+    assert.equal(controller.create('工作', '💼'), null);
+    assert.deepEqual(state.customCategories, []);
+    assert.match(errors.at(-1), /保存/);
+    store.fail(false);
+    const category = controller.create('工作', '💼');
+    assert(category);
+    assert.equal(controller.moveFile('C:\\notes.txt', category.key), true);
+    store.fail(true);
+    assert.equal(controller.remove(category.key), false);
+    assert.equal(state.customCategories.length, 1);
+    assert.equal(state.fileCategories['C:\\notes.txt'], category.key);
+    const restored = stateWith({});
+    createCategoryController({ state: restored, storage: store.storage, renderCategories() {} }).load();
+    assert.deepEqual(restored.customCategories, state.customCategories);
+    assert.deepEqual(restored.fileCategories, state.fileCategories);
+});
+
+test('category capacity is enforced before creation without truncating existing saved categories', () => {
+    const categories = Array.from({ length: 51 }, (_, index) => ({ key: `custom_${index}`, name: `分类${index}`, icon: '📁' }));
+    const store = categoryStore(categories), state = stateWith({});
+    const controller = createCategoryController({ state, storage: store.storage, renderCategories() {} });
+    controller.load();
+    assert.equal(state.customCategories.length, 51);
+    assert.equal(controller.create('额外分类', '📁'), null);
+    assert.equal(state.customCategories.length, 51);
+    assert.equal(controller.remove('custom_0'), true);
+    const restored = stateWith({});
+    createCategoryController({ state: restored, storage: store.storage, renderCategories() {} }).load();
+    assert.equal(restored.customCategories.length, 50);
+    assert.equal(restored.customCategories.at(-1).name, '分类50');
+});
+
+test('unreadable category storage is preserved and never replaced by an empty mutation', () => {
+    const store = categoryStore();
+    store.values.set('desktop_organizer_custom_categories', '{broken');
+    const before = new Map(store.values), state = stateWith({});
+    const controller = createCategoryController({ state, storage: store.storage, renderCategories() {} });
+    controller.load();
+    assert.equal(controller.create('工作', '📁'), null);
+    assert.deepEqual(store.values, before);
+});
+
 test('file category validation accepts current canonical and encoded groups without reviving deleted custom groups', () => {
     const custom = [{ key: 'custom_123', name: '项目' }];
     for (const key of ['document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other', 'custom_123', 'app_category_%E6%B8%B8%E6%88%8F']) {
@@ -100,15 +156,16 @@ test('a dynamic category keeps ordinary files and its definition after the last 
     assert.match(renderCategoryListMarkup(state), /class="category-name">游戏<\/span><span class="category-count">1/);
 });
 
-test('classic groups share escaped aliases and stable file/app ordering with desktop space', () => {
+test('classic groups retain escaped aliases and stable file/app ordering after legacy space migration', () => {
     const first = file('C:\\Desktop\\a.txt');
     const second = file('C:\\Desktop\\b.txt');
     const application = file('C:\\Tools\\editor.exe', 'program', { app_id: 'editor', app_category: 'document' });
     const state = stateWith({ documents: [first, second], applications: [application] }, {
         expandedCategories: new Set(['document']),
-        groupPresentation: key => key === 'document' ? {
-            name: '项目 <资料>', size: 'nine', order: [`app:${application.app_id}`, `file:${second.path}`, `file:${first.path}`]
-        } : {}
+        categoryPreferences: {
+            names: { document: '项目 <资料>' },
+            orders: { document: [`app:${application.app_id}`, `file:${second.path}`, `file:${first.path}`] }
+        }
     });
     assert.deepEqual(filesForCategory(state, 'document'), [application, second, first]);
     const markup = renderCategoryListMarkup(state);
@@ -118,7 +175,7 @@ test('classic groups share escaped aliases and stable file/app ordering with des
 });
 
 test('a renamed builtin group remains visible after its final file moves elsewhere', () => {
-    const state = stateWith({}, { groupPresentation: key => key === 'document' ? { name: '项目资料' } : {} });
+    const state = stateWith({}, { categoryPreferences: { names: { document: '项目资料' }, orders: {} } });
     assert.match(renderCategoryListMarkup(state), /class="category-name">项目资料<\/span><span class="category-count">0/);
 });
 

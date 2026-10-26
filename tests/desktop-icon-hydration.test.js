@@ -23,6 +23,22 @@ function fixture() {
         visible: targets => visibility(targets.map(target => ({ target, isIntersecting: true }))) };
 }
 
+test('desktop shortcut icons use the file command and a changed path never receives an old icon', async () => {
+    const dom = fixture(), calls = [];
+    let release;
+    const target = dom.target('C:\\Desktop\\old.lnk'); target.dataset.iconKind = 'file';
+    const hydrator = createIconHydrator({ ...dom, invoke: (command, args) => {
+        calls.push({ command, ...args }); return new Promise(resolve => { release = resolve; });
+    } });
+    hydrator.hydrate(dom.root([target])); dom.visible([target]); await flush();
+    target.dataset.path = 'C:\\Desktop\\new.lnk';
+    release('old-icon'); await flush();
+    assert.equal(calls[0].command, 'desktop_get_icon');
+    assert.equal(target.holder.image, undefined);
+    assert.equal(target.dataset.iconLoaded, undefined);
+    hydrator.destroy();
+});
+
 test('slow extraction keeps at most four requests active and coalesces duplicate paths', async () => {
     const dom = fixture(), calls = [], releases = [];
     let active = 0, peak = 0;

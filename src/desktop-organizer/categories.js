@@ -38,6 +38,11 @@ const APPLICATION_BUILTIN_CATEGORIES = new Map([
     ['其他', 'other']
 ]);
 const APPLICATION_BUILTIN_KEYS = new Set(APPLICATION_BUILTIN_CATEGORIES.values());
+const APPLICATION_CATEGORY_LABELS = new Map([
+    ['recent', '最近使用'], ['document', '文档'], ['image', '图片'],
+    ['video', '视频'], ['audio', '音频'], ['archive', '压缩包'],
+    ['program', '程序'], ['folder', '文件夹'], ['other', '其他']
+]);
 const FILE_BUILTIN_CATEGORY_KEYS = new Set([
     'document', 'image', 'video', 'audio', 'archive', 'program', 'folder', 'other'
 ]);
@@ -73,7 +78,18 @@ export function resolveApplicationCategoryKey(application, customCategories = []
         return normalized === key || normalized === name;
     });
     if (customCategory) return customCategory.key;
+    if (/^custom_\d+$/.test(normalized)) return 'program';
     return `app_category_${encodeURIComponent(category)}`;
+}
+
+export function applicationCategoryOption(value, customCategories = []) {
+    const category = normalizedCategory(value) || 'program';
+    const key = resolveApplicationCategoryKey({ app_category: category }, customCategories);
+    const builtinLabel = APPLICATION_CATEGORY_LABELS.get(key);
+    if (builtinLabel) return { value: key, label: builtinLabel };
+    const customCategory = customCategories.find(item => item.key === key);
+    if (customCategory) return { value: key, label: customCategory.name };
+    return { value: category, label: category };
 }
 
 export function collectApplicationCategoryGroups(applications = [], customCategories = [], fileCategories = {}) {
@@ -128,8 +144,7 @@ export function reconcileFileCategories(assignments, files, validCategoryKeys) {
             .map(file => file.path)
     );
     const nextEntries = Object.entries(assignments)
-        .filter(([path, categoryKey]) => currentPaths.has(path) && isValidKey(categoryKey))
-        .slice(0, 1000);
+        .filter(([path, categoryKey]) => currentPaths.has(path) && isValidKey(categoryKey));
 
     if (nextEntries.length === Object.keys(assignments).length
         && nextEntries.every(([path, categoryKey]) => assignments[path] === categoryKey)) {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    applicationCategoryOption,
     collectApplicationCategoryGroups,
     migrateFileCategory,
     reconcileFileCategories,
@@ -79,4 +80,21 @@ test('application category groups expose categories that have no predefined sect
             { key: 'app_category_%E6%B8%B8%E6%88%8F', name: '游戏', count: 2 }
         ]
     );
+});
+
+test('removed native custom-category keys fall back to programs without creating internal-name groups', () => {
+    const app = { app_category: 'custom_123' };
+    assert.equal(resolveApplicationCategoryKey(app, []), 'program');
+    assert.deepEqual(collectApplicationCategoryGroups([app], []), []);
+    assert.equal(resolveApplicationCategoryKey(app, [{ key: 'custom_123', name: 'Work' }]), 'custom_123');
+    assert.equal(resolveApplicationCategoryKey({ app_category: 'custom_tools' }, []), 'app_category_custom_tools');
+});
+
+test('application category options pair stable keys with readable names', () => {
+    const customCategories = [{ key: 'custom_123', name: '工作' }];
+    assert.deepEqual(applicationCategoryOption('custom_123', customCategories), { value: 'custom_123', label: '工作' });
+    assert.deepEqual(applicationCategoryOption('工作', customCategories), { value: 'custom_123', label: '工作' });
+    assert.deepEqual(applicationCategoryOption('documents', customCategories), { value: 'document', label: '文档' });
+    assert.deepEqual(applicationCategoryOption('游戏', customCategories), { value: '游戏', label: '游戏' });
+    assert.deepEqual(applicationCategoryOption('custom_456', customCategories), { value: 'program', label: '程序' });
 });

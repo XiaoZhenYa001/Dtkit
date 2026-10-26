@@ -540,6 +540,8 @@ async fn serve_download(
     tokio::io::copy(&mut file, &mut stream).await.is_ok()
 }
 
+// The spawned worker receives owned handles and cancellation as separate inputs.
+#[allow(clippy::too_many_arguments)]
 async fn run_lan_share(
     app: AppHandle,
     manager_state: Arc<Mutex<Option<ActiveLanShare>>>,

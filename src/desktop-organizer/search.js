@@ -19,17 +19,28 @@ const SEARCH_CATEGORY_KEYS = Object.freeze([
     'applications'
 ]);
 
+function normalizedPath(path) {
+    return path.replaceAll('/', '\\')
+        .replace(/^\\\\\?\\UNC\\/i, '\\\\')
+        .replace(/^\\\\\?\\/, '')
+        .toLocaleLowerCase();
+}
+
 export function buildSearchIndex(files) {
-    const sourceRank = file => file.app_manual ? 0 : file.app_id ? 2 : 1;
-    const seenNames = new Set();
+    const sourceRank = file => file.app_manual ? 0 : file.app_id ? 1 : 2;
+    const seenAppIds = new Set();
+    const seenPaths = new Set();
     return SEARCH_CATEGORY_KEYS
         .flatMap(key => files?.[key] || [])
         .sort((left, right) => sourceRank(left) - sourceRank(right))
         .filter(file => {
-            const name = file.name.trim().replace(/\.(exe|lnk|url)$/i, '').toLocaleLowerCase();
-            if (!name || seenNames.has(name)) return false;
-            seenNames.add(name);
-            return true;
+            if (!file.name.trim()) return false;
+            const appId = typeof file.app_id === 'string' ? file.app_id.trim() : '';
+            const path = typeof file.path === 'string' ? normalizedPath(file.path) : '';
+            const duplicate = appId && seenAppIds.has(appId) || path && seenPaths.has(path);
+            if (appId) seenAppIds.add(appId);
+            if (path) seenPaths.add(path);
+            return !duplicate;
         })
         .map(file => ({ file, normalizedName: file.name.toLocaleLowerCase() }));
 }

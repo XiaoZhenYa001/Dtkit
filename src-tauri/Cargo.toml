@@ -37,17 +37,23 @@ sha2 = "0.10"
 hex = "0.4"
 dirs = "5"
 opener = "0.7"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-webview2 = { package = "windows", version = "0.61" }
 windows = { version = "0.58", features = [
+    "Foundation_Numerics",
+    "System",
+    "UI_Composition",
+    "UI_Composition_Desktop",
     "Foundation_Collections",
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
     "Storage_Streams",
     "Win32_System_WinRT",
+    "Win32_System_WinRT_Composition",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Networking_WinHttp",
     "Win32_UI_HiDpi",
@@ -59,6 +65,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell_Common",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_LibraryLoader",
     "Win32_System_Power",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
@@ -67,5 +74,4 @@ windows = { version = "0.58", features = [
     "Win32_System_Memory"
 ] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-base64 = "0.22"
 winreg = "0.55"

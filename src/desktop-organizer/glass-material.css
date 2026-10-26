@@ -1,0 +1,94 @@
+/* Shared by the live window and both settings previews. Native Windows blur
+   supplies the live desktop; CSS supplies tint, edge thickness and lighting. */
+.liquid-glass {
+    --glass-radius: 28px;
+    --glass-opacity: .68;
+    --glass-blur: 30px;
+    --glass-light-x: 22%;
+    --glass-light-y: 0%;
+    --glass-light-angle: 135deg;
+    --glass-top: 36 44 58;
+    --glass-bottom: 17 24 36;
+    --glass-edge-light: 240 248 255;
+    --glass-edge-dark: 3 12 25;
+    --glass-glow-strength: .1;
+    --glass-press-boost: 0;
+    border: 0;
+    border-radius: var(--glass-radius);
+    isolation: isolate;
+    overflow: hidden;
+    background: linear-gradient(165deg,
+        rgb(var(--glass-top) / calc(var(--glass-opacity) * .32)),
+        rgb(var(--glass-bottom) / calc(var(--glass-opacity) * .54)));
+    /* Fixed scattering: the high-light softness setting never changes this. */
+    backdrop-filter: blur(18px) saturate(118%);
+    box-shadow: inset 0 1px 1px rgb(var(--glass-edge-light) / .2),
+        inset 0 -2px 3px rgb(var(--glass-edge-dark) / .15),
+        inset 1px 0 2px rgb(var(--glass-edge-light) / .08),
+        inset -1px 0 2px rgb(var(--glass-edge-dark) / .1);
+}
+:root[data-appearance=light] .liquid-glass,
+.liquid-glass[data-appearance=light],
+[data-appearance=light] .liquid-glass {
+    --glass-top: 252 254 255;
+    --glass-bottom: 225 234 246;
+    --glass-edge-dark: 38 56 77;
+    --glass-glow-strength: .14;
+}
+.liquid-glass[data-appearance=dark],
+[data-appearance=dark] .liquid-glass {
+    --glass-top: 36 44 58;
+    --glass-bottom: 17 24 36;
+    --glass-edge-dark: 3 12 25;
+    --glass-glow-strength: .1;
+}
+.liquid-glass::before {
+    content: "";
+    position: absolute;
+    inset: .5px;
+    z-index: 0;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: linear-gradient(var(--glass-light-angle),
+        rgb(var(--glass-edge-light) / .55),
+        rgb(var(--glass-edge-light) / .06) 27%,
+        rgb(var(--glass-edge-dark) / .25) 50%,
+        rgb(var(--glass-edge-light) / .32) 78%,
+        rgb(var(--glass-edge-light) / .08));
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+}
+.liquid-glass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: radial-gradient(ellipse at var(--glass-light-x) var(--glass-light-y),
+        rgb(var(--glass-edge-light) / calc(var(--glass-glow-strength) + var(--glass-press-boost))), transparent 55%),
+        radial-gradient(ellipse at 95% 100%, #b5d8ff0c, transparent 42%);
+    filter: blur(calc(var(--glass-blur) * .25));
+    opacity: .75;
+    transition: opacity 180ms ease;
+    pointer-events: none;
+}
+.liquid-glass[data-glass-focused=true]::after { opacity: 1 }
+.liquid-glass[data-glass-pressed=true] { --glass-press-boost: .08 }
+.liquid-glass[data-glass-pressed=true]::after { opacity: 1 }
+.liquid-glass[data-reduced-motion=true]::after { transition: none }
+:root[data-native-backdrop=unavailable] .liquid-glass {
+    background: rgb(var(--glass-bottom) / .96);
+    backdrop-filter: none;
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .liquid-glass { background: rgb(var(--glass-bottom) / .96); backdrop-filter: none }
+    .liquid-glass::after { opacity: .25 }
+}
+@media (forced-colors: active) {
+    .liquid-glass { background: Canvas; color: CanvasText; outline: 1px solid CanvasText; box-shadow: none; backdrop-filter: none }
+    .liquid-glass::before,.liquid-glass::after { display: none }
+}
+@media (prefers-reduced-motion: reduce) {
+    .liquid-glass::after { transition: none }
+}

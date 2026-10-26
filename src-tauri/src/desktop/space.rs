@@ -1,13 +1,16 @@
-//! Explorer owns the transparent desktop space; it stays behind application windows.
-//!
-//! The native window region contains only rendered controls. Empty wallpaper therefore
-//! remains Explorer's surface for clicks, selection rectangles and context menus.
-use crate::infrastructure::storage::StorageManager;
+//! A transient file launcher. No Explorer attachment or desktop polling is needed.
+use crate::infrastructure::{shortcuts::ShortcutRegistry, storage::StorageManager};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 
 const LABEL: &str = "desktop-space";
 const MODE_FILE: &str = "desktop-organizer-mode.json";
@@ -25,11 +28,18 @@ struct ModeConfig {
     version: u32,
     enabled: bool,
     presentation: Presentation,
+    #[serde(default, rename = "shortcutInitialized")]
+    shortcut_initialized: bool,
 }
 
 impl Default for ModeConfig {
     fn default() -> Self {
-        Self { version: 1, enabled: false, presentation: Presentation::Classic }
+        Self {
+            version: 1,
+            enabled: false,
+            presentation: Presentation::Classic,
+            shortcut_initialized: false,
+        }
     }
 }
 
@@ -41,54 +51,26 @@ pub(crate) struct OrganizerMode {
     presentation: Presentation,
     hotzone_running: bool,
     desktop_space_visible: bool,
-    icons_hidden: bool,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub(crate) struct InteractiveRegion {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PixelRect { left: i32, top: i32, right: i32, bottom: i32 }
-
-fn pixel_regions(regions: &[InteractiveRegion], scale: f64, width: i32, height: i32) -> Result<Vec<PixelRect>, String> {
-    if regions.len() > 256 || !scale.is_finite() || !(0.5..=8.0).contains(&scale) {
-        return Err("桌面交互区域参数无效".into());
-    }
-    let mut result = Vec::with_capacity(regions.len());
-    for region in regions {
-        if ![region.x, region.y, region.width, region.height].iter().all(|value| value.is_finite())
-            || region.width < 0.0 || region.height < 0.0
-            || region.width > 100_000.0 || region.height > 100_000.0 {
-            return Err("桌面交互区域参数无效".into());
-        }
-        let rect = PixelRect {
-            left: (region.x * scale).floor().clamp(0.0, width as f64) as i32,
-            top: (region.y * scale).floor().clamp(0.0, height as f64) as i32,
-            right: ((region.x + region.width) * scale).ceil().clamp(0.0, width as f64) as i32,
-            bottom: ((region.y + region.height) * scale).ceil().clamp(0.0, height as f64) as i32,
-        };
-        if rect.right > rect.left && rect.bottom > rect.top { result.push(rect); }
-    }
-    Ok(result)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shortcut_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct DesktopViewport { width: u32, height: u32, scale_factor: f64, displays: Vec<DesktopDisplay> }
+pub(crate) struct DesktopViewport {
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+    session: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    light_background: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background_luminance: Option<Vec<f64>>,
+}
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct DesktopDisplay { id: String, x: f64, y: f64, width: f64, height: f64 }
-
-fn viewport_displays(scale: f64) -> Vec<DesktopDisplay> {
-    #[cfg(windows)]
-    { native::logical_displays(scale).unwrap_or_default() }
-    #[cfg(not(windows))]
-    { let _ = scale; Vec::new() }
+struct ClosingSession {
+    session: u64,
 }
 
 #[derive(Default)]
@@ -97,9 +79,41 @@ struct Inner {
     mode: ModeConfig,
     ready: bool,
     visible: bool,
-    regions: Vec<InteractiveRegion>,
-    #[cfg(windows)]
-    attachment: Option<native::Attachment>,
+    closing: bool,
+    session: u64,
+    shortcut_warning: Option<String>,
+}
+
+impl Inner {
+    fn begin_show(&mut self) -> u64 {
+        self.session = self.session.wrapping_add(1);
+        self.visible = true;
+        self.closing = false;
+        self.session
+    }
+
+    fn begin_close(&mut self) -> Option<u64> {
+        if !self.visible || self.closing {
+            return None;
+        }
+        self.closing = true;
+        Some(self.session)
+    }
+
+    fn begin_hide(&mut self, expected: Option<u64>) -> bool {
+        if expected.is_some_and(|session| session != self.session) {
+            return false;
+        }
+        self.session = self.session.wrapping_add(1);
+        self.visible = false;
+        self.closing = false;
+        true
+    }
+
+    #[cfg(test)]
+    fn close_expired(&self, session: u64) -> bool {
+        self.visible && self.closing && self.session == session
+    }
 }
 
 #[derive(Default)]
@@ -107,7 +121,6 @@ struct Shared {
     inner: Mutex<Inner>,
     transition: tokio::sync::Mutex<()>,
     ready: tokio::sync::Notify,
-    monitoring: AtomicBool,
     exiting: AtomicBool,
 }
 
@@ -117,10 +130,15 @@ pub(crate) struct DesktopSpaceManager(Arc<Shared>);
 impl DesktopSpaceManager {
     pub(crate) fn restore_config(&self, app: &AppHandle) -> Result<(), String> {
         let path = app.state::<StorageManager>().config_file(MODE_FILE)?;
-        if !path.exists() { return Ok(()); }
-        let mode: ModeConfig = serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("桌面整理配置无效: {error}"))?;
-        if mode.version != 1 { return Err("桌面整理配置版本不受支持".into()); }
+        if !path.exists() {
+            return Ok(());
+        }
+        let mode: ModeConfig =
+            serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?)
+                .map_err(|error| format!("桌面整理配置无效: {error}"))?;
+        if mode.version != 1 {
+            return Err("桌面整理配置版本不受支持".into());
+        }
         let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
         inner.mode = mode;
         inner.configured = true;
@@ -128,14 +146,21 @@ impl DesktopSpaceManager {
     }
 
     pub(crate) fn classic_allowed(&self) -> bool {
-        self.0.inner.lock().map(|inner| !inner.configured || (inner.mode.enabled && inner.mode.presentation == Presentation::Classic)).unwrap_or(false)
+        self.0
+            .inner
+            .lock()
+            .map(|inner| {
+                !inner.configured
+                    || (inner.mode.enabled && inner.mode.presentation == Presentation::Classic)
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn show_classic_if_allowed(&self, window: &WebviewWindow) -> Result<(), String> {
-        // Keep the mode check and UI operation together. A sleeping hot-zone
-        // callback must not reshow the old panel after space took ownership.
         let inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
-        if !inner.configured || (inner.mode.enabled && inner.mode.presentation == Presentation::Classic) {
+        if !inner.configured
+            || (inner.mode.enabled && inner.mode.presentation == Presentation::Classic)
+        {
             window.show().map_err(|error| error.to_string())?;
             window.set_focus().map_err(|error| error.to_string())?;
         }
@@ -143,28 +168,59 @@ impl DesktopSpaceManager {
     }
 
     fn space_enabled(&self) -> bool {
-        !self.0.exiting.load(Ordering::Acquire) && self.0.inner.lock()
-            .map(|inner| inner.mode.enabled && inner.mode.presentation == Presentation::Space).unwrap_or(false)
+        !self.0.exiting.load(Ordering::Acquire)
+            && self
+                .0
+                .inner
+                .lock()
+                .map(|inner| inner.mode.enabled && inner.mode.presentation == Presentation::Space)
+                .unwrap_or(false)
     }
 
     fn status(&self, app: &AppHandle) -> OrganizerMode {
-        let inner = self.0.inner.lock().unwrap_or_else(|error| error.into_inner());
+        let inner = self
+            .0
+            .inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         OrganizerMode {
-            configured: inner.configured, enabled: inner.mode.enabled, presentation: inner.mode.presentation,
+            configured: inner.configured,
+            enabled: inner.mode.enabled,
+            presentation: inner.mode.presentation,
             hotzone_running: super::hotzone::is_hotzone_running(),
             desktop_space_visible: inner.visible && app.get_webview_window(LABEL).is_some(),
-            icons_hidden: false,
+            shortcut_warning: if inner.mode.enabled
+                && inner.mode.presentation == Presentation::Space
+                && !app
+                    .state::<ShortcutRegistry>()
+                    .is_registered(&crate::infrastructure::shortcuts::ShortcutTarget::DesktopSpace)
+            {
+                app.state::<ShortcutRegistry>()
+                    .registration_error(
+                        &crate::infrastructure::shortcuts::ShortcutTarget::DesktopSpace,
+                    )
+                    .or_else(|| inner.shortcut_warning.clone())
+            } else {
+                None
+            },
         }
     }
 
-    fn emit_status(&self, app: &AppHandle) { let _ = app.emit("desktop-organizer-mode-changed", self.status(app)); }
+    fn emit_status(&self, app: &AppHandle) {
+        let _ = app.emit("desktop-organizer-mode-changed", self.status(app));
+    }
 
     pub(crate) fn resume(&self, app: &AppHandle) {
         let manager = self.clone();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             let _guard = manager.0.transition.lock().await;
-            let mode = manager.0.inner.lock().map(|inner| inner.mode).unwrap_or_default();
+            let mode = manager
+                .0
+                .inner
+                .lock()
+                .map(|inner| inner.mode)
+                .unwrap_or_default();
             if let Err(error) = manager.apply_mode(&app, mode).await {
                 eprintln!("[DesktopSpace] 恢复桌面整理失败: {error}");
                 let _ = app.emit("desktop-organizer-error", error);
@@ -175,206 +231,467 @@ impl DesktopSpaceManager {
     async fn apply_mode(&self, app: &AppHandle, mode: ModeConfig) -> Result<(), String> {
         super::hotzone::set_user_interacting(false);
         super::hotzone::stop_hotzone_monitor();
-        if let Some(window) = app.get_webview_window("desktop-organizer") { let _ = window.hide(); }
+        if let Some(window) = app.get_webview_window("desktop-organizer") {
+            let _ = window.hide();
+        }
         if !mode.enabled || mode.presentation == Presentation::Classic {
+            self.0
+                .inner
+                .lock()
+                .map_err(|_| "桌面整理状态不可用")?
+                .shortcut_warning = None;
             self.release_space(app).await?;
-            if mode.enabled { crate::start_hotzone_monitor(app.clone())?; }
+            if mode.enabled {
+                crate::start_hotzone_monitor(app.clone())?;
+            }
             return Ok(());
         }
-        self.ensure_space(app).await?;
-        self.start_monitor(app);
-        tokio::time::timeout(Duration::from_secs(12), async {
-            loop {
-                let notified = self.0.ready.notified();
-                if self.0.inner.lock().map(|inner| inner.visible).unwrap_or(false) { break; }
-                notified.await;
+        let (added, shortcut_warning) = if mode.shortcut_initialized {
+            (
+                false,
+                self.0
+                    .inner
+                    .lock()
+                    .map_err(|_| "桌面整理状态不可用")?
+                    .shortcut_warning
+                    .clone(),
+            )
+        } else {
+            match app.state::<ShortcutRegistry>().ensure_desktop_space_binding(app) {
+                Ok(added) => (added, None),
+                Err(error) => (false, Some(format!("桌面空间已启用，但默认快捷键未能设置：{error}。可点击“打开空间”，或在快捷键设置中更换组合键。"))),
             }
-        }).await.map_err(|_| "桌面空间未能完成加载，已恢复之前的整理方式".to_string())?;
+        };
+        if let Err(error) = self.ensure_space(app) {
+            if added {
+                let _ = app
+                    .state::<ShortcutRegistry>()
+                    .remove_desktop_space_binding(app);
+            }
+            return Err(error);
+        }
+        if !mode.shortcut_initialized {
+            let initialized = ModeConfig {
+                shortcut_initialized: true,
+                ..mode
+            };
+            let persisted = (|| {
+                let path = app.state::<StorageManager>().config_file(MODE_FILE)?;
+                let bytes =
+                    serde_json::to_vec_pretty(&initialized).map_err(|error| error.to_string())?;
+                fs::write(path, bytes)
+                    .map_err(|error| format!("保存桌面空间快捷键初始化状态失败: {error}"))
+            })();
+            if let Err(error) = persisted {
+                if added {
+                    let _ = app
+                        .state::<ShortcutRegistry>()
+                        .remove_desktop_space_binding(app);
+                }
+                return Err(error);
+            }
+            self.0
+                .inner
+                .lock()
+                .map_err(|_| "桌面整理状态不可用")?
+                .mode
+                .shortcut_initialized = true;
+        }
+        self.0
+            .inner
+            .lock()
+            .map_err(|_| "桌面整理状态不可用")?
+            .shortcut_warning = shortcut_warning;
+        // Startup and mode selection only prepare the hidden WebView.
         Ok(())
     }
 
-    async fn ensure_space(&self, app: &AppHandle) -> Result<(), String> {
-        #[cfg(not(windows))]
-        { let _ = app; return Err("桌面空间目前仅支持 Windows".into()); }
-        #[cfg(windows)]
+    fn ensure_space(&self, app: &AppHandle) -> Result<WebviewWindow, String> {
+        if let Some(window) = app.get_webview_window(LABEL) {
+            return Ok(window);
+        }
+        if !self.space_enabled() {
+            return Err("桌面空间尚未启用".into());
+        }
         {
-            if !self.space_enabled() { return Ok(()); }
-            let desktop = native::find_desktop()?;
-            let window = match app.get_webview_window(LABEL) {
-                Some(window) if native::window_exists(&window) => window,
-                stale => {
-                    if let Some(window) = stale { let _ = window.destroy(); }
-                    let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
-                    inner.attachment = None;
-                    inner.ready = false;
-                    inner.visible = false;
-                    inner.regions.clear();
-                    drop(inner);
-                    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("desktop-organizer/index.html?host=desktop".into()))
-                        .title("桌面空间")
-                        .owner_raw(windows_webview2::Win32::Foundation::HWND(desktop.parent as *mut std::ffi::c_void))
-                        .disable_drag_drop_handler().transparent(true)
-                        .background_color(tauri::window::Color(0, 0, 0, 0))
-                        .decorations(false).resizable(false).always_on_top(false).skip_taskbar(true)
-                        .visible(false).shadow(false).inner_size(800.0, 600.0)
-                        .build().map_err(|error| format!("创建桌面空间失败: {error}"))?;
-                    let dismissal = window.clone();
-                    window.on_window_event(move |event| {
-                        // WebView2 may retain document focus when its Explorer-
-                        // owned HWND loses activation to the wallpaper. DOM blur
-                        // alone cannot close a panel on a real outside click.
-                        if matches!(event, WindowEvent::Focused(false)) {
-                            let _ = dismissal.emit("desktop-space-close-transients", ());
-                        }
-                    });
-                    window
+            let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+            inner.ready = false;
+            inner.visible = false;
+            inner.closing = false;
+        }
+        let builder = WebviewWindowBuilder::new(
+            app,
+            LABEL,
+            WebviewUrl::App("desktop-organizer/space.html".into()),
+        )
+        .title("桌面空间")
+        .disable_drag_drop_handler()
+        .transparent(true)
+        .decorations(false)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .shadow(false)
+        .inner_size(1100.0, 660.0);
+        let window = builder
+            .build()
+            .map_err(|error| format!("创建桌面空间失败: {error}"))?;
+        #[cfg(windows)]
+        super::space_surface::configure(&window)?;
+        let manager = self.clone();
+        let app_handle = app.clone();
+        #[cfg(windows)]
+        let surface_window = window.clone();
+        window.on_window_event(move |event| match event {
+            #[cfg(windows)]
+            WindowEvent::Focused(true) => {
+                if let Err(error) = super::space_surface::configure(&surface_window) {
+                    eprintln!("桌面空间外观更新失败: {error}");
                 }
+            }
+            #[cfg(windows)]
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if let Err(error) = super::space_surface::configure(&surface_window) {
+                    eprintln!("桌面空间圆角更新失败: {error}");
+                }
+            }
+            WindowEvent::Focused(false) => {
+                if super::space_settings::read_settings(&app_handle)
+                    .map(|settings| settings.close_on_blur)
+                    .unwrap_or(true)
+                {
+                    let _ = manager.request_close(&app_handle);
+                }
+            }
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = manager.request_close(&app_handle);
+            }
+            WindowEvent::Destroyed => {
+                if let Ok(mut inner) = manager.0.inner.lock() {
+                    inner.ready = false;
+                    inner.begin_hide(None);
+                }
+                manager.0.ready.notify_waiters();
+            }
+            _ => {}
+        });
+        Ok(window)
+    }
+
+    async fn present(&self, app: &AppHandle) -> Result<(), String> {
+        if !self.space_enabled() {
+            return Err("桌面空间尚未启用".into());
+        }
+        let window = self.ensure_space(app)?;
+        tokio::time::timeout(Duration::from_secs(12), async {
+            loop {
+                let notified = self.0.ready.notified();
+                if self
+                    .0
+                    .inner
+                    .lock()
+                    .map(|inner| inner.ready)
+                    .unwrap_or(false)
+                {
+                    return Ok(());
+                }
+                if !self.space_enabled() {
+                    return Err("桌面空间已关闭".to_string());
+                }
+                notified.await;
+            }
+        })
+        .await
+        .map_err(|_| "桌面空间加载超时，请稍后重试".to_string())??;
+        let monitor = match app.cursor_position() {
+            Ok(cursor) => app.monitor_from_point(cursor.x, cursor.y).ok().flatten(),
+            Err(_) => None,
+        }
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or("无法获取显示器工作区域")?;
+        let area = monitor.work_area();
+        let settings = super::space_settings::read_settings(app).unwrap_or_default();
+        let (position, size) = launcher_bounds_with_percentages(
+            area.position,
+            area.size,
+            monitor.scale_factor(),
+            settings.window_width as f64,
+            settings.window_height as f64,
+        );
+        let manager = self.clone();
+        let app_handle = app.clone();
+        on_ui(app, move || {
+            if !manager.space_enabled() {
+                return Err("桌面空间已关闭".to_string());
+            }
+            window.set_size(size).map_err(|error| error.to_string())?;
+            window
+                .set_position(position)
+                .map_err(|error| error.to_string())?;
+            #[cfg(windows)]
+            super::space_surface::configure(&window)?;
+            let session = {
+                let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+                inner.begin_show()
             };
-            let manager = self.clone();
-            let app_handle = app.clone();
-            on_ui(app, move || manager.attach_on_ui(&app_handle, &window, desktop)).await
+            #[cfg(windows)]
+            let contrast = if window.is_visible().unwrap_or(false) {
+                None
+            } else {
+                super::space_surface::background_contrast(position, size)
+            };
+            #[cfg(not(windows))]
+            let contrast: Option<(bool, Vec<f64>)> = None;
+            let (light_background, background_luminance) = contrast
+                .map(|(light, grid)| (Some(light), Some(grid)))
+                .unwrap_or_default();
+            if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+                manager.hide(&app_handle)?;
+                return Err(format!("显示桌面空间失败: {error}"));
+            }
+            #[cfg(windows)]
+            super::space_surface::configure(&window)?;
+            let size = window.inner_size().map_err(|error| error.to_string())?;
+            let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
+            window
+                .emit(
+                    "desktop-space-opened",
+                    DesktopViewport {
+                        width: size.width,
+                        height: size.height,
+                        scale_factor,
+                        session,
+                        light_background,
+                        background_luminance,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            manager.emit_status(&app_handle);
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn toggle(&self, app: &AppHandle) -> Result<(), String> {
+        let _guard = self.0.transition.lock().await;
+        if !self.space_enabled() {
+            return Ok(());
+        }
+        let should_close = self
+            .0
+            .inner
+            .lock()
+            .map(|inner| inner.visible && !inner.closing)
+            .unwrap_or(false);
+        if should_close {
+            self.request_close(app)
+        } else {
+            self.present(app).await
         }
     }
 
-    #[cfg(windows)]
-    fn attach_on_ui(&self, app: &AppHandle, window: &WebviewWindow, desktop: native::Desktop) -> Result<(), String> {
-        if !self.space_enabled() { return Ok(()); }
-        let scale = window.scale_factor().map_err(|error| error.to_string())?;
-        let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
-        let changed = inner.attachment.as_ref().map(|attachment| !attachment.matches(&desktop)).unwrap_or(true);
-        if changed {
-            inner.attachment = None;
-            native::attach(window, &desktop)?;
-            let attachment = native::Attachment::new(desktop);
-            let rectangles = pixel_regions(&inner.regions, scale, desktop.width(), desktop.height())?;
-            native::set_region(window, &rectangles)?;
-            if inner.ready && !rectangles.is_empty() {
-                native::show(window);
-                inner.visible = true;
+    fn request_close(&self, app: &AppHandle) -> Result<(), String> {
+        let session = self
+            .0
+            .inner
+            .lock()
+            .map_err(|_| "桌面整理状态不可用")?
+            .begin_close();
+        let Some(session) = session else {
+            return Ok(());
+        };
+        // The native backdrop is independent of CSS opacity. Hide it before
+        // asking the WebView to reset, including when JavaScript is suspended.
+        self.hide_matching(app, Some(session))?;
+        app.emit_to(LABEL, "desktop-space-closing", ClosingSession { session })
+            .map_err(|error| error.to_string())
+    }
+
+    fn hide(&self, app: &AppHandle) -> Result<(), String> {
+        self.hide_matching(app, None)
+    }
+
+    fn hide_matching(&self, app: &AppHandle, session: Option<u64>) -> Result<(), String> {
+        {
+            let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+            if !inner.begin_hide(session) {
+                return Ok(());
             }
-            inner.attachment = Some(attachment);
-            drop(inner);
-            let _ = app.emit_to(LABEL, "desktop-space-workarea-changed", DesktopViewport { width: desktop.width() as u32, height: desktop.height() as u32, scale_factor: scale, displays: viewport_displays(scale) });
         }
+        if let Some(window) = app.get_webview_window(LABEL) {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        self.emit_status(app);
         Ok(())
     }
 
     async fn release_space(&self, app: &AppHandle) -> Result<(), String> {
-        let visible = self.0.inner.lock().map(|inner| inner.visible).unwrap_or(false);
-        if visible && app.get_webview_window(LABEL).is_some() {
-            // Let the furniture leave gently while the true wallpaper stays still.
-            // A fixed bound also handles a page that is already closing or unresponsive.
-            let _ = app.emit_to(LABEL, "desktop-space-hiding", ());
-            tokio::time::sleep(Duration::from_millis(160)).await;
-        }
         let manager = self.clone();
         let app_handle = app.clone();
         on_ui(app, move || {
+            manager.hide(&app_handle)?;
             if let Some(window) = app_handle.get_webview_window(LABEL) {
-                let _ = window.hide();
-                let _ = window.destroy();
+                window.destroy().map_err(|error| error.to_string())?;
             }
-            manager.release_native();
             Ok(())
-        }).await?;
-        // Destroy is dispatched. Wait for label removal so rapid re-enabling cannot
-        // accidentally reuse a WebView which is already being destroyed.
+        })
+        .await?;
         for _ in 0..25 {
-            if app.get_webview_window(LABEL).is_none() { break; }
+            if app.get_webview_window(LABEL).is_none() {
+                return Ok(());
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        Ok(())
-    }
-
-    fn release_native(&self) {
-        if let Ok(mut inner) = self.0.inner.lock() {
-            #[cfg(windows)]
-            { inner.attachment = None; }
-            inner.ready = false;
-            inner.visible = false;
-            inner.regions.clear();
-        }
+        Err("桌面空间窗口尚未完成关闭，请稍后重试".into())
     }
 
     pub(crate) fn shutdown(&self) {
         self.0.exiting.store(true, Ordering::Release);
         super::hotzone::stop_hotzone_monitor();
-        self.release_native();
-    }
-
-    fn start_monitor(&self, app: &AppHandle) {
-        if self.0.monitoring.swap(true, Ordering::AcqRel) { return; }
-        let manager = self.clone();
-        let app = app.clone();
-        std::thread::spawn(move || {
-            while manager.space_enabled() {
-                std::thread::sleep(Duration::from_secs(1));
-                if !manager.space_enabled() { break; }
-                if let Ok(_guard) = manager.0.transition.try_lock() {
-                    // Creation runs off the UI thread. Attachment/regions themselves
-                    // are serialized onto the UI thread, including Explorer recovery.
-                    if let Err(error) = tauri::async_runtime::block_on(manager.ensure_space(&app)) {
-                        eprintln!("[DesktopSpace] 等待桌面恢复: {error}");
-                    }
-                }
-            }
-            manager.0.monitoring.store(false, Ordering::Release);
-            // A new mode may have arrived between the loop condition and shutdown.
-            if manager.space_enabled() { manager.start_monitor(&app); }
-        });
+        self.0.ready.notify_waiters();
     }
 }
 
-async fn on_ui<T: Send + 'static>(app: &AppHandle, operation: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+#[cfg(test)]
+fn launcher_bounds(
+    position: PhysicalPosition<i32>,
+    area: PhysicalSize<u32>,
+    scale: f64,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    launcher_bounds_with_percentages(position, area, scale, 90.0, 70.0)
+}
+
+fn launcher_bounds_with_percentages(
+    position: PhysicalPosition<i32>,
+    area: PhysicalSize<u32>,
+    scale: f64,
+    width_percent: f64,
+    height_percent: f64,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let width = ((area.width as f64 * width_percent.clamp(60.0, 96.0) / 100.0)
+        .clamp(680.0 * scale, 1440.0 * scale) as u32)
+        .min(area.width.saturating_sub(24).max(1));
+    let height = ((area.height as f64 * height_percent.clamp(45.0, 90.0) / 100.0)
+        .clamp(420.0 * scale, 850.0 * scale) as u32)
+        .min(area.height.saturating_sub(24).max(1));
+    (
+        PhysicalPosition::new(
+            position.x + (area.width.saturating_sub(width) / 2) as i32,
+            position.y + (area.height.saturating_sub(height) / 2) as i32,
+        ),
+        PhysicalSize::new(width, height),
+    )
+}
+
+async fn on_ui<T: Send + 'static>(
+    app: &AppHandle,
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     let (send, receive) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || { let _ = send.send(operation()); }).map_err(|error| error.to_string())?;
-    receive.await.map_err(|_| "桌面窗口线程已结束".to_string())?
+    app.run_on_main_thread(move || {
+        let _ = send.send(operation());
+    })
+    .map_err(|error| error.to_string())?;
+    receive
+        .await
+        .map_err(|_| "桌面窗口线程已结束".to_string())?
 }
 
-pub(crate) async fn show_classic_window(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
+pub(crate) async fn show_classic_window(
+    app: &AppHandle,
+    window: WebviewWindow,
+) -> Result<(), String> {
     let manager = app.state::<DesktopSpaceManager>().inner().clone();
     on_ui(app, move || manager.show_classic_if_allowed(&window)).await
 }
 
 fn validate_mode_window(window: &WebviewWindow) -> Result<(), String> {
-    if ["main", "desktop-organizer", LABEL].contains(&window.label()) { Ok(()) }
-    else { Err("此窗口不能设置桌面整理方式".into()) }
+    if ["main", "desktop-organizer", LABEL].contains(&window.label()) {
+        Ok(())
+    } else {
+        Err("此窗口不能设置桌面整理方式".into())
+    }
 }
 
 fn validate_space_window(window: &WebviewWindow) -> Result<(), String> {
-    if window.label() == LABEL { Ok(()) } else { Err("此窗口不是桌面空间".into()) }
+    if window.label() == LABEL {
+        Ok(())
+    } else {
+        Err("此窗口不是桌面空间".into())
+    }
 }
 
 #[tauri::command]
-pub(crate) fn get_desktop_organizer_mode(app: AppHandle, window: WebviewWindow) -> Result<OrganizerMode, String> {
+pub(crate) fn get_desktop_organizer_mode(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<OrganizerMode, String> {
     validate_mode_window(&window)?;
     Ok(app.state::<DesktopSpaceManager>().status(&app))
 }
 
 #[tauri::command]
-pub(crate) async fn set_desktop_organizer_mode(app: AppHandle, window: WebviewWindow, enabled: bool, presentation: Presentation) -> Result<OrganizerMode, String> {
+pub(crate) async fn set_desktop_organizer_mode(
+    app: AppHandle,
+    window: WebviewWindow,
+    enabled: bool,
+    presentation: Presentation,
+) -> Result<OrganizerMode, String> {
     validate_mode_window(&window)?;
     let manager = app.state::<DesktopSpaceManager>().inner().clone();
     let _guard = manager.0.transition.lock().await;
-    // A toolbar request queued before another window switched away must not
-    // resurrect a desktop surface that has since been retired.
     if window.label() == LABEL && !manager.space_enabled() {
         return Err("桌面空间已关闭".into());
     }
-    let previous = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?.mode;
-    let mode = ModeConfig { version: 1, enabled, presentation };
+    let (previous, configured) = {
+        let inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+        (inner.mode, inner.configured)
+    };
+    let previous_hotzone_running = super::hotzone::is_hotzone_running();
+    let mode = ModeConfig {
+        version: 1,
+        enabled,
+        presentation,
+        shortcut_initialized: previous.shortcut_initialized,
+    };
     let path = app.state::<StorageManager>().config_file(MODE_FILE)?;
-    fs::write(&path, serde_json::to_vec_pretty(&mode).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("保存桌面整理方式失败: {error}"))?;
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&mode).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("保存桌面整理方式失败: {error}"))?;
     {
         let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
         inner.mode = mode;
         inner.configured = true;
     }
     if let Err(error) = manager.apply_mode(&app, mode).await {
-        manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?.mode = previous;
-        let _ = fs::write(path, serde_json::to_vec_pretty(&previous).unwrap_or_default());
+        {
+            let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+            inner.mode = previous;
+            inner.configured = configured;
+        }
+        if configured {
+            let _ = fs::write(
+                path,
+                serde_json::to_vec_pretty(&previous).unwrap_or_default(),
+            );
+        } else {
+            let _ = fs::remove_file(path);
+        }
         let _ = manager.apply_mode(&app, previous).await;
+        if !configured && previous_hotzone_running {
+            let _ = crate::start_hotzone_monitor(app.clone());
+        }
         manager.emit_status(&app);
         return Err(error);
     }
@@ -383,50 +700,54 @@ pub(crate) async fn set_desktop_organizer_mode(app: AppHandle, window: WebviewWi
 }
 
 #[tauri::command]
-pub(crate) async fn desktop_space_ready(app: AppHandle, window: WebviewWindow) -> Result<DesktopViewport, String> {
+pub(crate) fn desktop_space_ready(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<DesktopViewport, String> {
     validate_space_window(&window)?;
-    let manager = app.state::<DesktopSpaceManager>().inner().clone();
-    if !manager.space_enabled() { return Err("桌面空间尚未启用".into()); }
-    // The first page load can race the builder's return. Ensure mounting has
-    // finished before the frontend measures its initial viewport.
-    manager.ensure_space(&app).await?;
+    let manager = app.state::<DesktopSpaceManager>();
+    if !manager.space_enabled() {
+        return Err("桌面空间尚未启用".into());
+    }
     let size = window.inner_size().map_err(|error| error.to_string())?;
     let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
-    manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?.ready = true;
+    let session = {
+        let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+        inner.ready = true;
+        inner.session
+    };
     manager.0.ready.notify_waiters();
-    Ok(DesktopViewport { width: size.width, height: size.height, scale_factor, displays: viewport_displays(scale_factor) })
+    Ok(DesktopViewport {
+        width: size.width,
+        height: size.height,
+        scale_factor,
+        session,
+        light_background: None,
+        background_luminance: None,
+    })
 }
 
 #[tauri::command]
-pub(crate) async fn desktop_space_set_regions(app: AppHandle, window: WebviewWindow, regions: Vec<InteractiveRegion>) -> Result<(), String> {
-    validate_space_window(&window)?;
+pub(crate) async fn desktop_space_show(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<(), String> {
+    validate_mode_window(&window)?;
     let manager = app.state::<DesktopSpaceManager>().inner().clone();
-    if !manager.space_enabled() { return Err("桌面空间尚未启用".into()); }
-    let scale = window.scale_factor().map_err(|error| error.to_string())?;
-    let size = window.inner_size().map_err(|error| error.to_string())?;
-    let rectangles = pixel_regions(&regions, scale, size.width as i32, size.height as i32)?;
-    on_ui(&app, move || {
-        if !manager.space_enabled() { return Ok(()); }
-        #[cfg(windows)]
-        native::set_region(&window, &rectangles)?;
-        let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
-        inner.regions = regions;
-        if inner.ready && !rectangles.is_empty() {
-            #[cfg(windows)]
-            {
-                if inner.attachment.is_none() { return Err("桌面空间尚未挂载".into()); }
-                if !inner.visible { native::show(&window); }
-            }
-            inner.visible = true;
-        }
-        drop(inner);
-        manager.0.ready.notify_waiters();
-        Ok(())
-    }).await
+    let _guard = manager.0.transition.lock().await;
+    manager.present(&app).await
 }
 
-#[cfg(windows)]
-mod native;
+#[tauri::command]
+pub(crate) fn desktop_space_hide(
+    app: AppHandle,
+    window: WebviewWindow,
+    session: Option<u64>,
+) -> Result<(), String> {
+    validate_space_window(&window)?;
+    app.state::<DesktopSpaceManager>()
+        .hide_matching(&app, session)
+}
 
 #[cfg(test)]
 mod tests {
@@ -434,10 +755,6 @@ mod tests {
 
     #[test]
     fn native_mode_defaults_keep_the_classic_way() {
-        let mode: ModeConfig = serde_json::from_str(r#"{"version":1,"enabled":true,"presentation":"classic"}"#).unwrap();
-        assert_eq!(mode.presentation, Presentation::Classic);
-        assert!(mode.enabled);
-        assert!(serde_json::from_str::<ModeConfig>(r#"{"version":1,"enabled":true,"presentation":"unknown"}"#).is_err());
         let manager = DesktopSpaceManager::default();
         assert!(manager.classic_allowed());
         assert!(!manager.space_enabled());
@@ -448,23 +765,86 @@ mod tests {
         drop(inner);
         assert!(!manager.classic_allowed());
         assert!(manager.space_enabled());
+        manager.shutdown();
+        assert!(!manager.space_enabled());
     }
 
     #[test]
-    fn shaped_regions_scale_outward_and_clip_to_the_work_area() {
-        let result = pixel_regions(&[
-            InteractiveRegion { x: -5.0, y: 0.5, width: 10.0, height: 20.0 },
-            InteractiveRegion { x: 70.0, y: 70.0, width: 50.0, height: 50.0 },
-            InteractiveRegion { x: 200.0, y: 200.0, width: 10.0, height: 10.0 },
-        ], 1.25, 100, 100).unwrap();
-        assert_eq!(result, vec![PixelRect { left: 0, top: 0, right: 7, bottom: 26 }, PixelRect { left: 87, top: 87, right: 100, bottom: 100 }]);
+    fn existing_mode_configs_initialize_the_shortcut_once() {
+        let old: ModeConfig =
+            serde_json::from_str(r#"{"version":1,"enabled":true,"presentation":"space"}"#).unwrap();
+        assert!(!old.shortcut_initialized);
+        let initialized = ModeConfig {
+            shortcut_initialized: true,
+            ..old
+        };
+        let saved = serde_json::to_value(initialized).unwrap();
+        assert_eq!(saved["shortcutInitialized"], true);
+        assert!(
+            serde_json::from_value::<ModeConfig>(saved)
+                .unwrap()
+                .shortcut_initialized
+        );
     }
 
     #[test]
-    fn invalid_regions_cannot_replace_the_native_shape() {
-        assert!(pixel_regions(&[InteractiveRegion { x: 0.0, y: 0.0, width: f64::INFINITY, height: 5.0 }], 1.0, 1920, 1080).is_err());
-        assert!(pixel_regions(&[InteractiveRegion { x: 0.0, y: 0.0, width: -1.0, height: 5.0 }], 1.0, 1920, 1080).is_err());
-        assert!(pixel_regions(&[], f64::NAN, 1920, 1080).is_err());
-        assert!(pixel_regions(&[], 1.0, 1920, 1080).unwrap().is_empty());
+    fn delayed_close_or_hide_cannot_dismiss_a_newer_show() {
+        let mut state = Inner::default();
+        let first = state.begin_show();
+        assert_eq!(state.begin_close(), Some(first));
+        assert!(state.close_expired(first));
+        assert!(state.begin_close().is_none());
+        let reopened = state.begin_show();
+        assert_ne!(first, reopened);
+        assert!(!state.close_expired(first));
+        assert!(!state.begin_hide(Some(first)));
+        assert!(state.visible);
+        assert_eq!(state.begin_close(), Some(reopened));
+        assert!(state.close_expired(reopened));
+        assert!(state.begin_hide(Some(reopened)));
+        assert!(!state.visible);
+        assert!(!state.close_expired(reopened));
+    }
+
+    #[test]
+    fn unversioned_and_internal_hides_invalidate_pending_closes() {
+        let mut state = Inner::default();
+        let first = state.begin_show();
+        state.begin_close();
+        assert!(state.begin_hide(None));
+        assert!(!state.visible);
+        assert!(!state.close_expired(first));
+        let next = state.begin_show();
+        assert_ne!(first, next);
+        assert!(state.begin_hide(Some(next)));
+        assert!(!state.begin_hide(Some(next)));
+    }
+
+    #[test]
+    fn launcher_is_centered_in_the_mouse_monitors_work_area() {
+        let (position, size) = launcher_bounds(
+            PhysicalPosition::new(-1920, 0),
+            PhysicalSize::new(1920, 1040),
+            1.0,
+        );
+        assert_eq!(size, PhysicalSize::new(1440, 728));
+        assert_eq!(position, PhysicalPosition::new(-1680, 156));
+    }
+
+    #[test]
+    fn launcher_keeps_margins_on_small_or_high_dpi_screens() {
+        let (position, size) = launcher_bounds(
+            PhysicalPosition::new(0, 40),
+            PhysicalSize::new(640, 400),
+            2.0,
+        );
+        assert_eq!(size, PhysicalSize::new(616, 376));
+        assert_eq!(position, PhysicalPosition::new(12, 52));
+        let (_, size) = launcher_bounds(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(3840, 2080),
+            2.0,
+        );
+        assert_eq!(size, PhysicalSize::new(2880, 1456));
     }
 }

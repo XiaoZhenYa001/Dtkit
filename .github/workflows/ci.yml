@@ -48,3 +48,31 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  desktop-ui:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install and build frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install playwright pillow
+          python -m playwright install chromium
+      - name: Run desktop organizer browser regressions
+        run: |
+          python tests/desktop-organizer-refactor-ui-smoke.py
+          python tests/desktop-app-categories-ui-smoke.py
+          python tests/desktop-launcher-ui-smoke.py
+          python tests/desktop-launcher-polish-ui-smoke.py
+          python tests/desktop-space-settings-ui-smoke.py
+          python tests/desktop-space-activation-ui-smoke.py

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-space",
-  "description": "Desktop furniture lifecycle events. Explorer attachment and window regions are scoped by the native desktop manager.",
+  "description": "Transient desktop file launcher lifecycle and visibility checks.",
   "windows": ["desktop-space"],
-  "permissions": ["core:event:default"]
+  "permissions": ["core:event:default", "core:window:allow-is-visible"]
 }

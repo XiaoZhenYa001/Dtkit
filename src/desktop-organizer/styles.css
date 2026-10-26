@@ -15,6 +15,20 @@
     --shadow: 0 18px 48px rgba(71, 55, 43, .12);
     font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
+
+/* Comfortable desktop reading sizes without increasing the window footprint. */
+.panel .file-name{font-size:13px;font-weight:500;line-height:1.45}
+.panel .file-size,.panel .folder-drill{font-size:11px}
+.panel .category-name{font-size:13px}
+.panel .category-count{font-size:11px;min-width:24px}
+.panel .status-bar{font-size:11px}
+.panel .search-input{font-size:13px}
+.panel .folder-browser__crumb{font-size:12px}
+.panel .folder-browser__summary{font-size:11px}
+.panel .folder-browser__limit{font-size:11px;line-height:1.5}
+.panel .folder-browser__identity>span{font-size:10px}
+.organizer-feedback{margin:8px 0 0;padding:9px 11px;border-radius:8px;background:#b64b3c0c;color:var(--danger);font-size:12px;line-height:1.5}
+.organizer-feedback[hidden]{display:none}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); user-select: none; }
 button, input { font: inherit; }

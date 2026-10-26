@@ -34,7 +34,7 @@ test('startup restores the native desktop mode after the main webview was discar
     assert.equal(await module.bootstrapDesktopOrganizer(), true);
     assert.equal(module.getDesktopOrganizerSettings().presentation, 'space');
     assert.equal(module.getDesktopOrganizerSettings().enabled, true);
-    assert.equal(module.getDesktopOrganizerSettings().layout, 'drawer');
+    assert.equal(module.getDesktopOrganizerSettings().layout, undefined);
     assert.deepEqual(commands.at(-1), { command: 'set_desktop_organizer_mode', args: { enabled: true, presentation: 'space' } });
 });
 
@@ -58,16 +58,16 @@ test('space enablement and a simultaneous presentation change cannot leave the h
     assert.equal(maxActive, 1);
     assert.deepEqual(modes, [{ enabled: true, presentation: 'classic' }, { enabled: true, presentation: 'space' }]);
     assert.deepEqual(module.getDesktopOrganizerSettings(), {
-        enabled: true, autoAnalyze: false, presentation: 'space', appearance: 'liquid', layout: 'zones', reducedMotion: false
+        enabled: true, autoAnalyze: false, presentation: 'space', reducedMotion: false
     });
 });
 
-test('failed desktop attachment restores the saved choice and permits a later retry', async t => {
+test('failed launcher setup restores the saved choice and permits a later retry', async t => {
     let fail = true;
     const { module, events } = await environment(t, { enabled: true, presentation: 'classic', layout: 'islands' }, async () => {
-        if (fail) throw new Error('Explorer unavailable');
+        if (fail) throw new Error('shortcut unavailable');
     });
-    await assert.rejects(module.updateDesktopOrganizerPresentation({ presentation: 'space' }), /Explorer unavailable/);
+    await assert.rejects(module.updateDesktopOrganizerPresentation({ presentation: 'space' }), /shortcut unavailable/);
     assert.equal(module.getDesktopOrganizerSettings().presentation, 'classic');
     assert.equal(events.length, 0);
     fail = false;
@@ -75,12 +75,25 @@ test('failed desktop attachment restores the saved choice and permits a later re
     assert.equal(module.getDesktopOrganizerSettings().presentation, 'space');
 });
 
-test('disabling desktop space reaches the same native manager used to restore Explorer icons', async t => {
+test('disabling desktop space reaches the shared native mode manager', async t => {
     const modes = [];
     const { module } = await environment(t, { enabled: true, presentation: 'space' }, async (command, args) => modes.push({ command, args }));
     await module.setDesktopOrganizerEnabled(false);
     assert.deepEqual(modes, [{ command: 'set_desktop_organizer_mode', args: { enabled: false, presentation: 'space' } }]);
     assert.equal(module.getDesktopOrganizerSettings().enabled, false);
+});
+
+test('a shortcut conflict warning keeps space enabled and is cleared when disabled', async t => {
+    const warning = '桌面空间快捷键 Ctrl+Alt+D 已被占用，可更换快捷键或点击打开空间';
+    const { module } = await environment(t, { enabled: true, presentation: 'classic' }, async (_command, args) => ({
+        ...args, shortcutWarning: args.enabled && args.presentation === 'space' ? warning : null
+    }));
+    await module.updateDesktopOrganizerPresentation({ presentation: 'space' });
+    assert.equal(module.getDesktopOrganizerSettings().enabled, true);
+    assert.equal(module.getDesktopOrganizerSettings().presentation, 'space');
+    assert.equal(module.getDesktopOrganizerShortcutWarning(), warning);
+    await module.setDesktopOrganizerEnabled(false);
+    assert.equal(module.getDesktopOrganizerShortcutWarning(), '');
 });
 
 test('a storage failure after enablement rolls back the native runtime', async t => {
@@ -93,7 +106,7 @@ test('a storage failure after enablement rolls back the native runtime', async t
     assert.equal(module.getDesktopOrganizerSettings().enabled, false);
 });
 
-test('layout and material updates do not recreate the native desktop host', async t => {
+test('motion updates do not recreate the native launcher', async t => {
     const commands = [];
     const { module } = await environment(t, { enabled: true, presentation: 'space' }, async command => commands.push(command));
     await module.updateDesktopOrganizerPresentation({ layout: 'zones', appearance: 'liquid', reducedMotion: true });
@@ -135,5 +148,5 @@ test('superseded queued mode selections do not recreate the desktop while the cu
     await Promise.all([entering, outdated, latest]);
     assert.deepEqual(modes, [{ enabled: true, presentation: 'space' }]);
     assert.equal(module.getDesktopOrganizerSettings().presentation, 'space');
-    assert.equal(module.getDesktopOrganizerSettings().layout, 'drawer');
+    assert.equal(module.getDesktopOrganizerSettings().layout, undefined);
 });

@@ -11,10 +11,13 @@ use base64::Engine;
 use image::{ImageBuffer, Rgba};
 use lazy_static::lazy_static;
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject, BITMAP,
-    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
 };
-use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+use windows::Win32::UI::Shell::{
+    IShellItemImageFactory, SHCreateItemFromParsingName, SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON,
+    SHGFI_LARGEICON, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
 /// 图标缓存 - 使用 LRU 缓存策略
@@ -120,6 +123,11 @@ fn extract_icon_internal(file_path: &str) -> Option<String> {
     }
 
     let wide_path = to_wide_string(file_path);
+    // SHGFI_LARGEICON usually returns only 32px. Prefer the Shell image factory
+    // so a 56px tile remains sharp at 125%, 150%, and 200% display scaling.
+    if let Some(icon) = high_resolution_icon(&wide_path) {
+        return Some(icon);
+    }
     let mut shfi = SHFILEINFOW::default();
 
     // 获取文件图标
@@ -142,6 +150,37 @@ fn extract_icon_internal(file_path: &str) -> Option<String> {
 
     // 转换 HICON 为 PNG Base64
     hicon_to_base64(shfi.hIcon)
+}
+
+fn high_resolution_icon(path: &[u16]) -> Option<String> {
+    use windows::Win32::{
+        Foundation::SIZE,
+        System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
+    };
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if initialized.is_err() && initialized.0 != 0x80010106u32 as i32 {
+        return None;
+    }
+    let _com = ComGuard(initialized.is_ok());
+    let factory: IShellItemImageFactory =
+        unsafe { SHCreateItemFromParsingName(windows::core::PCWSTR(path.as_ptr()), None) }.ok()?;
+    let bitmap = unsafe {
+        factory.GetImage(
+            SIZE { cx: 128, cy: 128 },
+            SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+        )
+    }
+    .ok()?;
+    let _bitmap = GdiObjGuard(windows::Win32::Graphics::Gdi::HGDIOBJ(bitmap.0));
+    hbitmap_to_base64(bitmap)
 }
 
 /// RAII 守卫 - 确保 HICON 被释放
@@ -220,6 +259,10 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
         return None;
     }
 
+    hbitmap_to_base64(hbitmap)
+}
+
+fn hbitmap_to_base64(hbitmap: HBITMAP) -> Option<String> {
     // 获取位图的实际尺寸
     let mut bitmap = BITMAP::default();
     let obj_size = unsafe {
@@ -237,7 +280,7 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
     let width = bitmap.bmWidth;
     let height = bitmap.bmHeight.abs(); // 确保高度为正
 
-    if width <= 0 || height <= 0 {
+    if width <= 0 || height <= 0 || width > 1024 || height > 1024 {
         return None;
     }
 
@@ -247,9 +290,6 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
         return None;
     }
     let _dc_guard = DcGuard(hdc);
-
-    // 选择位图到 DC
-    let old_bitmap = unsafe { SelectObject(hdc, hbitmap) };
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -284,9 +324,6 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
         )
     };
 
-    // 恢复旧位图
-    unsafe { SelectObject(hdc, old_bitmap) };
-
     if lines == 0 {
         return None;
     }
@@ -294,11 +331,42 @@ fn hicon_to_base64(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) -> Opt
     // BGRA -> RGBA 转换
     for chunk in pixels.chunks_exact_mut(4) {
         chunk.swap(0, 2); // 交换 B 和 R
+                          // Shell bitmaps use premultiplied BGRA; PNG expects straight RGBA.
+        let alpha = u16::from(chunk[3]);
+        if alpha > 0 && alpha < 255 {
+            for channel in &mut chunk[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
     }
 
     // 创建图像
-    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_raw(width as u32, height as u32, pixels)?;
+    // Some legacy providers center a 32px icon in a 128/256px transparent
+    // canvas. Do not turn that padding into a tiny icon inside the UI tile.
+    let mut bounds = (img.width(), img.height(), 0, 0);
+    let mut found = false;
+    for (x, y, pixel) in img.enumerate_pixels() {
+        if pixel[3] <= 16 {
+            continue;
+        }
+        found = true;
+        bounds.0 = bounds.0.min(x);
+        bounds.1 = bounds.1.min(y);
+        bounds.2 = bounds.2.max(x);
+        bounds.3 = bounds.3.max(y);
+    }
+    if found
+        && (bounds.2 - bounds.0 + 1) * 2 < img.width()
+        && (bounds.3 - bounds.1 + 1) * 2 < img.height()
+    {
+        let left = bounds.0.saturating_sub(2);
+        let top = bounds.1.saturating_sub(2);
+        let right = (bounds.2 + 3).min(img.width());
+        let bottom = (bounds.3 + 3).min(img.height());
+        img = image::imageops::crop_imm(&img, left, top, right - left, bottom - top).to_image();
+    }
 
     // 编码为 PNG
     let mut png_data = Vec::new();
@@ -328,5 +396,27 @@ pub fn get_cache_stats() -> (usize, usize) {
         (cache.cache.len(), cache.max_size)
     } else {
         (0, MAX_CACHE_SIZE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shell_icon_factory_keeps_high_resolution_pixels() {
+        use base64::Engine;
+        let path =
+            std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("explorer.exe");
+        let icon =
+            super::extract_file_icon(&path.to_string_lossy()).expect("Explorer has a system icon");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(icon.split_once(',').unwrap().1)
+            .unwrap();
+        let image = image::load_from_memory(&bytes).unwrap();
+        assert!(
+            image.width() >= 128 && image.height() >= 128,
+            "{}x{}",
+            image.width(),
+            image.height()
+        );
     }
 }
