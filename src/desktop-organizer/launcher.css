@@ -1,3 +1,5 @@
+@import './icon-glass-tile.css';
+
 :root {
     color-scheme: dark;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -5,7 +7,7 @@
     --space-radius: 28px; --space-ink: #f4f6fb; --space-muted: #dae1edc7;
     --space-line: #ffffff29; --space-selected: #ffffff21; --space-hover: #ffffff0e;
     --space-panel: #222b39; --space-shadow: #07101c66; --space-blue: #b9ddff;
-    --glass-opacity: .68; --glass-blur: 30px; --icon-side: 64px; --icon-image: 50px;
+    --glass-opacity: .68; --glass-blur: 30px; --icon-side: 64px; --icon-image: 42px;
     --space-text-shadow: 0 1px 3px #0008; --space-glyph: #eff6ff;
 }
 :root[data-appearance=light] {
@@ -30,7 +32,7 @@ kbd { font: 10px/1.5 "Segoe UI",sans-serif; border: 1px solid #ffffff26; padding
 .launcher[data-visible=true],.launcher.is-moving { visibility: visible }
 .launcher-material { position: absolute; inset: 0; z-index: -1; transform-origin: center }
 .launcher-inner { display: flex; flex-direction: column; height: 100%; padding: 24px 26px 0; min-height: 0; transform-origin: center }
-.is-moving .launcher-inner { will-change: transform,opacity }
+.launcher.is-moving { will-change: transform,opacity }
 .launcher-header { display: flex; align-items: center; gap: 14px; flex-shrink: 0 }
 .launcher-header h1 { font-size: 16px; font-weight: 500; display: flex; align-items: center; gap: 9px; margin: 0; white-space: nowrap; letter-spacing: .3px }
 .launcher-header h1 i { font-size: 20px; font-weight: 400 }
@@ -73,19 +75,12 @@ kbd { font: 10px/1.5 "Segoe UI",sans-serif; border: 1px solid #ffffff26; padding
 .launcher-file { display: flex; align-items: center; flex-direction: column; width: 100%; gap: 10px; padding: 10px 6px 11px; border-radius: 16px; min-width: 0 }
 .launcher-file:active { translate: none }
 /* A stable optical grid: no transforms or artificial sharpening on the artwork. */
-.file-art { display: grid; place-items: center; width: var(--icon-side); height: var(--icon-side); border-radius: calc(var(--icon-side) * .28); position: relative; isolation: isolate; pointer-events: none }
-.file-art[data-kind=app],.file-art[data-kind=other] { background: linear-gradient(155deg,#f4faff29,#d1e3fc12 65%,#ffffff20); box-shadow: inset 0 1px 1px #ffffff59,inset 0 -1px 1px #0208121c,0 4px 8px #01071324 }
-.file-art[data-kind=app]:after,.file-art[data-kind=other]:after { content: ""; position: absolute; inset: .5px; border-radius: inherit; box-shadow: inset 0 0 0 1px #ffffff12; pointer-events: none }
-.file-art:has(.file-icon-real) { background: none; box-shadow: none }
-.file-art:has(.file-icon-real):after { display: none }
-.file-art[data-media=audio] { background: linear-gradient(155deg,#f98dac,#b84878); color: #fff }
-.file-art[data-media=video] { background: linear-gradient(155deg,#c2aff9,#8266c8); color: #fff }
-.file-art[data-media=archive] { background: linear-gradient(155deg,#ffe3a3,#dda748); color: #fff1d4 }
-.file-icon { display: grid; place-items: center; width: 100%; height: 100%; color: var(--space-glyph); fill: currentColor; position: relative; filter: drop-shadow(0 2px 2px #06112526) }
+.file-art { --icon-tile-size: var(--icon-side); pointer-events: none }
+.file-icon { display: grid; place-items: center; width: var(--icon-image); height: var(--icon-image); color: var(--space-glyph); fill: currentColor; position: relative; filter: drop-shadow(0 2px 2px #06112526) }
 .launcher-glyph { display: block; width: 100%; height: 100%; overflow: visible }
-.file-art[data-kind=app] .launcher-glyph,.file-art[data-kind=other] .launcher-glyph { width: 84%; height: 84% }
-.file-icon-real { width: var(--icon-image); height: var(--icon-image); background: none; border: 0; box-shadow: none; filter: none }
-.file-icon-img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: calc(var(--icon-image) * .21); pointer-events: none }
+.file-art[data-kind=app] .file-icon:not(.file-icon-real),.file-art[data-kind=other] .file-icon:not(.file-icon-real) { width: 80%; height: 80% }
+.file-icon-real { background: none; border: 0; box-shadow: none; filter: none }
+.file-icon-img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none }
 .file-extension { position: absolute; bottom: 5px; left: 0; right: 0; font: 600 8px/1.3 "Segoe UI",sans-serif; color: #688098; text-align: center; letter-spacing: .25px }
 .launcher-file .file-name { width: 100%; font-size: 13px; line-height: 1.4; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; min-height: 2.8em; text-align: center; text-shadow: var(--space-text-shadow); pointer-events: none }
 .pin-button { position: absolute; right: 4px; top: 4px; display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; color: var(--space-muted); background: #344153e6; font-size: 13px; opacity: 0; transition: opacity .15s }
@@ -130,9 +125,9 @@ kbd { font: 10px/1.5 "Segoe UI",sans-serif; border: 1px solid #ffffff26; padding
 .launcher-menu kbd { font-size: 9px; color: var(--space-muted) }
 .menu-separator { height: 1px; background: #ffffff14; margin: 5px 7px }
 
-html[data-icon-size=small] { --icon-side: 52px; --icon-image: 42px }
+html[data-icon-size=small] { --icon-side: 52px; --icon-image: 34px }
 html[data-icon-size=small] .launcher-grid { grid-template-columns: repeat(auto-fill,minmax(86px,1fr)); gap: 9px 6px }
-html[data-icon-size=large] { --icon-side: 72px; --icon-image: 56px }
+html[data-icon-size=large] { --icon-side: 72px; --icon-image: 47px }
 html[data-icon-size=large] .launcher-grid { grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 18px 12px }
 html[data-icon-size=large] .launcher-file { gap: 14px; padding-block: 14px }
 html[data-icon-size=large] .launcher-file .file-name { font-size: 13px }
@@ -145,7 +140,7 @@ html[data-reduced-motion=true] *,html[data-reduced-motion=true] *:before,html[da
 @media(max-width:420px) {
     .launcher-inner { padding: 16px 11px 0 }.launcher-header { gap: 6px }.launcher-header h1 { display: none }.launcher-search { padding: 0 12px }.launcher-search input { font-size: 12px }
     .launcher-filters { width: 100%; justify-content: space-between; gap: 0 }.launcher-filters button { padding: 6px 9px; font-size: 11px }.launcher-grid,html[data-icon-size] .launcher-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px 3px }
-    html[data-icon-size=large] { --icon-side: 64px; --icon-image: 50px }.launcher-file .file-name { font-size: 11px }.launcher-preview { inset: 7px }#previewOpen { font-size: 11px; padding: 6px }.preview-content { padding: 15px }
+    html[data-icon-size=large] { --icon-side: 64px; --icon-image: 42px }.launcher-file .file-name { font-size: 11px }.launcher-preview { inset: 7px }#previewOpen { font-size: 11px; padding: 6px }.preview-content { padding: 15px }
 }
 @media(pointer:coarse) { .pin-button { opacity: 1; width: 28px; height: 28px }.icon-button { width: 36px; height: 36px } }
 @media(prefers-reduced-motion:reduce) { *,*:before,*:after { animation: none !important; transition: none !important } }

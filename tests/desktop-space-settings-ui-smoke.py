@@ -124,6 +124,15 @@ def matching_materials(page, launcher):
     real = material_styles(launcher.locator('.launcher-material'))
     assert preview == real, {'preview': preview, 'launcher': real}
     assert card == real, {'card': card, 'launcher': real}
+    def icon_plate_styles(plate):
+        return plate.evaluate('''node=>{
+            const style=getComputedStyle(node),rim=getComputedStyle(node,'::after');
+            return {background:style.backgroundImage,shadow:style.boxShadow,
+                radius:style.borderRadius,rim:rim.boxShadow};
+        }''')
+    preview_plate=icon_plate_styles(page.locator('.space-demo-file-art').first)
+    for plate in launcher.locator('.file-art').all():
+        assert icon_plate_styles(plate)==preview_plate,{'preview':preview_plate,'launcher':icon_plate_styles(plate)}
     return real
 
 

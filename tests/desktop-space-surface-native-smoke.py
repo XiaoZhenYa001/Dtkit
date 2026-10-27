@@ -25,8 +25,14 @@ def scenario(seed,context,process):
     backdrop=None
     try:
         h.invoke(main,'set_desktop_organizer_mode',enabled=True,presentation='space')
-        h.invoke(main,'update_desktop_space_settings',patch={'closeOnBlur':False})
+        h.invoke(main,'update_desktop_space_settings',patch={'closeOnBlur':False,'reducedMotion':False})
         page=h.launcher_page(main,context);windows=h.NativeWindows()
+        page.evaluate('''async()=>{
+            window.__surfaceMotionDisabled=false;
+            await window.__TAURI__.event.listen('desktop-space-opened',event=>{
+                window.__surfaceMotionDisabled=event.payload.reducedMotion===true;
+            });
+        }''')
         h.show(main,page,windows,process)
         page.wait_for_function("() => !document.querySelector('#launcher').classList.contains('is-moving')")
         hwnd=windows.find(process)
@@ -156,9 +162,36 @@ def scenario(seed,context,process):
             assert samples and max(samples)<=4,(width_percent,height_percent,max(samples),'Resized native material clip left corner residue')
             page.locator('#closeSpace').click();h.native.wait_until(lambda:not windows.visible(process))
         print('PASS: retained backdrop clip remains clean after shrinking and expanding window preferences',flush=True)
+        h.show(main,page,windows,process)
+        page.wait_for_function("() => !document.querySelector('#launcher').classList.contains('is-moving')")
+        motion_disabled=page.evaluate('window.__surfaceMotionDisabled')
+        if not motion_disabled:
+            # Remove the WebView tint for this probe: only the actual native
+            # backdrop can blur the known black/white split behind the HWND.
+            backdrop.set_split_color((20,20,20),(240,240,240))
+            page.evaluate('document.querySelector("#launcher").style.opacity="0"')
+            page.wait_for_timeout(80);dwm.DwmFlush()
+            px=current.left+(current.right-current.left)//2
+            py=current.top+round((current.bottom-current.top)*.7)
+            def split_edge():
+                pair=ImageGrab.grab(bbox=(px-1,py,px+1,py+1),all_screens=True).convert('RGB')
+                return abs(sum(pair.getpixel((1,0)))-sum(pair.getpixel((0,0))))/3
+            baseline=split_edge()
+            assert baseline<18,(baseline,'Native material was not blurred before exit')
+            started=time.monotonic();windows.close_test_launcher(process)
+            samples=[]
+            while windows.visible(process) and time.monotonic()-started<.15:
+                samples.append(split_edge())
+                time.sleep(.008)
+            assert samples and max(samples)>baseline+25,(baseline,samples,'Native background still hard-cuts instead of fading')
+            h.native.wait_until(lambda:not windows.visible(process))
+            print(f'PASS: native backdrop itself fades before HWND hides; edge_jump={baseline:.1f}->{max(samples):.1f}',flush=True)
+        else:
+            page.locator('#closeSpace').click();h.native.wait_until(lambda:not windows.visible(process))
         timings=[]
         for native_close in [False,True,False,True]:
             h.show(main,page,windows,process)
+            page.wait_for_function("() => !document.querySelector('#launcher').classList.contains('is-moving')")
             cdp=context.new_cdp_session(page)
             try:
                 if native_close:
@@ -166,14 +199,31 @@ def scenario(seed,context,process):
                     started=time.monotonic();windows.close_test_launcher(process)
                 else:
                     started=time.monotonic();page.evaluate('document.querySelector("#closeSpace").click()')
-                deadline=started+.18
+                deadline=started+.65
                 while windows.visible(process) and time.monotonic()<deadline:time.sleep(.005)
                 elapsed=(time.monotonic()-started)*1000
                 assert not windows.visible(process),f'Native glass remained visible after {elapsed:.0f}ms'
+                if not motion_disabled:
+                    assert elapsed>=140,(elapsed,'Native window cut off the 180ms exit')
                 timings.append(round(elapsed,1))
             finally:
                 cdp.send('Emulation.setScriptExecutionDisabled',{'value':False});cdp.detach()
-        print(f'PASS: rounded HWND, DPI geometry, native/JS close without glass residue; hide_ms={timings}',flush=True)
+        print(f'PASS: rounded HWND, DPI geometry, native/JS exit with frozen-renderer deadline; hide_ms={timings}',flush=True)
+        h.show(main,page,windows,process)
+        page.wait_for_function("() => !document.querySelector('#launcher').classList.contains('is-moving')")
+        windows.close_test_launcher(process)
+        time.sleep(.04)
+        h.show(main,page,windows,process)
+        page.wait_for_timeout(260)
+        assert windows.visible(process),'An earlier exit deadline hid a newly reopened window'
+        print('PASS: native exit reverses into a new show without a stale timer hiding it',flush=True)
+        h.invoke(main,'update_desktop_space_settings',patch={'reducedMotion':True})
+        page.locator('#closeSpace').click();h.native.wait_until(lambda:not windows.visible(process))
+        h.show(main,page,windows,process)
+        assert page.locator('#launcher').evaluate('node=>getComputedStyle(node).transform')=='none'
+        assert page.evaluate('document.querySelector("#launcher").getAnimations().length')==0
+        page.locator('#closeSpace').click();h.native.wait_until(lambda:not windows.visible(process))
+        print('PASS: application reduced motion skips the whole-surface transform',flush=True)
     finally:
         if backdrop:backdrop.close()
         for name,data in backups.items():

@@ -2,6 +2,7 @@
 // Desktop Organizer Module
 
 pub mod apps;
+pub(crate) mod classic_motion;
 pub mod commands;
 pub mod hotzone;
 pub mod scanner;

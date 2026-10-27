@@ -2,6 +2,67 @@
 #[cfg(windows)]
 #[path = "space_composition.rs"]
 mod composition;
+
+/// Windows' accessibility preference also applies while the renderer is busy.
+pub(crate) fn system_reduced_motion() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::{
+            Foundation::BOOL,
+            UI::WindowsAndMessaging::{
+                SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+            },
+        };
+        let mut enabled = BOOL(1);
+        return unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some(&mut enabled as *mut _ as _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .is_ok()
+            && !enabled.as_bool();
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+#[cfg(windows)]
+pub(crate) fn prepare_open(
+    window: &tauri::WebviewWindow,
+    fresh: bool,
+    reduced: bool,
+) -> Result<(), String> {
+    let handle = window.hwnd().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    composition::prepare_open(
+        windows::Win32::Foundation::HWND(handle.0),
+        fresh,
+        size.height as f32 * 0.0075,
+        reduced,
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+pub(crate) fn animate_visibility(
+    window: &tauri::WebviewWindow,
+    visible: bool,
+    reduced: bool,
+) -> Result<(), String> {
+    let handle = window.hwnd().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    composition::animate_visibility(
+        windows::Win32::Foundation::HWND(handle.0),
+        visible,
+        size.height as f32 * 0.0075,
+        reduced,
+    )
+    .map_err(|error| error.to_string())
+}
 #[cfg(windows)]
 pub(crate) fn configure(window: &tauri::WebviewWindow) -> Result<(), String> {
     // Window creation can return to a blocking worker; subclass installation

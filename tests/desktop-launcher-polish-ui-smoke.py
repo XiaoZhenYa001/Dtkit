@@ -17,10 +17,71 @@ window.__TAURI__.core.invoke=async(command,args)=>{
         value.documents.push(...Array.from({length:240},(_,i)=>({name:'Very long document name shared prefix '+i+'.txt',path:'C:\\Users\\demo\\Desktop\\long-'+i+'.txt',category:'document',is_folder:false,size:1024})));
     }
     if(command==='desktop_list_folder'){value.truncated=true;value.total_count=201;}
+    if(command==='desktop_get_app_icon') return new Promise(resolve=>{window.__releaseAppIcon=()=>resolve(png);});
     if(command==='desktop_space_hide' && window.__holdHide) await new Promise(resolve=>{window.__releaseHide=resolve;});
     return value;
 };
 '''
+
+def plate_styles(plate):
+    return plate.evaluate('''node=>{
+        const style=getComputedStyle(node),rim=getComputedStyle(node,'::after');
+        return {background:style.backgroundImage,shadow:style.boxShadow,
+            radius:style.borderRadius,rim:rim.boxShadow,size:node.offsetWidth};
+    }''')
+
+
+def unified_icon_plates(page):
+    app=h.card(page,'Demo Tool').locator('.file-art')
+    page.wait_for_function('!!window.__releaseAppIcon')
+    before=plate_styles(app)
+    assert before['background']!='none' and before['shadow']!='none' and before['rim']!='none',before
+    page.evaluate('window.__releaseAppIcon()')
+    expect(app.locator('.file-icon-real img')).to_be_visible()
+    assert plate_styles(app)==before,'Native artwork must keep the fallback backplate'
+    for name in ('Desktop shortcut.lnk','Project','Alpha.txt','Photo.png','Archive.bin'):
+        assert plate_styles(h.card(page,name).locator('.file-art'))==before,name
+    image=app.locator('img')
+    assert image.evaluate('node=>({fit:getComputedStyle(node).objectFit,radius:getComputedStyle(node).borderRadius,filter:getComputedStyle(node).filter})')=={'fit':'contain','radius':'0px','filter':'none'}
+    assert image.locator('..').evaluate('node=>getComputedStyle(node).filter')=='none'
+    for size in ('small','medium','large'):
+        page.evaluate('iconSize=>window.__emit("desktop-space-settings-changed",{iconSize})',size)
+        side=app.bounding_box()['width'];art=image.bounding_box()['width']
+        assert abs(art/side-.65)<.015,(size,side,art)
+    page.evaluate('window.__emit("desktop-space-settings-changed",{iconSize:"medium",reducedMotion:true})')
+    h.button(page,'Demo Tool').hover()
+    assert app.evaluate('node=>getComputedStyle(node).transform')=='none'
+    page.mouse.move(0,0)
+    page.evaluate('window.__emit("desktop-space-settings-changed",{reducedMotion:false})')
+    page.emulate_media(forced_colors='active')
+    assert app.evaluate('node=>getComputedStyle(node).outlineStyle')=='solid'
+    assert app.evaluate('node=>getComputedStyle(node,"::after").display')=='none'
+    page.emulate_media(forced_colors='none')
+    print('PASS: native artwork retains unified plate, intact images, all densities, reduced motion and high contrast',flush=True)
+
+
+def refresh_keeps_surface_motion(page):
+    before=page.evaluate('''async()=>{
+        const root=document.querySelector('#launcher');
+        await window.__emit('desktop-space-closing');
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+        const exit=root.getAnimations().find(a=>a.effect.target===root);
+        exit.pause();exit.currentTime=90;
+        await window.__emit('desktop-space-opened');
+        const enter=root.getAnimations().find(a=>a.effect.target===root);
+        enter.pause();enter.currentTime=66;
+        const opacity=Number(getComputedStyle(root).opacity);
+        document.querySelector('#refreshSpace').click();
+        return opacity;
+    }''')
+    page.wait_for_function('!document.querySelector("#refreshSpace").disabled')
+    after=page.locator('#launcher').evaluate('''node=>({opacity:Number(getComputedStyle(node).opacity),
+        retained:node.getAnimations().some(a=>a.effect.target===node&&a.playState==='paused')})''')
+    assert 0<before<1 and after['retained'] and abs(after['opacity']-before)<.001,(before,after)
+    page.locator('#launcher').evaluate('node=>node.getAnimations().forEach(a=>a.finish())')
+    h.idle(page)
+    print('PASS: unchanged scan refresh does not finish the whole-window entrance',flush=True)
+
 
 def main():
     base, close = h.local_test_url()
@@ -35,6 +96,8 @@ def main():
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(base+'/desktop-organizer/space.html',wait_until='networkidle')
             h.open_panel(page);h.idle(page)
+            unified_icon_plates(page)
+            refresh_keeps_surface_motion(page)
             icon=h.card(page,'Desktop shortcut.lnk').locator('.file-icon-img')
             expect(icon).to_have_count(1)
             expect(icon).to_be_visible()
@@ -81,12 +144,13 @@ def main():
             page.wait_for_function('!!window.__releaseHide')
             page.wait_for_timeout(100)
             assert page.locator('.launcher-material').evaluate('node=>getComputedStyle(node).opacity')=='1'
+            assert 0<float(page.locator('#launcher').evaluate('node=>getComputedStyle(node).opacity'))<1
             page.evaluate("window.__emit('desktop-space-opened',{session:100})")
             page.evaluate('window.__releaseHide()')
             expect(page.locator('#launcher')).to_have_attribute('aria-hidden','false')
             assert not errors,errors
             context.close();browser.close()
     finally: close()
-    print('PASS: real icons, two-line names, filter scroll reset, persistent folder limits, breadcrumb navigation, immediate native hide handoff')
+    print('PASS: real icons, two-line names, filter scroll reset, persistent folder limits, breadcrumb navigation, visible native exit handoff')
 
 if __name__=='__main__':main()

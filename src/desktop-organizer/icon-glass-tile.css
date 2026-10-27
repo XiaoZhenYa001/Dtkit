@@ -1,0 +1,31 @@
+/* One backplate for native artwork and vector fallbacks, shared with settings. */
+.glass-icon-tile {
+    display: grid; place-items: center; width: var(--icon-tile-size,64px); height: var(--icon-tile-size,64px);
+    border-radius: 28%; position: relative; isolation: isolate; flex-shrink: 0;
+    background: linear-gradient(155deg,#f4faff29,#d1e3fc12 65%,#ffffff20);
+    box-shadow: inset 0 1px 1px #ffffff59,inset 0 -1px 1px #0208121c,0 4px 8px #01071324;
+    transition: transform 180ms cubic-bezier(.2,.7,.2,1);
+}
+.glass-icon-tile::after {
+    content: ""; position: absolute; inset: .5px; border-radius: inherit;
+    box-shadow: inset 0 0 0 1px #ffffff12; pointer-events: none;
+}
+.glass-icon-tile::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: linear-gradient(155deg,#fff1,#fff0 70%); opacity: 0; pointer-events: none; transition: opacity 180ms ease;
+}
+@media (hover:hover) {
+    button:hover > .glass-icon-tile { transform: translateY(-2px); }
+    button:hover > .glass-icon-tile::before { opacity: 1; }
+}
+button:active > .glass-icon-tile { transform: scale(.965); transition-duration: 90ms; }
+[data-reduced-motion=true] .glass-icon-tile { transition: none; transform: none !important; }
+[data-reduced-motion=true] .glass-icon-tile::before { transition: none; }
+@media (prefers-reduced-motion:reduce) {
+    .glass-icon-tile { transition: none; transform: none !important; }
+    .glass-icon-tile::before { transition: none; }
+}
+@media (forced-colors:active) {
+    .glass-icon-tile { background: Canvas; outline: 1px solid CanvasText; box-shadow: none; }
+    .glass-icon-tile::before,.glass-icon-tile::after { display: none; }
+}

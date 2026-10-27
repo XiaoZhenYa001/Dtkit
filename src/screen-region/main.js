@@ -166,7 +166,8 @@ function drawMosaic(ctx, object) {
     mosaicBuffer.width = Math.max(1, Math.ceil(box.width / block));
     mosaicBuffer.height = Math.max(1, Math.ceil(box.height / block));
     mosaicContext.imageSmoothingEnabled = true;
-    mosaicContext.drawImage(image, box.left * scale.x, box.top * scale.y, box.width * scale.x, box.height * scale.y, 0, 0, mosaicBuffer.width, mosaicBuffer.height);
+    // Preserve previously drawn masks and annotations beneath the mosaic.
+    mosaicContext.drawImage(ctx.canvas, box.left * scale.x, box.top * scale.y, box.width * scale.x, box.height * scale.y, 0, 0, mosaicBuffer.width, mosaicBuffer.height);
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(mosaicBuffer, box.left, box.top, box.width, box.height);
@@ -518,7 +519,8 @@ canvas.addEventListener('pointermove', event => {
         const x = clamp(event.clientX, selection.left, selection.left + selection.width);
         const y = clamp(event.clientY, selection.top, selection.top + selection.height);
         if (draftAnnotation.type === 'pen' || draftAnnotation.type === 'highlight') {
-            const events = event.getCoalescedEvents?.() || [event];
+            const coalesced = event.getCoalescedEvents?.();
+            const events = coalesced?.length ? coalesced : [event];
             events.forEach(sample => {
                 if (draftAnnotation.points.length >= MAX_PEN_POINTS) return;
                 const next = {

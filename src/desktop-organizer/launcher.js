@@ -190,7 +190,7 @@ function cardFor(file, lane) {
     if (!node) {
         node = document.createElement('article'); node.className = 'launcher-card';
         node.setAttribute('role', 'listitem');
-        node.innerHTML = '<button class="launcher-file file-item" type="button" draggable="false" tabindex="-1" aria-describedby="spaceKeyboardHelp" aria-haspopup="menu" aria-controls="fileMenu" aria-keyshortcuts="Enter Space Shift+F10"><span class="file-art"><span class="file-icon"></span></span><span class="file-name"></span></button><button type="button" class="pin-button" draggable="false" tabindex="-1"><i class="ri-pushpin-line" aria-hidden="true"></i></button>';
+        node.innerHTML = '<button class="launcher-file file-item" type="button" draggable="false" tabindex="-1" aria-describedby="spaceKeyboardHelp" aria-haspopup="menu" aria-controls="fileMenu" aria-keyshortcuts="Enter Space Shift+F10"><span class="file-art glass-icon-tile"><span class="file-icon"></span></span><span class="file-name"></span></button><button type="button" class="pin-button" draggable="false" tabindex="-1"><i class="ri-pushpin-line" aria-hidden="true"></i></button>';
         node.addEventListener('dragstart', event => startDrag(event, node));
         node.addEventListener('dragend', finishDrag);
         nodes.set(id, node);
@@ -321,17 +321,18 @@ async function reveal(payload = {}) {
     closeRevision++; state.visible = true; root.inert = false; root.setAttribute('aria-hidden', 'false');
     scheduleBackdropInk();
     closeMenu(); startPolling();
-    void motion.setOpen(true); search.focus({ preventScroll: true });
+    void motion.setOpen(true, { instant: payload.reducedMotion === true }); search.focus({ preventScroll: true });
     await scan({ force: state.scanDirty });
 }
-async function dismiss() {
+async function dismiss({ instant = false } = {}) {
+    if (!state.visible) return;
     const revision = ++closeRevision, session = state.nativeSession;
     state.visible = false; state.folderRevision++; clearInterval(state.poll); state.poll = null;
     closeMenu(); await closePreview({ instant: true }); root.inert = true; root.setAttribute('aria-hidden', 'true');
     if (revision !== closeRevision || state.visible || state.destroyed) return;
-    // CSS cannot fade the native blur surface. Hide the HWND immediately while
-    // the retained WebView finishes its content animation in the background.
-    void motion.setOpen(false);
+    // Native hide runs the matching backdrop exit and owns the final deadline,
+    // so a suspended renderer cannot leave the glass window on the desktop.
+    void motion.setOpen(false, { instant });
     try { await invoke('desktop_space_hide', session === null ? {} : { session }); }
     catch (error) { if (revision === closeRevision) { state.visible = true; root.inert = false; root.setAttribute('aria-hidden', 'false'); void motion.setOpen(true); setStatus(`收起失败 · ${String(error)}`, true); } }
 }
@@ -666,7 +667,7 @@ async function initialize() {
             listen('desktop-space-opened', event => void reveal(event.payload)),
             listen('desktop-space-closing', event => {
                 if (Number.isSafeInteger(event.payload?.session) && event.payload.session !== state.nativeSession) return;
-                void dismiss();
+                void dismiss({ instant: event.payload?.reducedMotion === true });
             }),
             listen('desktop-app-index-changed', () => { iconRevision++; hydrator.invalidate(); state.scanDirty = true; if (state.visible) void scan({ force: true }); }),
             listen('desktop-organizer-presentation-changed', () => motion.refresh())

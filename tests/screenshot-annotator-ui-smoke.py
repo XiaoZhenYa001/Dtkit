@@ -241,6 +241,27 @@ def test_workbench(context,base_url,errors):
     copies=page.evaluate('window.__captureFixture.calls.filter(c=>c.command==="copy_screenshot_to_clipboard").length')
     frame.locator('#captureStage').focus();page.keyboard.press('Control+c')
     assert page.evaluate('window.__captureFixture.calls.filter(c=>c.command==="copy_screenshot_to_clipboard").length')==copies
+    # Every handle changes its corresponding edges, keeping the opposite edges fixed.
+    for handle,start,end,expected in [
+        ('nw',(120,60),(100,40),(100,40,420,300)), ('n',(320,60),(320,40),(120,40,400,300)),
+        ('ne',(520,60),(540,40),(120,40,420,300)), ('e',(520,200),(540,200),(120,60,420,280)),
+        ('se',(520,340),(540,360),(120,60,420,300)), ('s',(320,340),(320,360),(120,60,400,300)),
+        ('sw',(120,340),(100,360),(100,60,420,300)), ('w',(120,200),(100,200),(100,60,420,280)),
+    ]:
+        mode(frame,'select');mode(frame,'crop');drag_source(page,frame,(120,60),(520,340))
+        page.mouse.move(*source_point(frame,*start))
+        assert 'resize' in frame.locator('#captureOverlay').evaluate('n=>n.style.cursor'),handle
+        drag_source(page,frame,start,end)
+        draft=state(frame)['cropDraft'];actual=tuple(round(draft[key]) for key in ('x','y','width','height'))
+        assert actual==expected,(handle,actual)
+    mode(frame,'select');mode(frame,'crop');drag_source(page,frame,(500,300),(620,350),shift=True)
+    draft=state(frame)['cropDraft'];assert tuple(round(draft[key]) for key in ('x','y','width','height'))==(500,300,100,100),draft
+    mode(frame,'select');mode(frame,'crop');drag_source(page,frame,(120,60),(520,340))
+    drag_source(page,frame,(300,180),(400,230))
+    draft=state(frame)['cropDraft'];assert tuple(round(draft[key]) for key in ('x','y','width','height'))==(220,110,400,280),draft
+    drag_source(page,frame,(400,230),(630,390))
+    draft=state(frame)['cropDraft'];assert tuple(round(draft[key]) for key in ('x','y','width','height'))==(240,120,400,280),draft
+    # Dragging outside the current rectangle starts a fresh crop.
     drag_source(page,frame,(120,60),(520,340));frame.locator('#captureCropApply').click()
     assert document(frame)['crop']=={'x':120,'y':60,'width':400,'height':280}
     expect(frame.locator('#captureCanvas')).to_have_attribute('width','400')

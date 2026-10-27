@@ -1,7 +1,7 @@
 import '../../css/tools/screenshot-annotator.css';
 import { registerTool } from '../toolRegistry.js';
 import { template } from './template.js';
-import { clamp, normalizeRect, objectBounds, hitTestObject, translateObject, resizeObject, sanitizeDocument, History, nextStepNumber, createId, hitTestHandle, constrainPoint, LIMITS } from './core.js';
+import { clamp, normalizeRect, objectBounds, hitTestObject, translateObject, resizeObject, sanitizeDocument, History, nextStepNumber, createId, hitTestHandle, selectionHandles, constrainPoint, LIMITS } from './core.js';
 import { drawObject, drawSelection, renderDocument } from './renderer.js';
 import { storeImage, readImage } from './assets.js';
 
@@ -87,7 +87,7 @@ function renderOverlay(view) {
     if (!alive(view) || !view.image) return;
     const canvas = node(view, 'captureOverlay'), ctx = canvas.getContext('2d'), crop = visibleRect(view);
     ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.save(); ctx.translate(-crop.x, -crop.y);
-    if (view.active) drawObject(ctx, view.active, view.image);
+    if (view.active) drawObject(ctx, view.active, view.image, node(view, 'captureCanvas'));
     if (view.mode === 'crop') {
         const selection = view.cropDraft || view.doc.crop;
         ctx.fillStyle = 'rgba(9,15,25,.57)'; ctx.beginPath();
@@ -95,6 +95,9 @@ function renderOverlay(view) {
         ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / view.zoom; ctx.setLineDash([5 / view.zoom, 4 / view.zoom]); ctx.strokeRect(selection.x, selection.y, selection.width, selection.height); ctx.setLineDash([]);
         ctx.strokeStyle = 'rgba(255,255,255,.24)'; ctx.lineWidth = 1 / view.zoom;
         for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(selection.x + selection.width * i / 3, selection.y); ctx.lineTo(selection.x + selection.width * i / 3, selection.y + selection.height); ctx.moveTo(selection.x, selection.y + selection.height * i / 3); ctx.lineTo(selection.x + selection.width, selection.y + selection.height * i / 3); ctx.stroke(); }
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1677ff'; ctx.lineWidth = 1 / view.zoom;
+        const handleSize = 8 / view.zoom;
+        for (const handle of selectionHandles(selection)) { ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize); ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize); }
         node(view, 'captureCropSize').textContent = `${Math.round(selection.width)} × ${Math.round(selection.height)} px`;
     } else {
         const selected = view.active?.id === view.selectedId ? view.active : view.doc.objects.find(object => object.id === view.selectedId);
@@ -176,7 +179,17 @@ function selectMode(view, mode) {
     node(view, 'captureBrushCursor').hidden = true;
     if (mode !== 'select') view.selectedId = null;
     if (view.image) { renderBase(view); if (changedCrop) fitZoom(view); } else updateControls(view);
-    if (mode === 'crop') status(view, '拖动选择裁剪范围，Enter 应用，Esc 取消。裁剪后仍可撤销。');
+    if (mode === 'crop') status(view, '拖动框选，选区内移动或拖动手柄调整；Enter 应用，Esc 取消。');
+}
+
+const resizeCursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
+function cropHit(view, point) {
+    const rect = view.cropDraft;
+    if (!rect || rect.width < 2 || rect.height < 2) return null;
+    const handle = hitTestHandle(rect, point, { zoom: view.zoom });
+    if (handle) return handle;
+    const full = rect.x === 0 && rect.y === 0 && rect.width === view.image.width && rect.height === view.image.height;
+    return !full && point.x > rect.x && point.x < rect.x + rect.width && point.y > rect.y && point.y < rect.y + rect.height ? 'move' : null;
 }
 
 function pointerDown(view, event) {
@@ -204,7 +217,11 @@ function pointerDown(view, event) {
     else if (view.mode === 'step') { addObject(view, { id: createId(), type: 'step', ...point, size: view.size, number: nextStepNumber(view.doc.objects), color: view.color }); return; }
     else {
         view.selectedId = null; view.drag = { pointerId: event.pointerId, start: point };
-        if (view.mode === 'crop') view.cropDraft = { ...point, width: 0, height: 0 };
+        if (view.mode === 'crop') {
+            view.drag.crop = clone(view.cropDraft);
+            view.drag.handle = cropHit(view, point);
+            if (!view.drag.handle) view.cropDraft = { ...point, width: 0, height: 0 };
+        }
         else view.active = { id: createId(), type: view.mode, color: view.color, size: view.size, fill: view.fill === 'fill', ...point,
             ...(view.mode === 'pen' ? { points: [point] } : ['line', 'arrow'].includes(view.mode) ? { x2: point.x, y2: point.y } : { width: 0, height: 0 }) };
         renderOverlay(view); updateControls(view);
@@ -217,8 +234,10 @@ function pointerMove(view, event) {
     updateBrushCursor(view, event);
     if (view.mode === 'select' && !view.pan && !view.spacePressed) {
         const point = canvasPoint(view, event), selected = view.doc.objects.find(object => object.id === view.selectedId), handle = selected && hitTestHandle(selected, point, { zoom: view.zoom });
-        const cursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
-        node(view, 'captureOverlay').style.cursor = view.drag ? (cursors[view.drag.handle] || 'grabbing') : cursors[handle] || (view.doc.objects.some(object => hitTestObject(object, point, 7 / view.zoom)) ? 'move' : 'default');
+        node(view, 'captureOverlay').style.cursor = view.drag ? (resizeCursors[view.drag.handle] || 'grabbing') : resizeCursors[handle] || (view.doc.objects.some(object => hitTestObject(object, point, 7 / view.zoom)) ? 'move' : 'default');
+    } else if (view.mode === 'crop' && !view.pan && !view.spacePressed) {
+        const hit = view.drag ? view.drag.handle : cropHit(view, canvasPoint(view, event));
+        node(view, 'captureOverlay').style.cursor = resizeCursors[hit] || (hit === 'move' ? (view.drag ? 'grabbing' : 'move') : 'crosshair');
     }
     if (!view.drag || event.pointerId !== view.drag.pointerId) return;
     const point = canvasPoint(view, event), drag = view.drag;
@@ -229,7 +248,20 @@ function pointerMove(view, event) {
             if (event.shiftKey) { const ratio = bounds.width / Math.max(1, bounds.height), width = Math.abs(right - left), height = Math.abs(bottom - top); if (width > height * ratio) bottom = top + width / ratio; else right = left + height * ratio; }
             view.active = resizeObject(drag.object, bounds, normalizeRect({ x: left, y: top }, { x: right, y: bottom }));
         } else view.active = translateObject(drag.object, point.x - drag.start.x, point.y - drag.start.y);
-    } else if (view.mode === 'crop') view.cropDraft = normalizeRect(drag.start, point, event.shiftKey);
+    } else if (view.mode === 'crop') {
+        if (drag.handle === 'move') {
+            view.cropDraft = { ...drag.crop, x: clamp(drag.crop.x + point.x - drag.start.x, 0, view.image.width - drag.crop.width), y: clamp(drag.crop.y + point.y - drag.start.y, 0, view.image.height - drag.crop.height) };
+        } else if (drag.handle) {
+            const rect = drag.crop, left = drag.handle.includes('w') ? point.x : rect.x, top = drag.handle.includes('n') ? point.y : rect.y;
+            const right = drag.handle.includes('e') ? point.x : rect.x + rect.width, bottom = drag.handle.includes('s') ? point.y : rect.y + rect.height;
+            view.cropDraft = normalizeRect({ x: left, y: top }, { x: right, y: bottom });
+        } else {
+            const dx = point.x - drag.start.x, dy = point.y - drag.start.y, signX = Math.sign(dx || 1), signY = Math.sign(dy || 1);
+            const side = Math.min(Math.max(Math.abs(dx), Math.abs(dy)), signX < 0 ? drag.start.x : view.image.width - drag.start.x, signY < 0 ? drag.start.y : view.image.height - drag.start.y);
+            const end = event.shiftKey ? { x: drag.start.x + signX * side, y: drag.start.y + signY * side } : point;
+            view.cropDraft = normalizeRect(drag.start, end);
+        }
+    }
     else if (view.active.type === 'pen') {
         const coalesced = event.getCoalescedEvents?.(), samples = coalesced?.length ? coalesced : [event];
         for (const sample of samples) {
@@ -250,7 +282,7 @@ function pointerUp(view, event, cancelled = false) {
     if (!cancelled) pointerMove(view, event);
     const active = view.active, drag = view.drag; view.drag = null; view.active = null;
     const overlay = node(view, 'captureOverlay'); if (overlay.hasPointerCapture(event.pointerId)) overlay.releasePointerCapture(event.pointerId);
-    if (cancelled) { renderBase(view); return; }
+    if (cancelled) { if (view.mode === 'crop') view.cropDraft = drag.crop; renderBase(view); return; }
     if (view.mode === 'crop') { updateControls(view); renderOverlay(view); return; }
     if (view.mode === 'select' && active) commit(view, { ...view.doc, objects: view.doc.objects.map(object => object.id === active.id ? active : object) });
     else if (active) {

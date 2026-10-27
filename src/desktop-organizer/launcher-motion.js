@@ -1,9 +1,9 @@
-// The surface and its contents move separately: glass can stretch while text
-// keeps its normal proportions. A single spring retains velocity on reversal.
+// The WebView and native backdrop share the same short entrance/exit. WAAPI
+// keeps the retained page moving while scans run; reversal starts at its pose.
 export function createLauncherMotion({ root, panel, material, inner, lists, reducedMotion }) {
     const motions = new Map(), ghosts = new Map();
     const media = panel.ownerDocument.defaultView.matchMedia('(prefers-reduced-motion: reduce)');
-    let position = 0, velocity = 0, target = 0, frame = 0, previousTime = 0, pending = null, destroyed = false;
+    let target = false, surfaceMotion = null, destroyed = false;
     const reduced = () => media.matches || reducedMotion?.() === true;
     const clamp = value => Math.max(0, Math.min(1, value));
 
@@ -31,43 +31,40 @@ export function createLauncherMotion({ root, panel, material, inner, lists, redu
             return { offset, ...make(progress, offset) };
         });
     }
-    function paint() {
-        const progress = clamp(position);
-        // The native glass fills the whole HWND; transforming only its CSS tint
-        // exposes an unstyled backdrop around it. Animate the contents instead.
-        material.style.transform = 'none';
-        material.style.opacity = '1';
-        inner.style.opacity = String(clamp((progress - .13) / .74));
-        inner.style.transform = progress === 1 ? 'none' : `translateY(${(1 - progress) * 13}px)`;
-    }
-    function finish() {
-        position = target; velocity = 0; previousTime = 0; frame = 0; paint();
+    const closedPose = 'translateY(.75%) scale(.975)';
+    function finishSurface() {
+        const previous = surfaceMotion;
+        surfaceMotion = null;
+        previous?.animation.cancel();
+        root.style.opacity = target ? '1' : '0';
+        root.style.transform = target || reduced() ? 'none' : closedPose;
         root.classList.remove('is-moving');
-        root.dataset.visible = String(target === 1);
-        pending?.(true); pending = null;
-    }
-    function tick(now) {
-        const delta = Math.min(previousTime ? (now - previousTime) / 1000 : 1 / 60, .032);
-        previousTime = now;
-        for (let step = 0; step < 3; step++) {
-            const dt = delta / 3;
-            velocity += ((target ? 390 : 490) * (target - position) - (target ? 34 : 40) * velocity) * dt;
-            position += velocity * dt;
-        }
-        position = Math.max(-.008, Math.min(1.025, position)); paint();
-        if (Math.abs(position - target) < .00015 && Math.abs(velocity) < .003) finish();
-        else frame = requestAnimationFrame(tick);
+        root.dataset.visible = String(target);
+        previous?.resolve(true);
     }
     function setOpen(open, { instant = false } = {}) {
-        pending?.(false); pending = null; target = open ? 1 : 0;
+        const style = getComputedStyle(root);
+        const from = { opacity: style.opacity, transform: style.transform };
+        const previous = surfaceMotion;
+        surfaceMotion = null;
+        previous?.resolve(false); previous?.animation.cancel();
+        target = open;
+        const to = { opacity: open ? '1' : '0', transform: open || reduced() ? 'none' : closedPose };
+        Object.assign(root.style, to);
         root.classList.add('is-moving');
-        const result = new Promise(resolve => { pending = resolve; });
-        if (instant || reduced()) { if (frame) cancelAnimationFrame(frame); finish(); }
-        else if (!frame) frame = requestAnimationFrame(tick);
-        return result;
+        if (instant || reduced() || Math.abs(Number(from.opacity) - Number(to.opacity)) < .001 && from.transform === to.transform) {
+            finishSurface(); return Promise.resolve(true);
+        }
+        return new Promise(resolve => {
+            const animation = root.animate([from, to], {
+                duration: open ? 220 : 180, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'both'
+            });
+            const entry = { animation, resolve }; surfaceMotion = entry;
+            animation.finished.then(() => { if (surfaceMotion === entry) finishSurface(); }).catch(() => {});
+        });
     }
     function layout(update, { instant = false } = {}) {
-        if (instant || reduced()) { settle(); update(); return; }
+        if (instant || reduced()) { settleCards(); update(); return; }
         const poses = new Map(), layer = lists.querySelector('.launcher-exits');
         for (const node of lists.querySelectorAll('.launcher-card[data-id]')) poses.set(node.dataset.id, { rect: node.getBoundingClientRect(), opacity: Number(getComputedStyle(node).opacity) });
         for (const [id, node] of ghosts) if (!poses.has(id)) poses.set(id, { rect: node.getBoundingClientRect(), opacity: Number(getComputedStyle(node).opacity) });
@@ -108,19 +105,24 @@ export function createLauncherMotion({ root, panel, material, inner, lists, redu
         Object.assign(indicator.style, { width: `${to.width}px`, height: `${to.height}px`, transform: `translate(${x}px,${y}px)` });
         if (!instant) animate(indicator, springFrames(s => ({ width: `${(old.width || to.width) + (to.width - (old.width || to.width)) * s}px`, transform: `translate(${fromX + (x - fromX) * s}px,${fromY + (y - fromY) * s}px)` })), { duration: 360 });
     }
-    function settle() {
+    function settleCards() {
         for (const element of [...motions.keys()]) cancel(element);
         for (const ghost of ghosts.values()) ghost.remove(); ghosts.clear();
-        if (frame) cancelAnimationFrame(frame); finish();
+    }
+    function settle() {
+        settleCards();
+        finishSurface();
     }
     media.addEventListener('change', settle);
-    paint();
+    root.style.opacity = '0'; root.style.transform = closedPose;
+    material.style.transform = 'none'; material.style.opacity = '1';
+    inner.style.transform = 'none'; inner.style.opacity = '1';
     return {
         setOpen, layout, indicator, animate, cancel, reduced,
         refresh: () => { if (reduced()) settle(); },
         destroy() {
             destroyed = true; media.removeEventListener('change', settle);
-            if (frame) cancelAnimationFrame(frame); pending?.(false); pending = null;
+            surfaceMotion?.resolve(false); surfaceMotion?.animation.cancel(); surfaceMotion = null;
             for (const element of [...motions.keys()]) cancel(element);
             for (const ghost of ghosts.values()) ghost.remove(); ghosts.clear();
         }

@@ -63,11 +63,54 @@ def expand_category(page,key):
     header=page.locator(f'[data-category="{key}"] .category-header')
     if header.get_attribute('aria-expanded')!='true':header.click()
 
+
+def category_motion(page):
+    result=page.evaluate('''() => {
+        const item=document.querySelector('[data-category="document"]');
+        const header=item.querySelector('.category-header'),files=item.querySelector('.category-files');
+        header.click();
+        const entering=files.getAnimations()[0];
+        if(!entering) throw new Error('Category entrance must animate');
+        entering.pause();entering.currentTime=60;
+        const partial=files.getBoundingClientRect().height;
+        const full=Number.parseFloat(entering.effect.getKeyframes().at(-1).height);
+        header.click();
+        const exiting=files.getAnimations()[0];
+        exiting.pause();exiting.currentTime=0;
+        const reverse=Number.parseFloat(exiting.effect.getKeyframes()[0].height);
+        const retained=files.querySelectorAll('.file-item').length;
+        exiting.currentTime=70;
+        const closing=files.getBoundingClientRect().height;
+        header.click();
+        const reopening=files.getAnimations()[0];
+        const reopened=Number.parseFloat(reopening.effect.getKeyframes()[0].height);
+        reopening.finish();
+        return {partial,full,reverse,retained,closing,reopened};
+    }''')
+    assert 0<result['partial']<result['full'],result
+    assert abs(result['reverse']-result['partial'])<1,result
+    assert abs(result['reopened']-result['closing'])<1 and result['retained']==1,result
+    page.wait_for_function("document.querySelector('[data-category=\"document\"] .category-files').getAnimations().length===0")
+    page.locator('[data-category="document"] [data-name="Notes.txt"]').focus()
+    page.evaluate("document.querySelector('[data-category=\"document\"] .category-header').click()")
+    expect(page.locator('[data-category="document"] .category-header')).to_be_focused()
+    page.wait_for_function("document.querySelector('[data-category=\"document\"] .category-files').childElementCount===0")
+    page.emulate_media(reduced_motion='reduce')
+    page.locator('[data-category="document"] .category-header').click()
+    assert page.locator('[data-category="document"] .category-files').evaluate('node=>node.getAnimations().length')==0
+    page.emulate_media(reduced_motion='no-preference')
+    page.locator('[data-category="document"] .category-header').click()
+    page.wait_for_function("document.querySelector('[data-category=\"document\"] .category-files').childElementCount===0")
+    print('PASS: category entrance/exit, continuous reversal, retained files, exit focus and OS reduced motion',flush=True)
+
 def main():
     base,close=h.local_test_url()
     try:
         with sync_playwright() as p:
             browser=p.chromium.launch(headless=True)
+            motion_context,motion_page=open_organizer(browser,base)
+            category_motion(motion_page)
+            motion_context.close()
             context,page=open_organizer(browser,base,assigned=True)
             expect(page.locator('#statusText')).to_contain_text('已同步')
             expand_category(page,'custom_1')

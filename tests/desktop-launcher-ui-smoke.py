@@ -365,16 +365,22 @@ def main():
                 # Closing may reverse into opening without a discontinuity or stale hide.
                 idle(page)
                 continuity = page.evaluate("""async () => {
-                    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-                    const node = document.querySelector('.launcher-inner');
+                    const node = document.querySelector('#launcher');
                     await window.__emit('desktop-space-closing');
-                    await wait(55);
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    const exit = node.getAnimations().find(animation => animation.effect.target === node);
+                    if (!exit) return {error:'The complete panel has no exit animation'};
+                    exit.pause(); exit.currentTime = 90;
                     const before = Number(getComputedStyle(node).opacity);
+                    const closing = { hidden:node.getAttribute('aria-hidden'),inert:node.inert,
+                        animations:node.getAnimations().map(a=>({time:a.currentTime,state:a.playState})),
+                        status:document.querySelector('#spaceStatus').textContent };
                     await window.__emit('desktop-space-opened');
                     const after = Number(getComputedStyle(node).opacity);
-                    return { before, after };
+                    return { before, after, closing };
                 }""")
-                assert abs(continuity["after"] - continuity["before"]) < .2, continuity
+                assert 0 < continuity.get("before",1) < 1, continuity
+                assert abs(continuity["after"] - continuity["before"]) < .08, continuity
                 expect(page.locator("#launcher")).to_have_attribute("aria-hidden", "false")
                 idle(page)
 

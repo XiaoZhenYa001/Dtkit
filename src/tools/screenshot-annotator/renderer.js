@@ -37,7 +37,7 @@ function drawPen(context, object) {
     context.stroke();
 }
 
-function drawMosaic(context, object, sourceImage) {
+function drawMosaic(context, object, sourceImage, composedCanvas = context.canvas) {
     if (!sourceImage) return;
     const width = dimension(sourceImage, 'width'), height = dimension(sourceImage, 'height');
     const x = clamp(object.x, 0, width), y = clamp(object.y, 0, height);
@@ -48,13 +48,21 @@ function drawMosaic(context, object, sourceImage) {
     scratch.width = Math.max(1, Math.ceil(areaWidth / pixelSize)); scratch.height = Math.max(1, Math.ceil(areaHeight / pixelSize));
     const small = scratch.getContext('2d');
     small.imageSmoothingEnabled = true;
-    small.drawImage(sourceImage, x, y, areaWidth, areaHeight, 0, 0, scratch.width, scratch.height);
+    // Sample the rendered layers beneath this mark, not the unedited image.
+    // Otherwise a mosaic over a mask can reveal the original pixels.
+    const transform = context.getTransform?.();
+    if (composedCanvas && transform && !transform.b && !transform.c) {
+        small.drawImage(composedCanvas, x * transform.a + transform.e, y * transform.d + transform.f,
+            areaWidth * transform.a, areaHeight * transform.d, 0, 0, scratch.width, scratch.height);
+    } else {
+        small.drawImage(sourceImage, x, y, areaWidth, areaHeight, 0, 0, scratch.width, scratch.height);
+    }
     context.globalAlpha = 1;
     context.imageSmoothingEnabled = false;
     context.drawImage(scratch, 0, 0, scratch.width, scratch.height, x, y, areaWidth, areaHeight);
 }
 
-export function drawObject(context, object, sourceImage) {
+export function drawObject(context, object, sourceImage, composedCanvas) {
     if (!object) return;
     context.save();
     context.lineCap = 'round'; context.lineJoin = 'round';
@@ -79,7 +87,7 @@ export function drawObject(context, object, sourceImage) {
         // Privacy masks are opaque even when a restored document contains an alpha color.
         context.fillStyle = /^#[\da-f]{6}$/i.test(object.color || '') ? object.color : '#1c1c1e';
         context.fillRect(object.x, object.y, object.width, object.height);
-    } else if (object.type === 'mosaic') drawMosaic(context, object, sourceImage);
+    } else if (object.type === 'mosaic') drawMosaic(context, object, sourceImage, composedCanvas);
     else if (object.type === 'text') {
         const fontSize = object.fontSize || Math.max(16, object.size * 4);
         context.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;

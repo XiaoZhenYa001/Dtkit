@@ -25,6 +25,7 @@ import { createCategoryController } from './category-controller.js';
 import { CATEGORY_STORAGE_KEY } from './category-storage.js';
 import { createFileActions } from './file-actions.js';
 import { createWindowController } from './window-controller.js';
+import { createCategoryMotion } from './category-motion.js';
 import { createInteractionGate } from './presentation-controller.js';
 import {
     CLASSIC_CATEGORY_STORAGE_KEY,
@@ -85,6 +86,8 @@ const elements = {
 const appWindow = getCurrentWindow();
 const interactions = createInteractionGate({ invoke, window });
 let presentation = normalizeDesktopOrganizerPresentation(getDesktopOrganizerSettings());
+let classicWindowReady = false;
+const categoryMotion = createCategoryMotion({ window, reducedMotion: () => presentation.reducedMotion });
 const windowController = createWindowController({
     invoke,
     appWindow,
@@ -229,6 +232,9 @@ function syncAppearanceControls() {
     document.body.dataset.presentation = 'classic';
     document.body.dataset.reducedMotion = String(presentation.reducedMotion);
     document.getElementById('organizerReducedMotion').checked = presentation.reducedMotion;
+    categoryMotion.refresh();
+    // Old native hosts and UI-only fixtures may not expose this command.
+    void invoke('set_classic_motion_preferences', { reducedMotion: presentation.reducedMotion, ready: classicWindowReady }).catch(() => {});
 }
 function applyPresentation(settings) {
     const next = normalizeDesktopOrganizerPresentation(settings);
@@ -287,6 +293,14 @@ for (const element of [elements.contextMenu, elements.blankContextMenu, elements
     legacyPopupObserver.observe(element, { attributes: true, attributeFilter: ['style', 'class'] });
 }
 syncAppearanceControls();
+let sidebarVisibilityRevision = 0;
+const sidebarVisibilityListener = window.__TAURI__.event?.listen('desktop-organizer-visibility', ({ payload }) => {
+    if (!payload || payload.revision < sidebarVisibilityRevision) return;
+    sidebarVisibilityRevision = payload.revision;
+    document.body.dataset.sidebarPhase = payload.phase;
+    elements.panel.inert = !payload.visible;
+    elements.panel.setAttribute('aria-hidden', String(!payload.visible));
+});
 syncViewVisibility();
 
 // ============================================
@@ -576,17 +590,18 @@ elements.categoryList.addEventListener('click', (e) => {
         const willExpand = !state.expandedCategories.has(category);
         if (!willExpand) {
             state.expandedCategories.delete(category);
-            filesContainer.replaceChildren();
-            item.dataset.filesRendered = 'false';
             if (item.querySelector('.file-item.selected')) state.selectedFile = null;
         } else {
             state.expandedCategories.add(category);
+        }
+        categoryMotion.setExpanded(item, willExpand, () => {
             filesContainer.innerHTML = categoryFilesMarkup(category, filesForCategory(state, category));
             item.dataset.filesRendered = 'true';
             queueMicrotask(() => hydrateVisibleAppIcons(filesContainer));
-        }
-        item.classList.toggle('expanded', willExpand);
-        header.setAttribute('aria-expanded', String(willExpand));
+        }, () => {
+            filesContainer.replaceChildren();
+            item.dataset.filesRendered = 'false';
+        });
         persistExpandedCategories();
         return;
     }
@@ -1122,6 +1137,8 @@ window.addEventListener('blur', () => {
 // ============================================
 async function init() {
     await loadUserPreferences();
+    classicWindowReady = true;
+    syncAppearanceControls();
     state.categoryPreferences = readClassicCategoryPreferences(globalThis.localStorage);
     loadCustomCategories();
     await window.__TAURI__.event?.listen('desktop-app-index-changed', async () => {
@@ -1143,6 +1160,8 @@ async function init() {
 init();
 
 window.addEventListener('pagehide', () => {
+    void Promise.resolve(sidebarVisibilityListener).then(unlisten => unlisten?.());
+    categoryMotion.destroy();
     appIconHydrator.destroy();
     legacyPopupObserver.disconnect();
     interactions.clear();

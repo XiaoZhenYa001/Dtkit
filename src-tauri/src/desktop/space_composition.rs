@@ -2,8 +2,11 @@
 //! The Accent blur policy paints a separate rectangle even outside SetWindowRgn.
 use std::{cell::RefCell, collections::HashMap, mem::size_of};
 use windows::{
-    core::{Interface, Result},
-    Foundation::Numerics::Vector2,
+    core::{Interface, Result, HSTRING},
+    Foundation::{
+        Numerics::{Vector2, Vector3},
+        TimeSpan,
+    },
     System::{DispatcherQueue, DispatcherQueueController},
     Win32::{
         Foundation::HWND,
@@ -89,11 +92,106 @@ impl Host {
             Y: height as f32,
         };
         surface.visual.SetSize(size)?;
+        surface.visual.SetCenterPoint(Vector3 {
+            X: size.X / 2.0,
+            Y: size.Y / 2.0,
+            Z: 0.0,
+        })?;
         surface.geometry.SetSize(size)?;
         surface.geometry.SetCornerRadius(Vector2 {
             X: radius,
             Y: radius,
         })
+    }
+
+    fn prepare_open(&self, hwnd: HWND, fresh: bool, shift: f32, reduced: bool) -> Result<()> {
+        let Some(surface) = self.surfaces.get(&(hwnd.0 as isize)) else {
+            return Ok(());
+        };
+        if fresh {
+            for property in ["Opacity", "Scale", "Offset"] {
+                surface.visual.StopAnimation(&HSTRING::from(property))?;
+            }
+            surface.visual.SetOpacity(0.0)?;
+            surface.visual.SetScale(Vector3 {
+                X: if reduced { 1.0 } else { 0.975 },
+                Y: if reduced { 1.0 } else { 0.975 },
+                Z: 1.0,
+            })?;
+            surface.visual.SetOffset(Vector3 {
+                X: 0.0,
+                Y: if reduced { 0.0 } else { shift },
+                Z: 0.0,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn animate_visibility(
+        &self,
+        hwnd: HWND,
+        visible: bool,
+        shift: f32,
+        reduced: bool,
+    ) -> Result<()> {
+        let Some(surface) = self.surfaces.get(&(hwnd.0 as isize)) else {
+            return Ok(());
+        };
+        let opacity = if visible { 1.0 } else { 0.0 };
+        let scale = if visible || reduced { 1.0 } else { 0.975 };
+        let offset = Vector3 {
+            X: 0.0,
+            Y: if visible || reduced { 0.0 } else { shift },
+            Z: 0.0,
+        };
+        if reduced {
+            for property in ["Opacity", "Scale", "Offset"] {
+                surface.visual.StopAnimation(&HSTRING::from(property))?;
+            }
+            surface.visual.SetOpacity(opacity)?;
+            surface.visual.SetScale(Vector3 {
+                X: scale,
+                Y: scale,
+                Z: 1.0,
+            })?;
+            return surface.visual.SetOffset(offset);
+        }
+        let duration = TimeSpan {
+            Duration: if visible { 220 } else { 180 } * 10_000,
+        };
+        let easing = self.compositor.CreateCubicBezierEasingFunction(
+            Vector2 { X: 0.23, Y: 1.0 },
+            Vector2 { X: 0.32, Y: 1.0 },
+        )?;
+        let animation = self.compositor.CreateScalarKeyFrameAnimation()?;
+        animation.SetDuration(duration)?;
+        animation.InsertExpressionKeyFrame(0.0, &HSTRING::from("this.StartingValue"))?;
+        animation.InsertKeyFrameWithEasingFunction(1.0, opacity, &easing)?;
+        // StartingValue is evaluated by the compositor from the presented value,
+        // so a quick reversal does not jump back to an animation's first frame.
+        surface
+            .visual
+            .StartAnimation(&HSTRING::from("Opacity"), &animation)?;
+        for (property, value) in [
+            (
+                "Scale",
+                Vector3 {
+                    X: scale,
+                    Y: scale,
+                    Z: 1.0,
+                },
+            ),
+            ("Offset", offset),
+        ] {
+            let animation = self.compositor.CreateVector3KeyFrameAnimation()?;
+            animation.SetDuration(duration)?;
+            animation.InsertExpressionKeyFrame(0.0, &HSTRING::from("this.StartingValue"))?;
+            animation.InsertKeyFrameWithEasingFunction(1.0, value, &easing)?;
+            surface
+                .visual
+                .StartAnimation(&HSTRING::from(property), &animation)?;
+        }
+        Ok(())
     }
 }
 
@@ -122,4 +220,23 @@ pub(super) fn release(hwnd: HWND) {
     // Close may synchronously dispatch native callbacks. Drop after ending the
     // RefCell borrow so a callback can safely release the same HWND again.
     drop(surface);
+}
+
+pub(super) fn prepare_open(hwnd: HWND, fresh: bool, shift: f32, reduced: bool) -> Result<()> {
+    HOST.with(|host| match host.borrow().as_ref() {
+        Some(host) => host.prepare_open(hwnd, fresh, shift, reduced),
+        None => Ok(()),
+    })
+}
+
+pub(super) fn animate_visibility(
+    hwnd: HWND,
+    visible: bool,
+    shift: f32,
+    reduced: bool,
+) -> Result<()> {
+    HOST.with(|host| match host.borrow().as_ref() {
+        Some(host) => host.animate_visibility(hwnd, visible, shift, reduced),
+        None => Ok(()),
+    })
 }

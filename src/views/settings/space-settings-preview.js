@@ -80,7 +80,7 @@ export function mountSpaceSettingsPreview(root) {
         const query = search.value.trim().toLocaleLowerCase();
         const files = FILES.filter(file => (filter === 'all' || file.category === filter) && (!query || file.name.toLocaleLowerCase().includes(query)));
         if (!files.some(file => file.id === selected)) selected = files[0]?.id || '';
-        grid.innerHTML = files.length ? files.map(file => `<button type="button" class="space-demo-file" data-preview-file="${file.id}" title="${file.name}" aria-label="${file.name}" aria-pressed="${file.id === selected}"><span class="space-demo-file-art" data-kind="${file.category}">${launcherFallbackIcon(file)}</span><span class="space-demo-file-name">${file.name}</span></button>`).join('') : '<p class="space-demo-empty">没有匹配的示例文件</p>';
+        grid.innerHTML = files.length ? files.map(file => `<button type="button" class="space-demo-file" data-preview-file="${file.id}" title="${file.name}" aria-label="${file.name}" aria-pressed="${file.id === selected}"><span class="space-demo-file-art glass-icon-tile" data-kind="${file.category}">${launcherFallbackIcon(file)}</span><span class="space-demo-file-name">${file.name}</span></button>`).join('') : '<p class="space-demo-empty">没有匹配的示例文件</p>';
         refreshInk();
         root.querySelector('[data-preview-count]').textContent = `${files.length} 个示例项目`;
         for (const action of ['quick-look', 'open']) root.querySelector(`[data-preview-action="${action}"]`).disabled = !selected || !isVisible();

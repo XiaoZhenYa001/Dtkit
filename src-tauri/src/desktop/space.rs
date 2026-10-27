@@ -62,6 +62,7 @@ pub(crate) struct DesktopViewport {
     height: u32,
     scale_factor: f64,
     session: u64,
+    reduced_motion: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     light_background: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,6 +72,8 @@ pub(crate) struct DesktopViewport {
 #[derive(Debug, Clone, Serialize)]
 struct ClosingSession {
     session: u64,
+    #[serde(rename = "reducedMotion")]
+    reduced_motion: bool,
 }
 
 #[derive(Default)]
@@ -110,7 +113,6 @@ impl Inner {
         true
     }
 
-    #[cfg(test)]
     fn close_expired(&self, session: u64) -> bool {
         self.visible && self.closing && self.session == session
     }
@@ -161,8 +163,7 @@ impl DesktopSpaceManager {
         if !inner.configured
             || (inner.mode.enabled && inner.mode.presentation == Presentation::Classic)
         {
-            window.show().map_err(|error| error.to_string())?;
-            window.set_focus().map_err(|error| error.to_string())?;
+            super::classic_motion::set_visible(window, true)?;
         }
         Ok(())
     }
@@ -232,6 +233,7 @@ impl DesktopSpaceManager {
         super::hotzone::set_user_interacting(false);
         super::hotzone::stop_hotzone_monitor();
         if let Some(window) = app.get_webview_window("desktop-organizer") {
+            super::classic_motion::cancel(&window);
             let _ = window.hide();
         }
         if !mode.enabled || mode.presentation == Presentation::Classic {
@@ -415,6 +417,8 @@ impl DesktopSpaceManager {
         .ok_or("无法获取显示器工作区域")?;
         let area = monitor.work_area();
         let settings = super::space_settings::read_settings(app).unwrap_or_default();
+        let reduced_motion =
+            settings.reduced_motion || super::space_surface::system_reduced_motion();
         let (position, size) = launcher_bounds_with_percentages(
             area.position,
             area.size,
@@ -438,6 +442,11 @@ impl DesktopSpaceManager {
                 let mut inner = manager.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
                 inner.begin_show()
             };
+            let fresh = !window.is_visible().unwrap_or(false);
+            #[cfg(windows)]
+            if let Err(error) = super::space_surface::prepare_open(&window, fresh, reduced_motion) {
+                eprintln!("桌面空间入场准备失败: {error}");
+            }
             #[cfg(windows)]
             let contrast = if window.is_visible().unwrap_or(false) {
                 None
@@ -465,11 +474,18 @@ impl DesktopSpaceManager {
                         height: size.height,
                         scale_factor,
                         session,
+                        reduced_motion,
                         light_background,
                         background_luminance,
                     },
                 )
                 .map_err(|error| error.to_string())?;
+            #[cfg(windows)]
+            if let Err(error) =
+                super::space_surface::animate_visibility(&window, true, reduced_motion)
+            {
+                eprintln!("桌面空间入场动效失败: {error}");
+            }
             manager.emit_status(&app_handle);
             Ok(())
         })
@@ -495,20 +511,85 @@ impl DesktopSpaceManager {
     }
 
     fn request_close(&self, app: &AppHandle) -> Result<(), String> {
-        let session = self
-            .0
-            .inner
-            .lock()
-            .map_err(|_| "桌面整理状态不可用")?
-            .begin_close();
+        self.request_close_matching(app, None)
+    }
+
+    fn request_close_matching(&self, app: &AppHandle, expected: Option<u64>) -> Result<(), String> {
+        let session = {
+            let mut inner = self.0.inner.lock().map_err(|_| "桌面整理状态不可用")?;
+            if expected.is_some_and(|session| session != inner.session) {
+                return Ok(());
+            }
+            inner.begin_close()
+        };
         let Some(session) = session else {
             return Ok(());
         };
-        // The native backdrop is independent of CSS opacity. Hide it before
-        // asking the WebView to reset, including when JavaScript is suspended.
-        self.hide_matching(app, Some(session))?;
-        app.emit_to(LABEL, "desktop-space-closing", ClosingSession { session })
-            .map_err(|error| error.to_string())
+        let reduced_motion = super::space_settings::read_settings(app)
+            .map(|settings| settings.reduced_motion)
+            .unwrap_or(false)
+            || super::space_surface::system_reduced_motion();
+        let manager = self.clone();
+        let app_handle = app.clone();
+        // Both the retained native backdrop and the WebView fade before the
+        // HWND is hidden. The native deadline also works with suspended JS.
+        let queued = app.run_on_main_thread(move || {
+            if !manager
+                .0
+                .inner
+                .lock()
+                .map(|inner| inner.close_expired(session))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            if let Some(window) = app_handle.get_webview_window(LABEL) {
+                #[cfg(windows)]
+                if let Err(error) =
+                    super::space_surface::animate_visibility(&window, false, reduced_motion)
+                {
+                    eprintln!("桌面空间退场动效失败: {error}");
+                }
+            }
+            let _ = app_handle.emit_to(
+                LABEL,
+                "desktop-space-closing",
+                ClosingSession {
+                    session,
+                    reduced_motion,
+                },
+            );
+            if reduced_motion {
+                let _ = manager.hide_matching(&app_handle, Some(session));
+                return;
+            }
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(180)).await;
+                let ui_app = app_handle.clone();
+                let _ = on_ui(&app_handle, move || {
+                    if manager
+                        .0
+                        .inner
+                        .lock()
+                        .map(|inner| inner.close_expired(session))
+                        .unwrap_or(false)
+                    {
+                        manager.hide_matching(&ui_app, Some(session))?;
+                    }
+                    Ok(())
+                })
+                .await;
+            });
+        });
+        if let Err(error) = queued {
+            if let Ok(mut inner) = self.0.inner.lock() {
+                if inner.close_expired(session) {
+                    inner.closing = false;
+                }
+            }
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 
     fn hide(&self, app: &AppHandle) -> Result<(), String> {
@@ -722,6 +803,10 @@ pub(crate) fn desktop_space_ready(
         height: size.height,
         scale_factor,
         session,
+        reduced_motion: super::space_settings::read_settings(&app)
+            .map(|settings| settings.reduced_motion)
+            .unwrap_or(false)
+            || super::space_surface::system_reduced_motion(),
         light_background: None,
         background_luminance: None,
     })
@@ -746,7 +831,7 @@ pub(crate) fn desktop_space_hide(
 ) -> Result<(), String> {
     validate_space_window(&window)?;
     app.state::<DesktopSpaceManager>()
-        .hide_matching(&app, session)
+        .request_close_matching(&app, session)
 }
 
 #[cfg(test)]
@@ -804,6 +889,24 @@ mod tests {
         assert!(state.begin_hide(Some(reopened)));
         assert!(!state.visible);
         assert!(!state.close_expired(reopened));
+    }
+
+    #[test]
+    fn repeated_close_requests_keep_one_deadline_and_reopen_invalidates_it() {
+        let mut state = Inner::default();
+        let first = state.begin_show();
+        assert_eq!(state.begin_close(), Some(first));
+        for _ in 0..5 {
+            assert_eq!(state.begin_close(), None);
+            assert_eq!(state.session, first);
+            assert!(state.close_expired(first));
+        }
+        let reopened = state.begin_show();
+        assert!(!state.close_expired(first));
+        assert!(!state.begin_hide(Some(first)));
+        assert!(state.visible);
+        assert_eq!(state.begin_close(), Some(reopened));
+        assert!(state.close_expired(reopened));
     }
 
     #[test]

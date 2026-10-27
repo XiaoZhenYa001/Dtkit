@@ -778,17 +778,19 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
                 return;
             }
             if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
-                if let Ok(monitor) = organizer_monitor(&window) {
-                    let monitor_pos = monitor.position();
-                    let scale_factor = monitor.scale_factor();
-                    let margin_top = (10.0 * scale_factor) as i32;
-                    let (stored_x, _stored_width) = get_hotzone_pos();
-                    if stored_x >= 0 {
-                        let panel_y = monitor_pos.y + margin_top;
-                        let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
+                if !desktop::classic_motion::is_transitioning(&window) {
+                    if let Ok(monitor) = organizer_monitor(&window) {
+                        let monitor_pos = monitor.position();
+                        let scale_factor = monitor.scale_factor();
+                        let margin_top = (10.0 * scale_factor) as i32;
+                        let (stored_x, _stored_width) = get_hotzone_pos();
+                        if stored_x >= 0 {
+                            let panel_y = monitor_pos.y + margin_top;
+                            let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
+                        }
                     }
+                    let _ = fit_desktop_organizer_to_screen(&window);
                 }
-                let _ = fit_desktop_organizer_to_screen(&window);
                 if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
                     update_hotzone_pos(position.x, size.width as i32);
                     update_panel_bounds(
@@ -809,7 +811,9 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
             if APP_SUSPENDED.load(Ordering::Relaxed) {
                 let _ = window.close();
             } else {
-                let _ = window.hide();
+                let _ = app_handle.run_on_main_thread(move || {
+                    let _ = desktop::classic_motion::set_visible(&window, false);
+                });
             }
         }
     });
@@ -846,6 +850,7 @@ fn stop_hotzone(app: AppHandle) -> Result<(), String> {
     desktop::hotzone::set_user_interacting(false);
     stop_hotzone_monitor();
     if let Some(window) = app.get_webview_window("desktop-organizer") {
+        desktop::classic_motion::cancel(&window);
         let _ = window.close();
     }
     Ok(())
@@ -865,15 +870,33 @@ async fn toggle_desktop_organizer(app: AppHandle, show: bool) -> Result<(), Stri
     }
     if show {
         let window = ensure_desktop_organizer_window(&app)?;
-        fit_desktop_organizer_to_screen(&window)?;
+        if !desktop::classic_motion::is_transitioning(&window) {
+            fit_desktop_organizer_to_screen(&window)?;
+        }
         desktop::space::show_classic_window(&app, window).await?;
     } else if let Some(window) = app.get_webview_window("desktop-organizer") {
         desktop::hotzone::set_user_interacting(false);
         if APP_SUSPENDED.load(Ordering::Relaxed) {
             window.close().map_err(|e| e.to_string())?;
         } else {
-            window.hide().map_err(|e| e.to_string())?;
+            desktop::classic_motion::request_visible(window, false).await?;
         }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_classic_motion_preferences(
+    window: WebviewWindow,
+    reduced_motion: bool,
+    ready: Option<bool>,
+) -> Result<(), String> {
+    if !["main", "desktop-organizer"].contains(&window.label()) {
+        return Err("此窗口不能更改分类侧栏动效".into());
+    }
+    desktop::classic_motion::set_reduced_motion(reduced_motion);
+    if ready == Some(true) && window.label() == "desktop-organizer" {
+        desktop::classic_motion::mark_ready(&window);
     }
     Ok(())
 }
@@ -1274,6 +1297,7 @@ pub fn run() {
             stop_hotzone,
             get_hotzone_status,
             toggle_desktop_organizer,
+            set_classic_motion_preferences,
             update_hotzone_position,
             clamp_desktop_organizer_window,
             get_screen_bounds,
