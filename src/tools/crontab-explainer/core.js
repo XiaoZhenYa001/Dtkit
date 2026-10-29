@@ -15,14 +15,17 @@ export const CRON_ALIASES = Object.freeze({
 const FIELD_DEFINITIONS = Object.freeze([
     Object.freeze({ key: 'minute', label: '分钟', min: 0, max: 59 }),
     Object.freeze({ key: 'hour', label: '小时', min: 0, max: 23 }),
-    Object.freeze({ key: 'dayOfMonth', label: '日期', min: 1, max: 31, allowQuestion: true }),
+    Object.freeze({ key: 'dayOfMonth', label: '日期', min: 1, max: 31 }),
     Object.freeze({ key: 'month', label: '月份', min: 1, max: 12, names: MONTH_NAMES }),
-    Object.freeze({ key: 'dayOfWeek', label: '星期', min: 0, max: 7, names: WEEKDAY_NAMES, allowQuestion: true, normalize: value => value === 7 ? 0 : value })
+    Object.freeze({ key: 'dayOfWeek', label: '星期', min: 0, max: 7, names: WEEKDAY_NAMES, normalize: value => value === 7 ? 0 : value })
 ]);
 
 function parseInteger(token, definition, context) {
     const upperToken = token.toUpperCase();
     const namedValue = definition.names?.[upperToken];
+    if (namedValue === undefined && !/^\d+$/.test(token)) {
+        throw new SyntaxError(`${definition.label}字段中的“${context}”不是有效的整数或名称`);
+    }
     const value = namedValue ?? Number(token);
 
     if (!Number.isInteger(value) || value < definition.min || value > definition.max) {
@@ -43,9 +46,7 @@ function parseField(source, definition) {
     if (!raw) throw new SyntaxError(`${definition.label}字段不能为空`);
     const usesQuartzExtension = raw.includes('#') || /(?:^|,)(?:L|LW|L-\d+|\d+[LW])(?:,|$)/.test(raw);
     if (usesQuartzExtension) throw new SyntaxError(`标准 Crontab 不支持 ${definition.label}字段中的 L、W 或 # 扩展语法`);
-    if (raw.includes('?') && (!definition.allowQuestion || raw !== '?')) {
-        throw new SyntaxError(`${definition.label}字段不支持“?”`);
-    }
+    if (raw.includes('?')) throw new SyntaxError('五段 Crontab 不支持“?”；不限制日期或星期时请使用“*”');
 
     const values = new Set();
     for (const segment of raw.split(',')) {
@@ -55,9 +56,11 @@ function parseField(source, definition) {
         if (stepParts.length > 2) throw new SyntaxError(`${definition.label}字段中的“${segment}”步长格式无效`);
         const base = stepParts[0];
         const step = stepParts.length === 2 ? Number(stepParts[1]) : 1;
-        if (!Number.isInteger(step) || step <= 0) throw new SyntaxError(`${definition.label}字段中的步长必须是正整数`);
+        if ((stepParts.length === 2 && !/^\d+$/.test(stepParts[1])) || !Number.isSafeInteger(step) || step <= 0) {
+            throw new SyntaxError(`${definition.label}字段中的步长必须是正整数`);
+        }
 
-        if (base === '*' || base === '?') {
+        if (base === '*') {
             addRange(values, definition.min, definition.max, step, definition, segment);
             continue;
         }
@@ -68,14 +71,16 @@ function parseField(source, definition) {
                 throw new SyntaxError(`${definition.label}字段中的范围“${segment}”格式无效`);
             }
             const start = parseInteger(bounds[0], definition, segment);
-            const end = parseInteger(bounds[1], definition, segment);
+            let end = parseInteger(bounds[1], definition, segment);
+            // Cronie accepts MON-SUN / 1-0 as ranges ending at Sunday (7).
+            if (definition.key === 'dayOfWeek' && end === 0 && start > 0) end = 7;
             addRange(values, start, end, step, definition, segment);
             continue;
         }
 
         const start = parseInteger(base, definition, segment);
-        const end = stepParts.length === 2 ? definition.max : start;
-        addRange(values, start, end, step, definition, segment);
+        if (stepParts.length === 2) throw new SyntaxError(`${definition.label}字段的步长请写为“${base}-${definition.max}/${step}”或“*/${step}”`);
+        addRange(values, start, start, step, definition, segment);
     }
 
     const expectedSize = definition.key === 'dayOfWeek'
@@ -86,16 +91,21 @@ function parseField(source, definition) {
         raw,
         values,
         sortedValues: Object.freeze([...values].sort((a, b) => a - b)),
-        wildcard: values.size === expectedSize
+        // Cronie preserves whether the field starts with *, independently of its value set.
+        wildcard: raw.startsWith('*'),
+        allValues: values.size === expectedSize
     });
 }
 
 export function parseCronExpression(expression) {
     const source = String(expression ?? '').trim();
     if (!source) throw new SyntaxError('请输入 Cron 表达式');
+    if (source.length > 512) throw new SyntaxError('表达式过长，请仅输入五段时间规则');
+    if (source.toLowerCase() === '@reboot') throw new SyntaxError('@reboot 取决于实际重启事件，无法预估日历执行时间');
 
     const alias = source.toLowerCase();
-    const normalized = CRON_ALIASES[alias] || source;
+    const hasAlias = Object.hasOwn(CRON_ALIASES, alias);
+    const normalized = hasAlias ? CRON_ALIASES[alias] : source;
     const parts = normalized.split(/\s+/);
     if (parts.length !== 5) {
         throw new SyntaxError(`标准 Crontab 需要 5 个字段，当前检测到 ${parts.length} 个`);
@@ -108,7 +118,7 @@ export function parseCronExpression(expression) {
 
     return Object.freeze({
         source,
-        alias: CRON_ALIASES[alias] ? alias : null,
+        alias: hasAlias ? alias : null,
         normalized: parts.join(' '),
         fields: Object.freeze(fields)
     });
@@ -120,9 +130,9 @@ function formatNumericList(values, formatter = String) {
 }
 
 function describeField(field, definition) {
-    if (field.wildcard) return `任意${definition.label}`;
+    if (field.allValues) return `任意${definition.label}`;
     const stepMatch = field.raw.match(/^\*\/(\d+)$/);
-    if (stepMatch) return `每 ${stepMatch[1]} ${definition.label}`;
+    if (stepMatch) return `从 ${definition.min} 起，每 ${stepMatch[1]} 个${definition.label}值`;
 
     if (definition.key === 'dayOfWeek') {
         return formatNumericList(field.sortedValues, value => WEEKDAY_LABELS[value]);
@@ -134,20 +144,30 @@ function buildSummary(schedule) {
     const { minute, hour, dayOfMonth, month, dayOfWeek } = schedule.fields;
     const parts = [];
 
-    if (!month.wildcard) parts.push(`${formatNumericList(month.sortedValues)} 月`);
-    if (!dayOfMonth.wildcard) parts.push(`每月 ${formatNumericList(dayOfMonth.sortedValues)} 日`);
-    if (!dayOfWeek.wildcard) parts.push(formatNumericList(dayOfWeek.sortedValues, value => WEEKDAY_LABELS[value]));
+    if (!month.allValues) parts.push(`仅 ${formatNumericList(month.sortedValues)} 月`);
+    const andDays = dayOfMonth.wildcard || dayOfWeek.wildcard;
+    const monthDays = `每月 ${formatNumericList(dayOfMonth.sortedValues)} 日`;
+    const weekDays = formatNumericList(dayOfWeek.sortedValues, value => WEEKDAY_LABELS[value]);
+    if (andDays) {
+        if (!dayOfMonth.allValues) parts.push(monthDays);
+        if (!dayOfWeek.allValues) parts.push((!dayOfMonth.allValues ? '且' : '') + weekDays);
+        if (dayOfMonth.allValues && dayOfWeek.allValues) parts.push('每天');
+    } else if (dayOfMonth.allValues || dayOfWeek.allValues) {
+        parts.push('每天（日或周有一项覆盖所有日期）');
+    } else {
+        parts.push(`${monthDays}或${weekDays}`);
+    }
 
-    if (hour.wildcard && minute.wildcard) {
+    if (hour.allValues && minute.allValues) {
         parts.push('每分钟');
-    } else if (hour.wildcard && minute.raw.match(/^\*\/(\d+)$/)) {
+    } else if (hour.allValues && minute.raw.match(/^\*\/(\d+)$/) && 60 % Number(minute.raw.slice(2)) === 0) {
         parts.push(`每 ${minute.raw.slice(2)} 分钟`);
     } else if (hour.sortedValues.length === 1 && minute.sortedValues.length === 1) {
         parts.push(`${String(hour.sortedValues[0]).padStart(2, '0')}:${String(minute.sortedValues[0]).padStart(2, '0')}`);
     } else {
-        if (!hour.wildcard) parts.push(`${formatNumericList(hour.sortedValues)} 点`);
-        if (minute.wildcard) parts.push('每分钟');
-        else if (minute.raw.match(/^\*\/(\d+)$/)) parts.push(`每 ${minute.raw.slice(2)} 分钟`);
+        parts.push(hour.allValues ? '每小时' : `${formatNumericList(hour.sortedValues)} 点`);
+        if (minute.allValues) parts.push('每分钟');
+        else if (minute.raw.match(/^\*\/(\d+)$/) && 60 % Number(minute.raw.slice(2)) === 0) parts.push(`每 ${minute.raw.slice(2)} 分钟`);
         else parts.push(`第 ${formatNumericList(minute.sortedValues)} 分钟`);
     }
 
@@ -166,25 +186,41 @@ export function explainCron(expression) {
     return Object.freeze({
         normalized: schedule.normalized,
         summary: buildSummary(schedule),
+        dayRule: schedule.fields.dayOfMonth.wildcard || schedule.fields.dayOfWeek.wildcard
+            ? '日期与星期同时匹配；以 * 开头的字段按其展开值参与判断。'
+            : '日期与星期按“或”匹配：任意一项满足即可。',
         details: Object.freeze(details)
     });
 }
 
 function matchesCalendarDay(date, fields) {
-    const dayOfMonthMatches = fields.dayOfMonth.values.has(date.getDate());
-    const dayOfWeekMatches = fields.dayOfWeek.values.has(date.getDay());
+    const dayOfMonthMatches = fields.dayOfMonth.values.has(date.getUTCDate());
+    const dayOfWeekMatches = fields.dayOfWeek.values.has(date.getUTCDay());
 
-    if (fields.dayOfMonth.wildcard && fields.dayOfWeek.wildcard) return true;
-    if (fields.dayOfMonth.wildcard) return dayOfWeekMatches;
-    if (fields.dayOfWeek.wildcard) return dayOfMonthMatches;
+    if (fields.dayOfMonth.wildcard || fields.dayOfWeek.wildcard) return dayOfMonthMatches && dayOfWeekMatches;
     return dayOfMonthMatches || dayOfWeekMatches;
 }
 
-function nextAllowed(values, current) {
-    return values.find(value => value >= current);
+export function parseCronStart(value, timeZone = 'local') {
+    if (!['local', 'utc'].includes(timeZone)) throw new RangeError('时区仅支持 local 或 utc');
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) throw new TypeError('请选择完整的起算日期与时间');
+    const expected = match.slice(1).map((part, index) => index === 5 && part === undefined ? 0 : Number(part));
+    const [year, month, day, hour, minute, second] = expected;
+    const utc = timeZone === 'utc';
+    const date = new Date(0);
+    if (utc) { date.setUTCFullYear(year, month - 1, day); date.setUTCHours(hour, minute, second, 0); }
+    else { date.setFullYear(year, month - 1, day); date.setHours(hour, minute, second, 0); }
+    const actual = utc
+        ? [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
+        : [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()];
+    if (year < 1 || year > 9969 || actual.some((part, index) => part !== expected[index])) {
+        throw new RangeError('起算日期无效，或该本地时刻因夏令时跳转而不存在');
+    }
+    return date;
 }
 
-export function getNextOccurrences(expression, count = 5, from = new Date()) {
+export function getNextOccurrences(expression, count = 5, from = new Date(), options = {}) {
     const schedule = typeof expression === 'string' ? parseCronExpression(expression) : expression;
     if (!Number.isInteger(count) || count < 1 || count > 20) {
         throw new RangeError('执行次数必须是 1 到 20 之间的整数');
@@ -192,61 +228,50 @@ export function getNextOccurrences(expression, count = 5, from = new Date()) {
 
     const start = new Date(from);
     if (Number.isNaN(start.getTime())) throw new TypeError('起始时间无效');
+    const timeZone = options.timeZone ?? 'local';
+    if (!['local', 'utc'].includes(timeZone)) throw new RangeError('时区仅支持 local 或 utc');
+    const utc = timeZone === 'utc';
+    const year = utc ? start.getUTCFullYear() : start.getFullYear();
+    if (year < 1 || year > 9969) throw new RangeError('起算年份需在 1–9969 之间');
 
-    const cursor = new Date(start);
-    cursor.setSeconds(0, 0);
-    if (cursor <= start) cursor.setMinutes(cursor.getMinutes() + 1);
-
+    // Walk calendar days first, so impossible dates never cause a 30-year minute scan.
+    const day = new Date(0);
+    day.setUTCFullYear(year, utc ? start.getUTCMonth() : start.getMonth(), utc ? start.getUTCDate() : start.getDate());
+    day.setUTCHours(0, 0, 0, 0);
     const results = [];
-    const lastYear = cursor.getFullYear() + 30;
+    const lastYear = year + 30;
+    const horizon = new Date(start);
+    if (utc) horizon.setUTCFullYear(lastYear);
+    else horizon.setFullYear(lastYear);
     const fields = schedule.fields;
-
-    while (results.length < count && cursor.getFullYear() <= lastYear) {
-        const currentMonth = cursor.getMonth() + 1;
-        if (!fields.month.values.has(currentMonth)) {
-            const month = nextAllowed(fields.month.sortedValues, currentMonth);
-            cursor.setDate(1);
-            cursor.setHours(0, 0, 0, 0);
-            if (month === undefined) {
-                cursor.setFullYear(cursor.getFullYear() + 1);
-                cursor.setMonth(fields.month.sortedValues[0] - 1);
-            } else {
-                cursor.setMonth(month - 1);
+    while (results.length < count && day.getUTCFullYear() <= lastYear) {
+        if (fields.month.values.has(day.getUTCMonth() + 1) && matchesCalendarDay(day, fields)) {
+            const nextDay = new Date(day);
+            nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+            const localBoundary = calendar => {
+                if (utc) return calendar.getTime();
+                const boundary = new Date(0);
+                boundary.setFullYear(calendar.getUTCFullYear(), calendar.getUTCMonth(), calendar.getUTCDate());
+                boundary.setHours(0, 0, 0, 0);
+                return boundary.getTime();
+            };
+            const dayStart = localBoundary(day);
+            const end = localBoundary(nextDay);
+            const firstMinute = dayStart + Math.max(0, Math.floor((start.getTime() - dayStart) / 60000) + 1) * 60000;
+            // Iterate actual instants inside matching days: gaps disappear and repeated DST minutes remain.
+            for (let timestamp = firstMinute; timestamp < end; timestamp += 60000) {
+                if (timestamp > horizon.getTime()) break;
+                const candidate = new Date(timestamp);
+                if (!utc && (candidate.getFullYear() !== day.getUTCFullYear() || candidate.getMonth() !== day.getUTCMonth() || candidate.getDate() !== day.getUTCDate())) continue;
+                const hour = utc ? candidate.getUTCHours() : candidate.getHours();
+                const minute = utc ? candidate.getUTCMinutes() : candidate.getMinutes();
+                if (fields.hour.values.has(hour) && fields.minute.values.has(minute)) {
+                    results.push(candidate);
+                    if (results.length === count) break;
+                }
             }
-            continue;
         }
-
-        if (!matchesCalendarDay(cursor, fields)) {
-            cursor.setDate(cursor.getDate() + 1);
-            cursor.setHours(0, 0, 0, 0);
-            continue;
-        }
-
-        const currentHour = cursor.getHours();
-        if (!fields.hour.values.has(currentHour)) {
-            const hour = nextAllowed(fields.hour.sortedValues, currentHour);
-            if (hour === undefined) {
-                cursor.setDate(cursor.getDate() + 1);
-                cursor.setHours(fields.hour.sortedValues[0], 0, 0, 0);
-            } else {
-                cursor.setHours(hour, 0, 0, 0);
-            }
-            continue;
-        }
-
-        const currentMinute = cursor.getMinutes();
-        if (!fields.minute.values.has(currentMinute)) {
-            const minute = nextAllowed(fields.minute.sortedValues, currentMinute);
-            if (minute === undefined) {
-                cursor.setHours(cursor.getHours() + 1, fields.minute.sortedValues[0], 0, 0);
-            } else {
-                cursor.setMinutes(minute, 0, 0);
-            }
-            continue;
-        }
-
-        results.push(new Date(cursor));
-        cursor.setMinutes(cursor.getMinutes() + 1);
+        day.setUTCDate(day.getUTCDate() + 1);
     }
 
     if (results.length < count) {

@@ -35,6 +35,8 @@ export function getTemplate() {
             <button id="batchHelp" class="batch-button batch-button--quiet" type="button" aria-label="使用帮助">${batchIcon('help')}<span>使用帮助</span></button>
         </header>
 
+        <ol class="batch-workflow" aria-label="批处理流程"><li data-batch-step="select"><span>1</span>添加文件</li><li data-batch-step="check"><span>2</span>设置并检查</li><li data-batch-step="execute"><span>3</span>执行与查看结果</li></ol>
+
         <div class="batch-layout">
             <aside class="batch-config-card" aria-label="处理规则">
                 <section class="batch-source-section">
@@ -48,6 +50,8 @@ export function getTemplate() {
                     <div id="batchSelectionSummary" class="batch-selection batch-selection--empty" aria-live="polite">尚未选择文件</div>
                 </section>
 
+                <div class="batch-folder-import"><button id="batchSelectFolder" class="batch-text-button" type="button">${batchIcon('folder')}从文件夹添加</button><label class="batch-check"><input id="batchIncludeSubfolders" type="checkbox"><span>包含子文件夹</span></label></div>
+
                 <div class="batch-config-footer"><div class="batch-actions"><button id="batchPreview" class="batch-button batch-button--secondary" type="button">检查变更</button><button id="batchExecute" class="batch-button batch-button--primary" type="button" disabled><span data-batch-execute-label>执行重命名</span>${batchIcon('arrow')}</button></div><p id="batchStatus" class="batch-status" role="status" aria-live="polite">选择文件后，先检查变更。</p></div>
 
                 <section class="batch-rules-section">
@@ -59,15 +63,19 @@ export function getTemplate() {
 
                     <div id="batchOptions" class="batch-options">
                         <section id="batchRenameOptions" class="batch-operation-panel">
-                            <label class="batch-field"><span>命名方式</span><select id="batchRenamePreset"><option value="numbered" selected>原名 + 序号</option><option value="sequence">统一名称 + 序号</option><option value="original">保留原名</option><option value="prefix">添加前缀</option><option value="suffix">添加后缀</option><option value="custom">自定义模板</option></select></label>
+                            <label class="batch-field"><span>命名方式</span><select id="batchRenamePreset"><option value="numbered" selected>原名 + 序号</option><option value="sequence">统一名称 + 序号</option><option value="parent">父文件夹 + 序号</option><option value="original">保留原名</option><option value="prefix">添加前缀</option><option value="suffix">添加后缀</option><option value="custom">自定义模板</option></select></label>
                             <label class="batch-field"><span>文件名模板</span><input id="batchNamePattern" type="text" value="{name}_{n}{dotext}" maxlength="160" autocomplete="off" spellcheck="false" aria-describedby="batchPatternHint"></label>
-                            <div class="batch-template-tokens" aria-label="插入模板变量"><button type="button" data-batch-token="{name}" title="插入原文件名">原名</button><button type="button" data-batch-token="{n}" title="插入序号">序号</button><button type="button" data-batch-token="{dotext}" title="插入点号与扩展名">扩展名</button></div>
+                            <div class="batch-template-tokens" aria-label="插入模板变量"><button type="button" data-batch-token="{name}" title="插入原文件名">原名</button><button type="button" data-batch-token="{n}" title="插入序号">序号</button><button type="button" data-batch-token="{dotext}" title="插入点号与扩展名">扩展名</button><button type="button" data-batch-token="{folder}" title="插入父文件夹名">父文件夹</button></div>
                             <p id="batchPatternHint" class="batch-field-hint">轻点变量插入光标位置；扩展名建议保留。</p>
                             <div class="batch-options-grid"><label class="batch-field"><span>起始序号</span><input id="batchStartIndex" type="number" min="0" max="999999" value="1"></label><label class="batch-field"><span>序号位数</span><select id="batchNumberPadding"><option value="1">1 · 2 · 3</option><option value="2">01 · 02 · 03</option><option value="3">001 · 002 · 003</option><option value="4">0001 · 0002</option></select></label></div>
                             <details class="batch-disclosure batch-advanced"><summary><span>更多命名规则</span>${batchIcon('chevron')}</summary><div class="batch-disclosure-content">
                                 <div class="batch-options-grid"><label class="batch-field"><span>查找文字</span><input id="batchFind" type="text" maxlength="160" placeholder="原名中的文字" autocomplete="off"></label><label class="batch-field"><span>替换为</span><input id="batchReplace" type="text" maxlength="160" placeholder="留空即删除" autocomplete="off"></label></div>
                                 <p class="batch-field-hint">替换与大小写仅应用于原名，不改变扩展名。</p>
                                 <div class="batch-options-grid"><label class="batch-field"><span>字母大小写</span><select id="batchCaseMode"><option value="keep">保持原样</option><option value="lower">全部小写</option><option value="upper">全部大写</option></select></label><label class="batch-field"><span>序号间隔</span><input id="batchNumberStep" type="number" min="1" max="10000" value="1"></label></div>
+                                <label class="batch-check"><input id="batchTrimWhitespace" type="checkbox"><span>去除原名首尾空白</span></label>
+                                <div class="batch-options-grid"><label class="batch-field"><span>移除开头字符数</span><input id="batchRemoveStart" type="number" min="0" max="160" value="0"></label><label class="batch-field"><span>移除结尾字符数</span><input id="batchRemoveEnd" type="number" min="0" max="160" value="0"></label></div>
+                                <label class="batch-field"><span>扩展名大小写</span><select id="batchExtensionCase"><option value="keep">保留原扩展名</option><option value="lower">扩展名转小写</option><option value="upper">扩展名转大写</option></select></label>
+                                <p class="batch-field-hint">先整理空白和移除首尾字符，再查找替换、调整原名大小写。扩展名单独设置，不转换文件格式。</p>
                             </div></details>
                         </section>
 
@@ -89,10 +97,10 @@ export function getTemplate() {
 
             <main class="batch-main">
                 <section class="batch-preview-card" aria-labelledby="batchPreviewTitle">
-                    <div class="batch-preview-header"><div><span class="batch-eyebrow">一目了然</span><h3 id="batchPreviewTitle">文件与变更</h3></div><button id="batchExport" class="batch-button batch-button--quiet" type="button" disabled>${batchIcon('download')}<span>导出清单</span></button></div>
-                    <div class="batch-stats" aria-label="本批文件统计"><div><span>已选文件</span><strong id="batchCountTotal">0</strong></div><div><span><i class="batch-dot batch-dot--ready"></i>可处理</span><strong id="batchCountReady">—</strong></div><div><span><i class="batch-dot batch-dot--conflict"></i>需检查</span><strong id="batchCountConflict">—</strong></div></div>
+                    <div class="batch-preview-header"><div><span class="batch-eyebrow">一目了然</span><h3 id="batchPreviewTitle">文件与变更</h3><span id="batchCheckState" class="batch-check-state">本地草稿</span></div><button id="batchExport" class="batch-button batch-button--quiet" type="button" disabled>${batchIcon('download')}<span>导出清单</span></button></div>
+                    <div class="batch-stats" aria-label="本批文件统计"><div><span id="batchTotalLabel">已选文件</span><strong id="batchCountTotal">0</strong></div><div><span><i class="batch-dot batch-dot--ready"></i><span id="batchReadyLabel">预计处理</span></span><strong id="batchCountReady">—</strong></div><div><span><i class="batch-dot batch-dot--conflict"></i>需检查</span><strong id="batchCountConflict">—</strong></div></div>
                     <div class="batch-list-toolbar"><label class="batch-search">${batchIcon('search')}<input id="batchSearch" type="search" placeholder="搜索文件名或路径" aria-label="搜索文件名或路径" autocomplete="off"></label><label class="batch-sort"><span class="batch-sr-only">文件排序</span><select id="batchSort" aria-label="文件排序"><option value="manual">选择顺序</option><option value="name-asc">名称 A → Z</option><option value="name-desc">名称 Z → A</option><option value="extension">文件类型</option></select></label></div>
-                    <div class="batch-list-meta"><span id="batchPreviewMeta">增加文件，查看待处理清单。</span><label class="batch-check batch-conflict-filter"><input id="batchOnlyConflicts" type="checkbox"><span>仅看冲突</span></label></div>
+                    <div class="batch-list-meta"><span id="batchPreviewMeta">增加文件，查看待处理清单。</span><div class="batch-list-actions"><button id="batchRemoveConflicts" type="button" class="batch-text-button" disabled>从清单移除冲突</button><button id="batchRemoveVisible" type="button" class="batch-text-button" disabled>移除当前筛选项</button><label class="batch-check batch-conflict-filter"><input id="batchOnlyConflicts" type="checkbox"><span>仅看冲突</span></label></div></div>
                     <div class="batch-list-columns" aria-hidden="true"><span>原文件</span><span>变更后</span><span>状态</span></div>
                     <div id="batchPreviewList" class="batch-preview-list"><div class="batch-empty-state"><span class="batch-empty-art"><span>${batchIcon('file')}</span><span>${batchIcon('file')}</span><span>${batchIcon('file')}</span></span><strong>从一份清晰的清单开始</strong><p>照片、文档、素材，都可以一起整理。<br>选择文件后，在这里查看每一项变更。</p></div></div>
                     <div class="batch-list-footer"><span id="batchListCount">0 个文件</span><button id="batchShowMore" class="batch-text-button" type="button" hidden>显示更多</button><span class="batch-safety-note">${batchIcon('shield')}检查后执行</span></div>
@@ -106,6 +114,6 @@ export function getTemplate() {
 
         <dialog id="batchDangerDialog" class="batch-dialog batch-danger-dialog" aria-labelledby="batchDangerTitle"><form method="dialog"><button class="batch-dialog-close" type="button" data-batch-close aria-label="关闭">${batchIcon('remove')}</button><span class="batch-danger-icon">${batchIcon('delete')}</span><h3 id="batchDangerTitle">确认彻底删除？</h3><p>这些文件不会进入恢复区，也无法通过 DtKit 撤销。请确认你已经检查预览列表。</p><div class="batch-dialog-actions"><button type="button" data-batch-close class="batch-button batch-button--secondary">返回检查</button><button id="batchConfirmPermanent" value="default" class="batch-button batch-button--danger">仍然彻底删除</button></div></form></dialog>
 
-        <dialog id="batchHelpDialog" class="batch-dialog batch-help-dialog" aria-labelledby="batchHelpTitle"><div class="batch-help-content"><button class="batch-dialog-close" type="button" data-batch-close aria-label="关闭">${batchIcon('remove')}</button><span class="batch-help-icon">${batchIcon('spark')}</span><h3 id="batchHelpTitle">整理文件，三步就好</h3><ol><li><span>1</span><div><strong>选好文件</strong><p>可分多次增加，逐项移除，也能按名称或类型排序。</p></div></li><li><span>2</span><div><strong>设置处理方式</strong><p>重命名、复制、移动或删除。重命名支持连续编号、文字替换与大小写调整。</p></div></li><li><span>3</span><div><strong>检查，再执行</strong><p>核对目标名称和冲突。已存在的同名文件不会被覆盖，规则改变后需要重新检查。</p></div></li></ol><div class="batch-help-tokens"><strong>模板小提示</strong><p><code>{name}</code> 原名 <code>{n}</code> 序号 <code>{dotext}</code> 点号与扩展名</p><p>例如 <code>旅行_{n}{dotext}</code> → 旅行_01.jpg</p></div>${shortcuts}<p class="batch-help-footnote">默认删除移入 DtKit 恢复区；仅本次使用期间保留最近任务记录。</p><button class="batch-button batch-button--primary" type="button" data-batch-close>开始整理</button></div></dialog>
+        <dialog id="batchHelpDialog" class="batch-dialog batch-help-dialog" aria-labelledby="batchHelpTitle"><div class="batch-help-content"><button class="batch-dialog-close" type="button" data-batch-close aria-label="关闭">${batchIcon('remove')}</button><span class="batch-help-icon">${batchIcon('spark')}</span><h3 id="batchHelpTitle">整理文件，三步就好</h3><ol><li><span>1</span><div><strong>选好文件</strong><p>可多次增加文件，或从文件夹导入并选择包含子文件夹；每批最多 500 项。</p></div></li><li><span>2</span><div><strong>设置处理方式</strong><p>重命名、复制、移动或删除。支持父文件夹变量、首尾字符整理、编号和独立扩展名大小写。</p></div></li><li><span>3</span><div><strong>检查，再执行</strong><p>核对原生检查的目标名称和冲突。可批量从清单移除冲突或筛选项，规则和清单改变后需要重新检查。</p></div></li></ol><div class="batch-help-tokens"><strong>模板小提示</strong><p><code>{name}</code> 原名 <code>{n}</code> 序号 <code>{dotext}</code> 点号与扩展名 <code>{folder}</code> 父文件夹名</p><p>例如 <code>旅行_{n}{dotext}</code> → 旅行_01.jpg</p></div>${shortcuts}<p class="batch-help-footnote">默认删除移入 DtKit 恢复区；仅本次使用期间保留最近任务记录。</p><button class="batch-button batch-button--primary" type="button" data-batch-close>开始整理</button></div></dialog>
     </div>`;
 }

@@ -136,7 +136,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--blue',
         category: 'other',
         status: 'ready',
-        description: 'URL Encode / Decode 处理。',
+        description: 'URL 与表单编解码、逐行处理和查询参数检查。',
         loader: () => import('./url-encoder/index.js')
     },
     {
@@ -146,7 +146,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--rose',
         category: 'other',
         status: 'ready',
-        description: '翻译复杂的 Cron 表达式。',
+        description: '解释五段 Cron，按起算时间预估执行计划。',
         loader: () => import('./crontab-explainer/index.js')
     },
     {
@@ -156,7 +156,7 @@ export const toolManifests = Object.freeze([
         colorClass: 'tool-card__icon--slate',
         category: 'other',
         status: 'ready',
-        description: '字节、长度、温度等转换。',
+        description: '数据、长度、温度等常用单位换算与精度设置。',
         loader: () => import('./unit-converter/index.js')
     },
     {

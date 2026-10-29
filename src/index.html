@@ -178,12 +178,12 @@
                                 </div>
                                 <div class="settings-hero-text">
                                     <h1 class="settings-hero-title">设置</h1>
-                                    <p class="settings-hero-desc">管理应用程序的偏好设置、快捷键和功能开关</p>
+                                    <p class="settings-hero-desc">让工具箱更合你的习惯。管理存储、快捷键和桌面体验。</p>
                                 </div>
                             </div>
-                            <div class="settings-hero-meta" aria-label="设置状态">
-                                <span><i class="ri-shield-check-line"></i> 本地优先</span>
-                                <span><i class="ri-check-double-line"></i> 自动保存</span>
+                            <div class="settings-hero-meta" aria-label="设置说明">
+                                <span><i class="ri-shield-check-line" aria-hidden="true"></i> 设置保存在本机</span>
+                                <span><i class="ri-information-line" aria-hidden="true"></i> 保存方式见各项提示</span>
                             </div>
                         </div>
 
@@ -221,7 +221,7 @@
                             <div class="settings-section-header">
                                 <i class="ri-hard-drive-2-line"></i>
                                 <h2 class="settings-section-title">存储与维护</h2>
-                                <span class="settings-section-badge settings-section-badge--blue"><i class="ri-star-line"></i> 核心</span>
+                                <span class="settings-section-badge settings-section-badge--blue">应用数据</span>
                             </div>
                             <div class="settings-section-content">
                                 
@@ -237,20 +237,21 @@
                                         </div>
                                     </div>
                                     <div class="storage-card-body">
+                                        <label class="settings-field-label" for="downloadPathInput">数据根目录</label>
                                         <div class="settings-input-group">
                                             <i class="settings-input-icon ri-folder-2-line"></i>
-                                            <input type="text" id="downloadPathInput" class="settings-input" aria-label="DtKit 数据根目录" placeholder="例如: D:\DtKit">
+                                            <input type="text" id="downloadPathInput" class="settings-input" aria-label="DtKit 数据根目录" aria-describedby="storageRootStatus" placeholder="例如: D:\DtKit" spellcheck="false" autocomplete="off">
                                             <div class="settings-btn-group">
-                                                <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary">
+                                                <button id="changeDownloadPathBtn" class="settings-btn settings-btn--secondary" type="button">
                                                     <i class="ri-check-line"></i>
                                                     <span>迁移全部数据</span>
                                                 </button>
-                                                <button id="browseDownloadPathBtn" class="settings-btn-icon" title="浏览文件夹">
+                                                <button id="browseDownloadPathBtn" class="settings-btn-icon" type="button" title="浏览文件夹" aria-label="选择数据根目录文件夹">
                                                     <i class="ri-folder-open-line"></i>
                                                 </button>
                                             </div>
                                         </div>
-                                        <div class="storage-root-status" id="storageRootStatus" aria-live="polite">
+                                        <div class="storage-root-status" id="storageRootStatus" role="status" aria-live="polite">
                                             <i class="ri-loader-4-line"></i><span>正在读取 DtKit 数据根目录…</span>
                                         </div>
                                         <div class="storage-root-map" aria-label="数据目录结构">
@@ -402,10 +403,10 @@
                                 <div class="tool-module-summary">
                                     <div class="tool-module-summary__metric"><strong id="toolModuleEnabledCount">正在读取…</strong><span>启用模块</span></div>
                                     <div class="tool-module-summary__metric tool-module-summary__metric--muted"><strong id="toolModuleDisabledCount">—</strong><span>已停用</span></div>
-                                    <p><i class="ri-leaf-line"></i> 工具仍只在首次打开时加载。停用不会删除历史数据，也不会占用运行内存。</p>
+                                    <p><i class="ri-leaf-line" aria-hidden="true"></i> 工具按需加载。停用会保留历史数据，重新启用后仍可继续使用。</p>
                                 </div>
                                 <div class="tool-module-toolbar">
-                                    <label class="tool-module-search"><i class="ri-search-line"></i><input id="toolModuleSearch" type="search" autocomplete="off" placeholder="搜索工具模块"></label>
+                                    <label class="tool-module-search"><i class="ri-search-line" aria-hidden="true"></i><input id="toolModuleSearch" type="search" autocomplete="off" placeholder="搜索工具模块" aria-label="搜索工具模块"></label>
                                     <div class="tool-module-categories" role="group" aria-label="模块分类">
                                         <button type="button" class="is-active" data-module-category="all" aria-pressed="true">全部</button>
                                         <button type="button" data-module-category="dev" aria-pressed="false">开发</button>
@@ -458,16 +459,16 @@
                             <div class="settings-section-header">
                                 <i class="ri-layout-grid-line"></i>
                                 <h2 class="settings-section-title">桌面整理</h2>
-                                <span class="settings-section-badge settings-section-badge--gradient"><i class="ri-star-fill"></i> 主推功能</span>
+                                <span class="settings-section-badge settings-section-badge--gradient">侧栏与空间</span>
                             </div>
                             <div class="settings-section-content">
                                 <div class="settings-toggle-item">
                                     <div class="settings-toggle-label-group">
-                                        <span class="settings-toggle-label">启用桌面整理</span>
+                                        <span class="settings-toggle-label" id="desktopOrganizerEnableLabel">启用桌面整理</span>
                                         <span class="settings-toggle-desc" id="desktopOrganizerEnableDescription">鼠标移至屏幕右上角热区可触发分类侧栏</span>
                                     </div>
                                     <label class="settings-toggle">
-                                        <input type="checkbox" class="settings-toggle-input" id="desktopOrganizerToggle">
+                                        <input type="checkbox" class="settings-toggle-input" id="desktopOrganizerToggle" aria-labelledby="desktopOrganizerEnableLabel" aria-describedby="desktopOrganizerEnableDescription">
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
@@ -479,7 +480,7 @@
                                             <span class="settings-toggle-desc">整理建议功能尚未开放</span>
                                         </div>
                                         <label class="settings-toggle">
-                                            <input type="checkbox" class="settings-toggle-input" id="desktopAutoAnalyzeToggle" disabled aria-disabled="true">
+                                            <input type="checkbox" class="settings-toggle-input" id="desktopAutoAnalyzeToggle" disabled aria-disabled="true" aria-label="自动分析，尚未开放">
                                             <span class="settings-toggle-slider"></span>
                                         </label>
                                     </div>
@@ -561,17 +562,25 @@
                                         <option value="0">永不</option>
                                     </select>
                                 </div>
-                                <div class="settings-toggle-item">
-                                    <span class="settings-toggle-label">开机自动启动</span>
+                                <div class="settings-toggle-item" id="autostartSetting" aria-busy="true">
+                                    <div class="settings-toggle-label-group">
+                                        <span class="settings-toggle-label" id="autostartLabel">开机自动启动</span>
+                                        <span class="settings-toggle-desc" id="autostartDescription">登录 Windows 后在托盘运行，不打开主窗口。可从托盘或再次打开 DtKit 呼出。</span>
+                                        <span class="settings-inline-status" id="autostartStatus" role="status" aria-live="polite" data-tone="pending">正在读取开机自启状态…</span>
+                                        <span class="autostart-actions">
+                                            <button id="autostartRetry" class="settings-btn settings-btn--secondary settings-inline-retry" type="button" hidden>重新读取</button>
+                                            <button id="autostartRemove" class="settings-btn settings-btn--secondary settings-inline-retry" type="button" hidden>取消自启登记</button>
+                                        </span>
+                                    </div>
                                     <label class="settings-toggle">
-                                        <input type="checkbox" class="settings-toggle-input" disabled>
+                                        <input type="checkbox" class="settings-toggle-input" id="autostartEnabled" disabled aria-labelledby="autostartLabel" aria-describedby="autostartDescription autostartStatus">
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
                                 <div class="settings-toggle-item">
-                                    <span class="settings-toggle-label">关闭主面板时最小化到托盘</span>
+                                    <span class="settings-toggle-label">关闭主面板时最小化到托盘<small class="settings-coming-soon">固定行为</small></span>
                                     <label class="settings-toggle">
-                                        <input type="checkbox" class="settings-toggle-input" checked disabled>
+                                        <input type="checkbox" class="settings-toggle-input" checked disabled aria-label="关闭主面板时最小化到托盘，固定行为">
                                         <span class="settings-toggle-slider"></span>
                                     </label>
                                 </div>
@@ -610,7 +619,7 @@
     </div>
 
     <!-- 桌面整理确认对话框 -->
-    <div id="desktopOrganizerConfirmDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="desktopOrganizerDialogTitle" aria-hidden="true" hidden>
+    <div id="desktopOrganizerConfirmDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="desktopOrganizerDialogTitle" aria-describedby="desktopOrganizerDialogMessage" aria-hidden="true" hidden>
         <div class="modal-dialog modal-dialog--small" tabindex="-1">
             <div class="modal-header">
                 <h3 class="modal-title"><i class="ri-layout-grid-line"></i> <span id="desktopOrganizerDialogTitle">确认操作</span></h3>

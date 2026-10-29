@@ -8,6 +8,7 @@ import { shortcutManager } from './settings/shortcuts.js';
 import { initToolModuleSettings } from './settings/tool-modules.js';
 import { initUpdateChecker } from './settings/update-checker.js';
 import { initProjectLink } from './settings/project-link.js';
+import { initAutostartSettings } from './settings/autostart.js';
 
 let initializationPromise = null;
 
@@ -28,6 +29,7 @@ export function initSettings() {
                 shortcutManager.init(),
                 initToolModuleSettings(),
                 initPasswordSettings(),
+                initAutostartSettings(),
                 initCleanupSettings(),
                 initDesktopOrganizerSettings()
             ]);

@@ -54,11 +54,20 @@ export function prepareSoftware(value) {
     });
 }
 
-export function filterSoftware(items, { query = '', scope = 'all', sort = 'name' } = {}, reports = new Map()) {
+export function filterSoftware(items, { query = '', scope = 'all', sort = 'name', publisher = '', status = 'all' } = {}, reports = new Map()) {
     const terms = string(query).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const reportFor = id => reports.peek ? reports.peek(id) : reports.get(id);
+    const matchesStatus = item => {
+        const report = reportFor(item.id);
+        return status === 'analyzable' ? item.canAnalyze : status === 'no-location' ? !item.canAnalyze
+            : status === 'unknown-size' ? item.estimatedBytes === null : status === 'measured' ? report?.complete === true
+                : status === 'partial' ? Boolean(report && !report.complete) : status === 'unmeasured' ? !report
+                    : status === 'large' ? item.estimatedBytes !== null && item.estimatedBytes >= 1024 ** 3 : true;
+    };
     const filtered = items.filter(item => (scope === 'all' || item.scope === scope)
+        && (!publisher || item.publisher === publisher) && matchesStatus(item)
         && terms.every(term => item.searchText.includes(term)));
-    const measured = id => { const report = reports.peek ? reports.peek(id) : reports.get(id); return report?.complete ? count(report.totalBytes) : null; };
+    const measured = id => { const report = reportFor(id); return report?.complete ? count(report.totalBytes) : null; };
     const size = item => sort === 'estimated' ? item.estimatedBytes : measured(item.id);
     filtered.sort((a, b) => {
         if (sort === 'estimated' || sort === 'measured') {
@@ -67,9 +76,26 @@ export function filterSoftware(items, { query = '', scope = 'all', sort = 'name'
             if (left !== null && right === null) return -1;
             if (left !== null && right !== null && left !== right) return right - left;
         }
+        if (sort === 'publisher') {
+            const difference = collator.compare(a.publisher, b.publisher);
+            if (difference) return difference;
+        }
+        if (sort === 'date') {
+            const left = registrationDate(a.installDate), right = registrationDate(b.installDate);
+            if (left !== right) return right.localeCompare(left);
+        }
         return collator.compare(a.name, b.name) || collator.compare(a.id, b.id);
     });
     return filtered;
+}
+
+/** Invalid or ambiguous installer dates must not sort as recent installations. */
+export function registrationDate(value) {
+    const match = /^(\d{4})(\d{2})(\d{2})$/.exec(string(value));
+    if (!match) return '';
+    const [, year, month, day] = match;
+    const date = new Date(`${year}-${month}-${day}T00:00:00Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === `${year}-${month}-${day}` ? `${year}-${month}-${day}` : '';
 }
 
 export function paginateSoftware(items, requestedPage = 1) {
@@ -88,9 +114,29 @@ export function prepareReport(report = {}) {
         files: count(report.files) ?? 0, directories: count(report.directories) ?? 0,
         skipped: count(report.skipped) ?? 0, elapsedMs: count(report.elapsedMs) ?? 0,
         complete: report.complete === true, cancelled: report.cancelled === true,
+        rootFilesBytes: count(report.rootFilesBytes),
+        fileTypesAvailable: report.fileTypesAvailable !== false && Array.isArray(report.fileTypes),
+        fileTypes: (Array.isArray(report.fileTypes) ? report.fileTypes : []).slice(0, 64)
+            .filter(item => item && typeof item.extension === 'string' && item.extension.length <= 64)
+            .map(item => ({ extension: item.extension, bytes: count(item.bytes) ?? 0, files: count(item.files) ?? 0 })),
         largestDirectories: largest(report.largestDirectories), largestFiles: largest(report.largestFiles),
         warnings: (Array.isArray(report.warnings) ? report.warnings : []).filter(item => typeof item === 'string').slice(0, 30)
     };
+}
+
+export function directoryBreakdown(report) {
+    let remaining = report.totalBytes;
+    const rootBytes = count(report.rootFilesBytes);
+    const rows = report.largestDirectories.slice(0, 6).map(item => {
+        const bytes = Math.min(remaining, item.bytes); remaining -= bytes;
+        return { label: item.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || item.path, path: item.path, bytes };
+    });
+    if (rootBytes !== null) {
+        const bytes = Math.min(remaining, rootBytes); remaining -= bytes;
+        if (bytes) rows.push({ label: '根目录直属文件', bytes });
+    }
+    if (remaining) rows.push({ label: rootBytes === null ? '其他已统计内容' : '其他直属目录', bytes: remaining });
+    return rows.filter(item => item.bytes > 0).sort((a, b) => b.bytes - a.bytes);
 }
 
 export function createReportCache(limit = REPORT_CACHE_LIMIT) {

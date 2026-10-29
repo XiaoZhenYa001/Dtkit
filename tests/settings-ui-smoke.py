@@ -58,6 +58,12 @@ with sync_playwright() as playwright:
                     if (command === 'get_storage_layout') return {
                         root: 'D:\\DtKit', downloads: 'D:\\DtKit\\Downloads', writable: true, warning: null
                     };
+                    if (command === 'get_autostart_status') return {
+                        available: true, enabled: false, registered: false, warning: null
+                    };
+                    if (command === 'set_autostart_enabled') return {
+                        available: true, enabled: args.enabled, registered: args.enabled, warning: null
+                    };
                     if (command === 'migrate_storage_root') return {
                         layout: { root: args.targetRoot, downloads: args.targetRoot + String.fromCharCode(92) + 'Downloads', writable: true, warning: null },
                         filesCopied: 12, bytesCopied: 2048, previousRoot: 'D:\\DtKit'
@@ -112,7 +118,7 @@ with sync_playwright() as playwright:
     assert page.locator("#settingsView .settings-section").count() == 6
     assert page.locator(".settings-side-nav__item").count() == 6
     assert page.locator("#configSection button:disabled").count() == 2
-    assert page.locator("#generalSection input:disabled").count() == 2
+    assert page.locator("#generalSection input:disabled").count() == 1
     assert page.locator("#minimizeModeOptions [data-minimize-mode]").count() == 3
     assert page.locator('input[name="minimizeMode"]:checked').input_value() == "efficient"
     page.locator('#cleanupStatus').filter(has_text='自动清理：未启用').wait_for()

@@ -1,9 +1,14 @@
+pub(crate) mod autostart;
 pub(crate) mod cleanup;
 pub(crate) mod clipboard_puzzle;
 pub(crate) mod context_menu;
 pub(crate) mod file_batch;
 pub(crate) mod jobs;
 pub(crate) mod launch;
+#[cfg(target_os = "windows")]
+pub(crate) mod long_capture_match;
+#[cfg(target_os = "windows")]
+pub(crate) mod long_capture_preview;
 pub(crate) mod palette;
 pub(crate) mod passwords;
 pub(crate) mod quick_host;

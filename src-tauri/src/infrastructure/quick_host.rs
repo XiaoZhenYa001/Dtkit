@@ -137,6 +137,10 @@ impl QuickHostManager {
             if matches!(event, tauri::WindowEvent::Resized(_)) {
                 if let Some(window) = app_handle.get_webview_window(&window_label) {
                     let minimized = window.is_minimized().unwrap_or(false);
+                    if app_handle.state::<super::screenshot::ScreenRegionCaptureManager>()
+                        .preserve_taskbar_window(&app_handle, &window_label, minimized) {
+                        return;
+                    }
                     if suspended.swap(minimized, Ordering::Relaxed) != minimized {
                         if minimized {
                             app_handle
@@ -236,16 +240,6 @@ impl QuickHostManager {
             }
         });
         Ok(())
-    }
-
-    // Screenshot tools may leave their windows hidden until the user clicks the
-    // tray. Keep the original editor available through that existing entry point.
-    pub(crate) fn retain_for_manual_restore(&self, label: &str) {
-        if label.starts_with(QUICK_HOST_LABEL_PREFIX) {
-            if let Ok(mut retained) = self.retained_labels.write() {
-                retained.insert(label.to_string());
-            }
-        }
     }
 
     pub(crate) fn restore_retained(&self, app: &AppHandle) {

@@ -1,6 +1,7 @@
 export const MAX_BATCH_FILES = 500;
 export const DEFAULT_RENAME_OPTIONS = Object.freeze({
     find: '', replace: '', caseMode: 'keep', numberPadding: 1, numberStep: 1,
+    trimWhitespace: false, removeStart: 0, removeEnd: 0, extensionCase: 'keep',
 });
 
 export function basename(path) {
@@ -19,6 +20,17 @@ export function extension(path) {
     return nameParts(path).extension;
 }
 
+function parentFolder(path) {
+    const normalized = String(path ?? '').replace(/\\/g, '/')
+        .replace(/^\/\/\?\/UNC\//i, '//').replace(/^\/\/\?\//, '');
+    const separator = normalized.lastIndexOf('/');
+    if (separator < 0) return '';
+    const parent = normalized.slice(0, separator).replace(/\/+$/, '');
+    if (!parent || /^[a-z]:$/i.test(parent)) return '';
+    if (parent.startsWith('//') && parent.slice(2).split('/').filter(Boolean).length <= 2) return '';
+    return parent.slice(parent.lastIndexOf('/') + 1);
+}
+
 export function parseExtensions(value) {
     const values = Array.isArray(value) ? value : String(value ?? '').split(/[,，;；\s]+/);
     return [...new Set(values.map(item => String(item).trim().replace(/^\.+/, '').toLowerCase()).filter(Boolean))];
@@ -32,8 +44,11 @@ export function normalizeRenameOptions(input = {}) {
         throw new Error('查找和替换内容不能超过 160 个字符');
     }
     if (!['keep', 'lower', 'upper'].includes(options.caseMode)) throw new Error('文件名大小写选项无效');
+    if (!['keep', 'lower', 'upper'].includes(options.extensionCase)) throw new Error('扩展名大小写选项无效');
+    if (typeof options.trimWhitespace !== 'boolean') throw new Error('清理首尾空白选项无效');
     for (const [key, minimum, maximum, label] of [
         ['numberPadding', 1, 8, '序号位数'], ['numberStep', 1, 10000, '序号步长'],
+        ['removeStart', 0, 160, '删除开头字符数'], ['removeEnd', 0, 160, '删除结尾字符数'],
     ]) {
         options[key] = Number(options[key]);
         if (!Number.isInteger(options[key]) || options[key] < minimum || options[key] > maximum) {
@@ -65,17 +80,24 @@ export function renderRename(path, index, pattern = '{name}_{n}{dotext}', input 
     }
     if (!Number.isInteger(index) || index < 0 || index > 0xffffffff) throw new Error('文件序号超出有效范围');
     const parts = nameParts(path);
-    let stem = options.find ? parts.stem.split(options.find).join(options.replace) : parts.stem;
+    let stem = options.trimWhitespace ? parts.stem.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '') : parts.stem;
+    const characters = Array.from(stem);
+    stem = characters.slice(options.removeStart, Math.max(0, characters.length - options.removeEnd)).join('');
+    if (options.find) stem = stem.split(options.find).join(options.replace);
     if (options.caseMode === 'lower') stem = stem.toLowerCase();
     if (options.caseMode === 'upper') stem = stem.toUpperCase();
+    let ext = parts.extension;
+    if (options.extensionCase === 'lower') ext = ext.toLowerCase();
+    if (options.extensionCase === 'upper') ext = ext.toUpperCase();
     const tokens = {
         name: stem,
-        ext: parts.extension,
-        dotext: parts.extension ? `.${parts.extension}` : '',
+        ext,
+        dotext: ext ? `.${ext}` : '',
         n: String(index).padStart(options.numberPadding, '0'),
+        folder: parentFolder(path),
     };
     // Expand only tokens written in the template, never tokens inside a source name.
-    const name = pattern.replace(/\{(name|ext|dotext|n)\}/g, (_, token) => tokens[token]);
+    const name = pattern.replace(/\{(name|ext|dotext|n|folder)\}/g, (_, token) => tokens[token]);
     validateFilename(name);
     return name;
 }
@@ -128,6 +150,25 @@ export function formatBytes(value) {
     const index = Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1));
     const amount = bytes / 1024 ** index;
     return `${index === 0 ? Math.round(amount) : Number(amount.toFixed(amount >= 100 ? 0 : 1))} ${units[index]}`;
+}
+
+export function csvCell(value) {
+    let cell = String(value ?? '');
+    if (/^(?:[\p{White_Space}\uFEFF]*[=+@-]|[\t\r\n])/u.test(cell)) cell = "'" + cell;
+    return '"' + cell.replaceAll('"', '""') + '"';
+}
+
+export function batchCsv(items, { operation = '', taskStatus = null, processed = 0, error = '' } = {}) {
+    const completed = Math.max(0, Math.floor(Number(processed) || 0));
+    const state = (item, index) => {
+        if (item.excluded) return '排除';
+        if (item.conflict) return `冲突：${item.conflict}`;
+        if (taskStatus) return index < completed ? '已完成' : taskStatus === 'running' ? '等待' : '未处理';
+        return item.draft ? '待检查' : '已检查';
+    };
+    const rows = [['原文件', '目标路径', '操作', '大小（字节）', '检查或执行状态', '任务提示'],
+        ...items.map((item, index) => [item.source, item.target, operation, item.size, state(item, index), error])];
+    return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
 }
 
 export function requestFingerprint(request) {

@@ -77,11 +77,20 @@ pub(crate) struct SpaceItem {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SpaceFileType {
+    extension: String,
+    bytes: u64,
+    files: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SpaceReport {
     request_id: String,
     software_id: Option<String>,
     root: String,
     total_bytes: u64,
+    root_files_bytes: u64,
     files: u64,
     directories: u64,
     skipped: u64,
@@ -90,6 +99,7 @@ pub(crate) struct SpaceReport {
     elapsed_ms: u64,
     largest_directories: Vec<SpaceItem>,
     largest_files: Vec<SpaceItem>,
+    file_types: Vec<SpaceFileType>,
     warnings: Vec<String>,
 }
 

@@ -59,6 +59,23 @@ fn ownership_snapshot(items: Vec<Software>, warnings: Vec<String>) -> SoftwareSn
     }
 }
 
+fn assert_file_type_totals(report: &SpaceReport) {
+    assert!(report.file_types.len() <= 64);
+    assert_eq!(
+        report.file_types.iter().map(|item| item.bytes).sum::<u64>(),
+        report.total_bytes
+    );
+    assert_eq!(
+        report.file_types.iter().map(|item| item.files).sum::<u64>(),
+        report.files
+    );
+    assert!(report.root_files_bytes <= report.total_bytes);
+    assert!(report.file_types.windows(2).all(|pair| {
+        pair[0].bytes > pair[1].bytes
+            || (pair[0].bytes == pair[1].bytes && pair[0].extension < pair[1].extension)
+    }));
+}
+
 #[test]
 fn ownership_accepts_complete_catalog_with_only_the_shared_information_note() {
     for warnings in [Vec::new(), vec![REGISTRATION_SIZE_NOTE.to_string()]] {
@@ -141,6 +158,69 @@ fn totals_and_direct_children_do_not_double_count_nested_directories() {
         .iter()
         .all(|item| Path::new(&item.path).parent() == Some(fixture.0.as_path())));
     assert_eq!(report.largest_files[0].bytes, 17);
+    assert_eq!(report.root_files_bytes, 7);
+    assert_file_type_totals(&report);
+}
+
+#[test]
+fn file_type_totals_include_case_variants_extensionless_and_empty_files() {
+    let fixture = Fixture::new();
+    fixture.file("program.DLL", 11);
+    fixture.file("nested/library.dll", 13);
+    fixture.file("README", 7);
+    fixture.file("nested/LICENSE", 17);
+    fixture.file("empty.BIN", 0);
+    let report = fixture.scan(scanner::Budget::default());
+    assert!(report.complete);
+    assert_eq!(
+        (report.total_bytes, report.files, report.root_files_bytes),
+        (48, 5, 18)
+    );
+    assert_eq!(
+        report
+            .file_types
+            .iter()
+            .map(|item| (item.extension.as_str(), item.bytes, item.files))
+            .collect::<Vec<_>>(),
+        vec![("", 24, 2), (".dll", 24, 2), (".bin", 0, 1)]
+    );
+    assert_file_type_totals(&report);
+}
+
+#[test]
+fn file_type_buckets_remain_bounded_and_conserve_overflow_and_long_extensions() {
+    let fixture = Fixture::new();
+    for index in 0..64 {
+        fixture.file(&format!("file.t{index:03}"), index + 1);
+    }
+    let exact = fixture.scan(scanner::Budget::default());
+    assert_eq!(exact.file_types.len(), 64);
+    assert!(!exact.file_types.iter().any(|item| item.extension == "*"));
+    assert_file_type_totals(&exact);
+
+    for index in 64..80 {
+        fixture.file(&format!("file.t{index:03}"), index + 1);
+    }
+    fixture.file(&format!("long.{}", "X".repeat(80)), 9);
+    fixture.file("another.T079", 0);
+    let report = fixture.scan(scanner::Budget::default());
+    assert!(report.complete);
+    assert_eq!(
+        (report.total_bytes, report.files, report.root_files_bytes),
+        (3249, 82, 3249)
+    );
+    assert_eq!(report.file_types.len(), 64);
+    let other = report
+        .file_types
+        .iter()
+        .find(|item| item.extension == "*")
+        .unwrap();
+    assert_eq!((other.bytes, other.files), (1233, 19));
+    assert!(report
+        .file_types
+        .iter()
+        .all(|item| item.extension.len() <= 64));
+    assert_file_type_totals(&report);
 }
 
 #[test]
@@ -149,6 +229,7 @@ fn largest_lists_are_bounded_and_sorted() {
     for index in 1..=35 {
         fixture.file(&format!("dir{index}/file.bin"), index);
     }
+    fixture.file("root.bin", 7);
     let report = fixture.scan(scanner::Budget::default());
     assert_eq!(report.largest_files.len(), 20);
     assert_eq!(report.largest_directories.len(), 20);
@@ -158,6 +239,21 @@ fn largest_lists_are_bounded_and_sorted() {
         .largest_files
         .windows(2)
         .all(|pair| pair[0].bytes >= pair[1].bytes));
+    assert_eq!(report.root_files_bytes, 7);
+    let listed_directory_bytes = report
+        .largest_directories
+        .iter()
+        .map(|item| item.bytes)
+        .sum::<u64>();
+    assert_eq!(
+        report.total_bytes - report.root_files_bytes - listed_directory_bytes,
+        120
+    );
+    assert_eq!(
+        (report.file_types[0].bytes, report.file_types[0].files),
+        (637, 36)
+    );
+    assert_file_type_totals(&report);
 }
 
 #[test]
@@ -167,6 +263,8 @@ fn hardlinks_are_logical_bytes_and_not_claimed_as_physical_usage() {
     fs::hard_link(fixture.0.join("original"), fixture.0.join("second-name")).unwrap();
     let report = fixture.scan(scanner::Budget::default());
     assert_eq!((report.total_bytes, report.files), (20, 2));
+    assert_eq!(report.root_files_bytes, 20);
+    assert_file_type_totals(&report);
     assert!(report
         .warnings
         .iter()
@@ -189,6 +287,8 @@ fn cancellation_reports_incomplete_and_releases_no_scan_slot_early() {
     assert!(report.cancelled);
     assert!(!report.complete);
     assert_eq!(report.files, 0);
+    assert_eq!(report.root_files_bytes, 0);
+    assert_file_type_totals(&report);
     let manager = SoftwareAnalysisManager::default();
     let (lease, cancelled) = manager.reserve_scan("main", "cancel").unwrap();
     assert!(!manager.cancel_request("quick-host-1", "cancel").unwrap());
@@ -218,6 +318,8 @@ fn entry_and_depth_budgets_report_partial_results() {
         .warnings
         .iter()
         .any(|warning| warning.contains("预算")));
+    assert_eq!(report.root_files_bytes, report.total_bytes);
+    assert_file_type_totals(&report);
     let nested = Fixture::new();
     nested.file("a/b/c/file", 50);
     let report = nested.scan(scanner::Budget {
@@ -227,12 +329,16 @@ fn entry_and_depth_budgets_report_partial_results() {
     assert!(!report.complete);
     assert_eq!(report.files, 0);
     assert!(report.skipped > 0);
+    assert_eq!(report.root_files_bytes, 0);
+    assert_file_type_totals(&report);
     let report = fixture.scan(scanner::Budget {
         max_duration: std::time::Duration::ZERO,
         ..scanner::Budget::default()
     });
     assert!(!report.complete);
     assert_eq!(report.files, 0);
+    assert_eq!(report.root_files_bytes, 0);
+    assert_file_type_totals(&report);
 }
 
 #[test]
@@ -264,6 +370,8 @@ fn linked_directories_are_skipped_and_linked_roots_rejected() {
         (report.total_bytes, report.files, report.skipped),
         (11, 1, 1)
     );
+    assert_eq!(report.root_files_bytes, 11);
+    assert_file_type_totals(&report);
     assert!(paths::validate_root(link.to_str().unwrap()).is_err());
 }
 

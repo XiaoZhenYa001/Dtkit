@@ -23,7 +23,7 @@ mod system_actions;
 
 use alarm_scheduler::{
     ack_missed_alarm_triggers, create_quick_countdown, sync_alarm_tasks,
-    take_missed_alarm_triggers, AlarmScheduler,
+    take_missed_alarm_triggers, stop_background_alarm_audio, AlarmScheduler,
 };
 use desktop::commands::*;
 use desktop::hotzone::{
@@ -40,6 +40,7 @@ use infrastructure::cleanup::{
     get_cleanup_status, restore_latest_cleanup, run_storage_cleanup, schedule_automatic_cleanup,
     set_automatic_cleanup_enabled, set_cleanup_retention_days, CleanupManager,
 };
+use infrastructure::autostart::{get_autostart_status, set_autostart_enabled};
 use infrastructure::clipboard_puzzle::{
     puzzle_asset, puzzle_close, puzzle_collect, puzzle_copy, puzzle_copy_text, puzzle_edit,
     puzzle_get, puzzle_import_content, puzzle_import_image, puzzle_open, puzzle_open_url,
@@ -50,7 +51,8 @@ use infrastructure::context_menu::{
     scan_context_menu_items, set_context_menu_enabled, ContextMenuManager,
 };
 use infrastructure::file_batch::{
-    get_file_batch_status, preview_file_batch, restore_file_batch, start_file_batch,
+    collect_file_batch_sources, get_file_batch_status, preview_file_batch, restore_file_batch,
+    start_file_batch,
 };
 use infrastructure::jobs::{cancel_job, get_jobs, JobManager};
 use infrastructure::launch::{create_tool_launcher, LaunchRuntime, LaunchTarget};
@@ -303,9 +305,11 @@ fn position_desktop_organizer_at_top_right(window: &WebviewWindow) -> Result<(),
 }
 
 fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    let alarm_scheduler = app.state::<AlarmScheduler>();
+    let _audio_transition = alarm_scheduler.begin_main_restore();
     app.state::<QuickHostManager>().restore_retained(app);
     if app.state::<LaunchRuntime>().enter_main() {
-        start_main_services(app);
+        start_main_services(app, false);
     }
     APP_SUSPENDED.store(false, Ordering::Relaxed);
     DEEP_SLEEP_CLOSING.store(false, Ordering::Relaxed);
@@ -329,7 +333,7 @@ fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .map_err(|error| format!("恢复 DtKit 主窗口失败: {error}"))
 }
 
-fn start_main_services(app: &AppHandle) {
+fn start_main_services(app: &AppHandle, windowless: bool) {
     if let Err(error) = app.state::<CleanupManager>().restore(app) {
         eprintln!("[CleanupManager] 忽略无效的已保存策略: {error}");
     }
@@ -338,14 +342,35 @@ fn start_main_services(app: &AppHandle) {
     }
     schedule_automatic_cleanup(app);
     schedule_transfer_expiry_check(app);
+    let alarm_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = alarm_app
+            .state::<AlarmScheduler>()
+            .restore_saved_tasks(&alarm_app)
+            .await
+        {
+            eprintln!("[AlarmScheduler] 忽略无效的已保存任务: {error}");
+        }
+    });
     // A standalone tool does not start unrelated desktop services. Resume the
     // saved desktop mode only once the full app is actually requested.
-    app.state::<DesktopSpaceManager>().resume(app);
+    if windowless {
+        app.state::<DesktopSpaceManager>().resume_background(app);
+    } else {
+        app.state::<DesktopSpaceManager>().resume(app);
+    }
 }
 
 fn launch_target(app: &AppHandle, target: LaunchTarget) -> Result<(), String> {
     match target {
         LaunchTarget::Main => ensure_main_window(app).map(|_| ()),
+        LaunchTarget::Autostart => {
+            if app.state::<LaunchRuntime>().enter_background() {
+                APP_SUSPENDED.store(true, Ordering::Relaxed);
+                start_main_services(app, true);
+            }
+            Ok(())
+        }
         LaunchTarget::Tool(tool_id) => {
             if !app.state::<ToolModuleManager>().is_enabled(&tool_id) {
                 return Err("该工具模块已停用".to_string());
@@ -774,47 +799,54 @@ fn start_hotzone_monitor(app: AppHandle) -> Result<(), String> {
     let app_handle = app.clone();
     monitor.start(move |show| {
         if show {
-            if !app_handle.state::<DesktopSpaceManager>().classic_allowed() {
-                return;
-            }
-            if let Ok(window) = ensure_desktop_organizer_window(&app_handle) {
-                if !desktop::classic_motion::is_transitioning(&window) {
-                    if let Ok(monitor) = organizer_monitor(&window) {
-                        let monitor_pos = monitor.position();
-                        let scale_factor = monitor.scale_factor();
-                        let margin_top = (10.0 * scale_factor) as i32;
-                        let (stored_x, _stored_width) = get_hotzone_pos();
-                        if stored_x >= 0 {
-                            let panel_y = monitor_pos.y + margin_top;
-                            let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
+            // The monitor runs on its own thread. Create and operate the lazy
+            // organizer WebView on Tauri's UI thread only after a real trigger.
+            let ui_app = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                if !is_hotzone_running()
+                    || !ui_app.state::<DesktopSpaceManager>().classic_allowed()
+                {
+                    return;
+                }
+                if let Ok(window) = ensure_desktop_organizer_window(&ui_app) {
+                    if !desktop::classic_motion::is_transitioning(&window) {
+                        if let Ok(monitor) = organizer_monitor(&window) {
+                            let monitor_pos = monitor.position();
+                            let scale_factor = monitor.scale_factor();
+                            let margin_top = (10.0 * scale_factor) as i32;
+                            let (stored_x, _stored_width) = get_hotzone_pos();
+                            if stored_x >= 0 {
+                                let panel_y = monitor_pos.y + margin_top;
+                                let _ = window.set_position(PhysicalPosition::new(stored_x, panel_y));
+                            }
                         }
+                        let _ = fit_desktop_organizer_to_screen(&window);
                     }
-                    let _ = fit_desktop_organizer_to_screen(&window);
-                }
-                if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
-                    update_hotzone_pos(position.x, size.width as i32);
-                    update_panel_bounds(
-                        position.x,
-                        position.y,
-                        size.width as i32,
-                        size.height as i32,
-                    );
-                }
-                let visibility_app = app_handle.clone();
-                let _ = app_handle.run_on_main_thread(move || {
-                    let _ = visibility_app
+                    if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
+                        update_hotzone_pos(position.x, size.width as i32);
+                        update_panel_bounds(
+                            position.x,
+                            position.y,
+                            size.width as i32,
+                            size.height as i32,
+                        );
+                    }
+                    let _ = ui_app
                         .state::<DesktopSpaceManager>()
                         .show_classic_if_allowed(&window);
-                });
-            }
-        } else if let Some(window) = app_handle.get_webview_window("desktop-organizer") {
-            if APP_SUSPENDED.load(Ordering::Relaxed) {
-                let _ = window.close();
-            } else {
-                let _ = app_handle.run_on_main_thread(move || {
-                    let _ = desktop::classic_motion::set_visible(&window, false);
-                });
-            }
+                }
+            });
+        } else {
+            let ui_app = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                if let Some(window) = ui_app.get_webview_window("desktop-organizer") {
+                    if APP_SUSPENDED.load(Ordering::Relaxed) {
+                        let _ = window.close();
+                    } else {
+                        let _ = desktop::classic_motion::set_visible(&window, false);
+                    }
+                }
+            });
         }
     });
 
@@ -1030,6 +1062,11 @@ pub fn run() {
             }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
                 let minimized = window.is_minimized().unwrap_or(false);
+                // A screenshot must keep this WebView alive and its taskbar
+                // entry available even when deep-sleep minimize is enabled.
+                if window.state::<ScreenRegionCaptureManager>().preserve_taskbar_window(window.app_handle(), "main", minimized) {
+                    return;
+                }
                 if minimized {
                     window
                         .state::<SoftwareAnalysisManager>()
@@ -1118,6 +1155,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ack_missed_alarm_triggers,
+            get_autostart_status,
+            set_autostart_enabled,
             create_tool_launcher,
             main_sleep_ready,
             sleep_main_window,
@@ -1157,6 +1196,7 @@ pub fn run() {
             search_local_files,
             open_local_search_result,
             take_missed_alarm_triggers,
+            stop_background_alarm_audio,
             set_minimize_mode,
             get_storage_layout,
             get_storage_usage,
@@ -1166,6 +1206,7 @@ pub fn run() {
             set_cleanup_retention_days,
             run_storage_cleanup,
             restore_latest_cleanup,
+            collect_file_batch_sources,
             preview_file_batch,
             start_file_batch,
             get_file_batch_status,
@@ -1319,7 +1360,9 @@ pub fn run() {
                     tauri::async_runtime::spawn(infrastructure::launch::finish_tool_only_if_idle(
                         app,
                     ));
-                } else if APP_SUSPENDED.load(Ordering::Relaxed) {
+                } else {
+                    // A full app launch is tray resident even when no WebView
+                    // has ever been created, or the main WebView was destroyed.
                     api.prevent_exit();
                 }
             }

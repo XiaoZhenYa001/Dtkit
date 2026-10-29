@@ -74,11 +74,11 @@ function handleViewLoadError(viewName, requestId, error) {
 
 function showSettingsView(requestId) {
     loadViewAssets('settings')
-        .then(settingsView => settingsView.initSettings())
-        .then(() => {
+        .then(settingsView => {
             if (requestId !== viewRenderRequest) return;
             DOM.settingsView?.classList.add('view--active');
             restoreCurrentScrollPosition(requestId);
+            return settingsView.initSettings();
         })
         .catch(error => handleViewLoadError('设置', requestId, error));
 }

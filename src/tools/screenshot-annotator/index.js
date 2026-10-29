@@ -451,7 +451,8 @@ async function capture(view, options = {}) {
         const pixels = new Uint8Array(bytes.length);
         for (let index = 0; index < bytes.length; index++) pixels[index] = bytes.charCodeAt(index);
         if (!alive(view) || generation !== view.captureGeneration) return;
-        await loadImage(view, new File([pixels], options.longDirection ? '长截图.png' : '截图.png', { type: 'image/png' }), { fromCapture: true });
+        const loaded = await loadImage(view, new File([pixels], options.longDirection ? '长截图.png' : '截图.png', { type: 'image/png' }), { fromCapture: true });
+        if (loaded && typeof selected.warning === 'string' && selected.warning) status(view, selected.warning, 'warning');
     } catch (error) { if (alive(view) && view.captureTaskId === requestId && generation === view.captureGeneration) status(view, `截图失败：${String(error.message || error)}`, 'error'); }
     finally {
         if (view.pendingCapture?.requestId === requestId) { view.pendingCapture.resolve(null); view.pendingCapture = null; }

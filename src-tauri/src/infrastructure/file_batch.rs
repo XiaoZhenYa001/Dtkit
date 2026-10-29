@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_BATCH_FILES: usize = 500;
+const MAX_BATCH_SCAN_ENTRIES: usize = 20_000;
+const MAX_BATCH_SCAN_DEPTH: usize = 32;
+const MAX_BATCH_SCAN_DURATION: Duration = Duration::from_secs(3);
 const MAX_CACHED_BATCH_EVENTS: usize = 100;
 static BATCH_EVENTS: OnceLock<Mutex<VecDeque<FileBatchEvent>>> = OnceLock::new();
 
@@ -70,9 +73,13 @@ enum RenameCaseMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct RenameOptions {
+    trim_whitespace: bool,
+    remove_start: u16,
+    remove_end: u16,
     find: String,
     replace: String,
     case_mode: RenameCaseMode,
+    extension_case: RenameCaseMode,
     number_padding: u8,
     number_step: u32,
 }
@@ -80,9 +87,13 @@ struct RenameOptions {
 impl Default for RenameOptions {
     fn default() -> Self {
         Self {
+            trim_whitespace: false,
+            remove_start: 0,
+            remove_end: 0,
             find: String::new(),
             replace: String::new(),
             case_mode: RenameCaseMode::Keep,
+            extension_case: RenameCaseMode::Keep,
             number_padding: 1,
             number_step: 1,
         }
@@ -91,6 +102,9 @@ impl Default for RenameOptions {
 
 impl RenameOptions {
     fn validate(&self) -> Result<(), String> {
+        if self.remove_start > 160 || self.remove_end > 160 {
+            return Err("首尾删除字符数须为 0–160 之间的整数".into());
+        }
         if self.find.chars().count() > 160 || self.replace.chars().count() > 160 {
             return Err("查找和替换内容不能超过 160 个字符".into());
         }
@@ -218,6 +232,204 @@ pub(crate) struct FileBatchRestoreResult {
     skipped: usize,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FileBatchSources {
+    sources: Vec<String>,
+    skipped: u64,
+    truncated: bool,
+    warnings: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceScanLimits {
+    files: usize,
+    entries: usize,
+    depth: usize,
+    duration: Duration,
+}
+
+impl Default for SourceScanLimits {
+    fn default() -> Self {
+        Self {
+            files: MAX_BATCH_FILES,
+            entries: MAX_BATCH_SCAN_ENTRIES,
+            depth: MAX_BATCH_SCAN_DEPTH,
+            duration: MAX_BATCH_SCAN_DURATION,
+        }
+    }
+}
+
+impl FileBatchSources {
+    fn warn(&mut self, warning: String) {
+        if self.warnings.len() < 20 && !self.warnings.contains(&warning) {
+            self.warnings.push(warning);
+        }
+    }
+
+    fn truncate(&mut self, warning: String) {
+        self.truncated = true;
+        if self.warnings.len() == 20 && !self.warnings.contains(&warning) {
+            self.warnings.pop();
+        }
+        self.warn(warning);
+    }
+}
+
+fn collect_sources_from_directory(
+    directory: &str,
+    recursive: bool,
+    limits: SourceScanLimits,
+) -> Result<FileBatchSources, String> {
+    let metadata = fs::symlink_metadata(directory).map_err(|_| "导入文件夹不存在".to_string())?;
+    if !metadata.is_dir() || is_link_like(&metadata) {
+        return Err("导入路径必须是普通文件夹，不能是符号链接或目录联接".into());
+    }
+    let root =
+        fs::canonicalize(directory).map_err(|error| format!("读取导入文件夹失败: {error}"))?;
+    let mut result = FileBatchSources {
+        sources: Vec::new(),
+        skipped: 0,
+        truncated: false,
+        warnings: Vec::new(),
+    };
+    let started = Instant::now();
+    let mut scanned = 0usize;
+    let mut pending = VecDeque::from([(root, 0usize)]);
+    let mut seen = HashSet::new();
+    'directories: while let Some((folder, depth)) = pending.pop_front() {
+        if started.elapsed() >= limits.duration {
+            result.truncate(
+                "扫描达到时间上限，已保留当前导入结果，请缩小文件夹范围后继续导入".into(),
+            );
+            break;
+        }
+        match fs::symlink_metadata(&folder) {
+            Ok(metadata) if metadata.is_dir() && !is_link_like(&metadata) => (),
+            _ => {
+                result.skipped += 1;
+                result.warn(format!(
+                    "已跳过无法访问或变为链接的文件夹: {}",
+                    folder.display()
+                ));
+                continue;
+            }
+        };
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) => {
+                if depth == 0 {
+                    return Err(format!("读取导入文件夹失败: {error}"));
+                }
+                result.skipped += 1;
+                result.warn(format!("无法读取文件夹 {}: {error}", folder.display()));
+                continue;
+            }
+        };
+        // Sort only this bounded directory snapshot, never collect an entire tree.
+        let mut paths = Vec::new();
+        let mut budget_exhausted = false;
+        for entry in entries {
+            if scanned >= limits.entries {
+                result.truncate(format!(
+                    "扫描达到 {} 个目录条目的上限，请缩小文件夹范围后继续导入",
+                    limits.entries
+                ));
+                budget_exhausted = true;
+                break;
+            }
+            if started.elapsed() >= limits.duration {
+                result.truncate(
+                    "扫描达到时间上限，已保留当前导入结果，请缩小文件夹范围后继续导入".into(),
+                );
+                budget_exhausted = true;
+                break;
+            }
+            scanned += 1;
+            match entry {
+                Ok(entry) => paths.push(entry.path()),
+                Err(error) => {
+                    result.skipped += 1;
+                    result.warn(format!("无法读取部分目录条目: {error}"));
+                }
+            }
+        }
+        paths.sort_by_cached_key(|path| (path_key(path), path.to_string_lossy().into_owned()));
+        for path in paths {
+            if started.elapsed() >= limits.duration {
+                result.truncate(
+                    "扫描达到时间上限，已保留当前导入结果，请缩小文件夹范围后继续导入".into(),
+                );
+                break 'directories;
+            }
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    result.skipped += 1;
+                    result.warn(format!("无法读取文件 {}: {error}", path.display()));
+                    continue;
+                }
+            };
+            if is_link_like(&metadata) {
+                result.skipped += 1;
+            } else if metadata.is_file() {
+                if result.sources.len() >= limits.files {
+                    result.truncate(format!(
+                        "一次最多导入 {} 个文件，请缩小文件夹范围后继续导入",
+                        limits.files
+                    ));
+                    break 'directories;
+                }
+                match fs::canonicalize(&path) {
+                    Ok(source) if seen.insert(path_key(&source)) => {
+                        result.sources.push(source.to_string_lossy().into_owned());
+                    }
+                    Ok(_) => result.skipped += 1,
+                    Err(error) => {
+                        result.skipped += 1;
+                        result.warn(format!("无法读取文件 {}: {error}", path.display()));
+                    }
+                }
+            } else if metadata.is_dir() && recursive {
+                if depth >= limits.depth {
+                    result.skipped += 1;
+                    result.truncate(format!(
+                        "已跳过超过 {} 层的子文件夹，请单独导入这些文件夹",
+                        limits.depth
+                    ));
+                } else {
+                    pending.push_back((path, depth + 1));
+                }
+            } else {
+                result.skipped += 1;
+            }
+        }
+        if budget_exhausted {
+            break;
+        }
+    }
+    result
+        .sources
+        .sort_by_cached_key(|source| (path_key(Path::new(source)), source.clone()));
+    Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn collect_file_batch_sources(
+    directory: String,
+    recursive: Option<bool>,
+) -> Result<FileBatchSources, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        collect_sources_from_directory(
+            &directory,
+            recursive.unwrap_or(false),
+            SourceScanLimits::default(),
+        )
+    })
+    .await
+    .map_err(|error| format!("导入文件夹失败: {error}"))?
+}
+
 fn normalize_extensions(values: &[String]) -> Result<HashSet<String>, String> {
     if values.len() > 20 {
         return Err("扩展名筛选条件过多".to_string());
@@ -254,8 +466,19 @@ fn render_name(
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let stem = if options.trim_whitespace {
+        stem.trim()
+    } else {
+        stem
+    };
+    let characters: Vec<char> = stem.chars().collect();
+    let start = usize::from(options.remove_start).min(characters.len());
+    let end = characters
+        .len()
+        .saturating_sub(usize::from(options.remove_end));
+    let stem: String = characters[start..end.max(start)].iter().collect();
     let mut stem = if options.find.is_empty() {
-        stem.to_string()
+        stem
     } else {
         stem.replace(&options.find, &options.replace)
     };
@@ -268,6 +491,16 @@ fn render_name(
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let extension = match options.extension_case {
+        RenameCaseMode::Keep => extension.to_string(),
+        RenameCaseMode::Lower => extension.to_lowercase(),
+        RenameCaseMode::Upper => extension.to_uppercase(),
+    };
+    let folder = source
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     let dot_extension = if extension.is_empty() {
         String::new()
     } else {
@@ -276,9 +509,10 @@ fn render_name(
     let number = format!("{:0width$}", index, width = options.number_padding as usize);
     let replacements = [
         ("{name}", stem.as_str()),
-        ("{ext}", extension),
+        ("{ext}", extension.as_str()),
         ("{dotext}", dot_extension.as_str()),
         ("{n}", number.as_str()),
+        ("{folder}", folder),
     ];
     let mut remaining = pattern;
     let mut name = String::with_capacity(pattern.len() + stem.len());
@@ -1009,6 +1243,243 @@ mod tests {
     }
 
     #[test]
+    fn folder_import_is_read_only_sorted_and_recursion_is_explicit() {
+        let root = temp_root();
+        fs::write(root.join("b.TXT"), b"second").unwrap();
+        fs::write(root.join("a.txt"), b"first").unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("nested/child.txt"), b"child").unwrap();
+        let directory = root.to_string_lossy();
+        let flat =
+            collect_sources_from_directory(&directory, false, SourceScanLimits::default()).unwrap();
+        assert_eq!(flat.sources.len(), 2);
+        assert_eq!(flat.skipped, 1);
+        assert!(!flat.truncated);
+        assert!(flat.warnings.is_empty());
+        assert_eq!(Path::new(&flat.sources[0]).file_name().unwrap(), "a.txt");
+        assert_eq!(Path::new(&flat.sources[1]).file_name().unwrap(), "b.TXT");
+        let recursive =
+            collect_sources_from_directory(&directory, true, SourceScanLimits::default()).unwrap();
+        assert_eq!(recursive.sources.len(), 3);
+        assert_eq!(recursive.skipped, 0);
+        assert!(!recursive.truncated);
+        assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"first");
+        assert_eq!(fs::read(root.join("nested/child.txt")).unwrap(), b"child");
+        assert!(collect_sources_from_directory(
+            &root.join("a.txt").to_string_lossy(),
+            false,
+            SourceScanLimits::default()
+        )
+        .is_err());
+        assert!(collect_sources_from_directory(
+            &root.join("missing").to_string_lossy(),
+            false,
+            SourceScanLimits::default()
+        )
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_import_reports_file_entry_time_and_depth_limits() {
+        let root = temp_root();
+        for index in 0..=MAX_BATCH_FILES {
+            fs::write(root.join(format!("file-{index:04}.txt")), b"fixture").unwrap();
+        }
+        let directory = root.to_string_lossy();
+        let capped =
+            collect_sources_from_directory(&directory, true, SourceScanLimits::default()).unwrap();
+        assert_eq!(capped.sources.len(), MAX_BATCH_FILES);
+        assert!(capped.truncated && !capped.warnings.is_empty());
+        assert_eq!(
+            Path::new(&capped.sources[0]).file_name().unwrap(),
+            "file-0000.txt"
+        );
+        assert_eq!(
+            Path::new(capped.sources.last().unwrap())
+                .file_name()
+                .unwrap(),
+            "file-0499.txt"
+        );
+        let entries = collect_sources_from_directory(
+            &directory,
+            true,
+            SourceScanLimits {
+                entries: 2,
+                ..SourceScanLimits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(entries.sources.len(), 2);
+        assert!(
+            entries.truncated
+                && entries
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("目录条目"))
+        );
+        let timed = collect_sources_from_directory(
+            &directory,
+            true,
+            SourceScanLimits {
+                duration: Duration::ZERO,
+                ..SourceScanLimits::default()
+            },
+        )
+        .unwrap();
+        assert!(timed.sources.is_empty());
+        assert!(
+            timed.truncated
+                && timed
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("时间"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        fs::create_dir_all(root.join("first/second")).unwrap();
+        fs::write(root.join("first/direct.txt"), b"direct").unwrap();
+        fs::write(root.join("first/second/deep.txt"), b"deep").unwrap();
+        let depth = collect_sources_from_directory(
+            &directory,
+            true,
+            SourceScanLimits {
+                depth: 1,
+                ..SourceScanLimits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(depth.sources.len(), 1);
+        assert_eq!(depth.skipped, 1);
+        assert!(depth.truncated && depth.warnings.iter().any(|warning| warning.contains("层")));
+        assert_eq!(
+            fs::read(root.join("first/second/deep.txt")).unwrap(),
+            b"deep"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_import_rejects_link_roots_and_skips_link_entries() {
+        let fixture = temp_root();
+        let root = fixture.join("input");
+        let outside = fixture.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(root.join("owned.txt"), b"owned").unwrap();
+        fs::write(outside.join("other.txt"), b"outside").unwrap();
+        let linked_folder = root.join("linked-folder");
+        let linked_file = root.join("linked-file.txt");
+        #[cfg(windows)]
+        let links = std::os::windows::fs::symlink_dir(&outside, &linked_folder).and_then(|_| {
+            std::os::windows::fs::symlink_file(outside.join("other.txt"), &linked_file)
+        });
+        #[cfg(not(windows))]
+        let links = std::os::unix::fs::symlink(&outside, &linked_folder)
+            .and_then(|_| std::os::unix::fs::symlink(outside.join("other.txt"), &linked_file));
+        if let Err(error) = links {
+            #[cfg(windows)]
+            if error.raw_os_error() == Some(1314) {
+                eprintln!("Skipping symlink fixture: Windows symlink privilege is unavailable");
+                fs::remove_dir_all(fixture).unwrap();
+                return;
+            }
+            panic!("Failed to create symlink fixture: {error}");
+        }
+        let imported = collect_sources_from_directory(
+            &root.to_string_lossy(),
+            true,
+            SourceScanLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(imported.sources.len(), 1);
+        assert_eq!(imported.skipped, 2);
+        assert!(!imported.truncated);
+        assert!(collect_sources_from_directory(
+            &linked_folder.to_string_lossy(),
+            true,
+            SourceScanLimits::default()
+        )
+        .is_err());
+        assert_eq!(fs::read(outside.join("other.txt")).unwrap(), b"outside");
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn rename_trims_removes_unicode_characters_and_expands_folder_once() {
+        let root = temp_root();
+        let folder = root.join("分组{n}");
+        fs::create_dir(&folder).unwrap();
+        let source = folder.join("  甲😀旧beta尾丙  .TxT");
+        fs::write(&source, b"unicode fixture").unwrap();
+        let options = RenameOptions {
+            trim_whitespace: true,
+            remove_start: 2,
+            remove_end: 2,
+            find: "旧".into(),
+            replace: "新".into(),
+            case_mode: RenameCaseMode::Upper,
+            extension_case: RenameCaseMode::Lower,
+            number_padding: 2,
+            ..RenameOptions::default()
+        };
+        assert_eq!(
+            render_name("{folder}_{name}_{n}{dotext}", &source, 1, &options,).unwrap(),
+            "分组{n}_新BETA_01.txt"
+        );
+        let mut input = request(&source, BatchOperation::Rename);
+        input.name_pattern = Some("{folder}_{name}_{n}{dotext}".into());
+        input.rename_options = options;
+        let prepared = prepare_batch(&input).unwrap();
+        assert!(prepared.items[0].conflict.is_none() && source.is_file());
+        let target = prepared.items[0].target.as_ref().unwrap();
+        move_without_overwrite(&prepared.items[0].source, target).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(target).unwrap(), b"unicode fixture");
+        assert_eq!(
+            render_name(
+                "{folder}{name}{dotext}",
+                Path::new("/root-file.TxT"),
+                1,
+                &RenameOptions {
+                    extension_case: RenameCaseMode::Upper,
+                    ..RenameOptions::default()
+                }
+            )
+            .unwrap(),
+            "root-file.TXT"
+        );
+        assert_eq!(
+            render_name(
+                "{name}x{dotext}",
+                Path::new("短😀.TXT"),
+                1,
+                &RenameOptions {
+                    remove_start: 160,
+                    remove_end: 160,
+                    extension_case: RenameCaseMode::Lower,
+                    ..RenameOptions::default()
+                }
+            )
+            .unwrap(),
+            "x.txt"
+        );
+        for options in [
+            RenameOptions {
+                remove_start: 161,
+                ..RenameOptions::default()
+            },
+            RenameOptions {
+                remove_end: 161,
+                ..RenameOptions::default()
+            },
+        ] {
+            assert!(render_name("{name}{dotext}", Path::new("valid.txt"), 1, &options).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rename_preview_expands_safe_placeholders_without_mutation() {
         let root = temp_root();
         let source = root.join("report.txt");
@@ -1061,6 +1532,10 @@ mod tests {
         assert_eq!(input.rename_options.number_step, 1);
         assert_eq!(input.rename_options.number_padding, 1);
         assert_eq!(input.rename_options.case_mode, RenameCaseMode::Keep);
+        assert_eq!(input.rename_options.extension_case, RenameCaseMode::Keep);
+        assert!(!input.rename_options.trim_whitespace);
+        assert_eq!(input.rename_options.remove_start, 0);
+        assert_eq!(input.rename_options.remove_end, 0);
         assert!(input.client_id.is_none());
         let input: FileBatchRequest = serde_json::from_value(serde_json::json!({
             "sources": ["report.txt"], "operation": "rename",

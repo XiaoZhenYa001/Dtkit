@@ -29,7 +29,14 @@ function getParentService() {
 export function stopAlarmAudio(taskId = null) {
     const parent = getParentService();
     if (parent) return parent.stopAudio(taskId);
-    return activeAlarmModule?.stopBackgroundAlarmAudio?.(taskId) ?? false;
+    const stopped = activeAlarmModule?.stopBackgroundAlarmAudio?.(taskId) ?? false;
+    const invoke = getInvoke();
+    if (invoke) {
+        void Promise.resolve()
+            .then(() => invoke('stop_background_alarm_audio', { taskId }))
+            .catch(error => console.warn('[AlarmService] 停止原生提醒音失败', error));
+    }
+    return stopped;
 }
 
 function emitSyncStatus(detail) {
@@ -212,11 +219,21 @@ async function initializeOwnedService() {
     const listen = getListen();
     if (!listen) return;
 
+    const invoke = getInvoke();
+    if (invoke) {
+        try {
+            // A cold login launch may already be playing the sound natively.
+            // The first alarm WebView takes over playback during trigger replay.
+            await invoke('stop_background_alarm_audio', { taskId: null });
+        } catch (error) {
+            console.warn('[AlarmService] 停止原生提醒音失败', error);
+        }
+    }
+
     unlistenAlarm = await listen('alarm-triggered', event => {
         handleAlarmTriggered(event.payload).catch(error => console.error('[AlarmService] 更新提醒记录失败', error));
     });
 
-    const invoke = getInvoke();
     if (invoke) {
         // A durable log and a failed-write buffer can require more than one batch.
         // Drain only at initialization, and acknowledge a batch after all records

@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LaunchTarget {
     Main,
+    Autostart,
     Tool(String),
 }
 
@@ -18,6 +19,7 @@ impl LaunchTarget {
     pub(crate) fn parse(arguments: &[String]) -> Result<Self, String> {
         match arguments {
             [] => Ok(Self::Main),
+            [flag] if flag == "--autostart" => Ok(Self::Autostart),
             [flag, tool_id] if flag == "--tool" && is_supported_tool_id(tool_id) => {
                 Ok(Self::Tool(tool_id.clone()))
             }
@@ -25,15 +27,15 @@ impl LaunchTarget {
                 .strip_prefix("--tool=")
                 .filter(|tool_id| is_supported_tool_id(tool_id))
                 .map(|tool_id| Self::Tool(tool_id.to_string()))
-                .ok_or_else(|| "启动参数无效；请使用 --tool 工具标识".to_string()),
-            _ => Err("启动参数无效；请使用 --tool 工具标识".to_string()),
+                .ok_or_else(|| "启动参数无效；请使用 --autostart 或 --tool 工具标识".to_string()),
+            _ => Err("启动参数无效；请使用 --autostart 或 --tool 工具标识".to_string()),
         }
     }
 }
 
 #[derive(Default)]
 pub(crate) struct LaunchRuntime {
-    main_requested: AtomicBool,
+    resident_requested: AtomicBool,
     main_services_started: AtomicBool,
     next_sleep_token: AtomicU64,
     pending_sleep_token: AtomicU64,
@@ -42,14 +44,20 @@ pub(crate) struct LaunchRuntime {
 
 impl LaunchRuntime {
     pub(crate) fn is_tool_only(&self) -> bool {
-        !self.main_requested.load(Ordering::Acquire)
+        !self.resident_requested.load(Ordering::Acquire)
+    }
+
+    /// A login launch is a resident app even before its first WebView exists.
+    /// Repeated login requests must not affect an already visible main window.
+    pub(crate) fn enter_background(&self) -> bool {
+        self.resident_requested.store(true, Ordering::Release);
+        !self.main_services_started.swap(true, Ordering::AcqRel)
     }
 
     /// Returns true once, when unrelated app services actually become necessary.
     pub(crate) fn enter_main(&self) -> bool {
-        self.main_requested.store(true, Ordering::Release);
         self.cancel_sleep();
-        !self.main_services_started.swap(true, Ordering::AcqRel)
+        self.enter_background()
     }
 
     pub(crate) fn request_sleep(&self) -> u64 {
@@ -282,6 +290,7 @@ mod tests {
     #[test]
     fn tool_launch_never_falls_back_to_main_on_invalid_arguments() {
         assert_eq!(LaunchTarget::parse(&[]).unwrap(), LaunchTarget::Main);
+        assert_eq!(LaunchTarget::parse(&["--autostart".into()]).unwrap(), LaunchTarget::Autostart);
         for arguments in [vec!["--tool", "html-preview"], vec!["--tool=html-preview"]] {
             let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
             assert_eq!(
@@ -294,6 +303,8 @@ mod tests {
             vec!["--tool", "../settings"],
             vec!["--tool="],
             vec!["--tool", "html-preview", "--tool", "json-formatter"],
+            vec!["--autostart", "--tool", "html-preview"],
+            vec!["--tool", "html-preview", "--autostart"],
             vec!["--unknown"],
         ] {
             assert!(LaunchTarget::parse(
@@ -353,6 +364,16 @@ mod tests {
         assert!(runtime.enter_main());
         assert!(!runtime.finish_sleep(token));
         assert!(!runtime.is_tool_only());
+        assert!(!runtime.enter_main());
+    }
+
+    #[test]
+    fn login_launch_is_resident_without_requesting_a_main_window() {
+        let runtime = LaunchRuntime::default();
+        assert!(runtime.is_tool_only());
+        assert!(runtime.enter_background());
+        assert!(!runtime.is_tool_only());
+        assert!(!runtime.enter_background());
         assert!(!runtime.enter_main());
     }
 

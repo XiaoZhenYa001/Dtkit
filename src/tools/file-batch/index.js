@@ -3,12 +3,12 @@ import '../../css/tools/file-batch.css';
 import { getTemplate, batchIcon } from './template.js';
 import { createBatchMotion } from './motion.js';
 import { basename, extension, parseExtensions, mergeSources, sortSources, formatBytes,
-    renderRename, normalizeRenameOptions, requestFingerprint } from './core.js';
+    renderRename, normalizeRenameOptions, requestFingerprint, batchCsv } from './core.js';
 
 const OPERATIONS = { rename: '重命名', copy: '复制', move: '移动', delete: '删除' };
 const TERMINAL = new Set(['completed', 'cancelled', 'failed']);
-const FIELD_IDS = ['batchNamePattern', 'batchStartIndex', 'batchNumberPadding', 'batchNumberStep', 'batchFind', 'batchReplace', 'batchCaseMode', 'batchExtensions', 'batchPermanent'];
-const PRESETS = { numbered: '{name}_{n}{dotext}', original: '{name}{dotext}', sequence: '文件_{n}{dotext}', prefix: '整理_{name}{dotext}', suffix: '{name}_整理{dotext}' };
+const FIELD_IDS = ['batchNamePattern', 'batchStartIndex', 'batchNumberPadding', 'batchNumberStep', 'batchFind', 'batchReplace', 'batchCaseMode', 'batchExtensions', 'batchPermanent', 'batchTrimWhitespace', 'batchRemoveStart', 'batchRemoveEnd', 'batchExtensionCase'];
+const PRESETS = { numbered: '{name}_{n}{dotext}', original: '{name}{dotext}', sequence: '文件_{n}{dotext}', parent: '{folder}_{n}{dotext}', prefix: '整理_{name}{dotext}', suffix: '{name}_整理{dotext}' };
 const records = new Map();
 const pendingProgress = new Map();
 let currentView;
@@ -19,7 +19,9 @@ const alive = view => currentView === view && !view.controller.signal.aborted;
 const pathKey = path => String(path).replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '').replaceAll('/', '\\').toLocaleLowerCase();
 const text = (view, id, value) => { const element = node(view, id); if (element) element.textContent = value; };
 const activeRecord = view => records.get(view.recordId);
-const isBusy = view => { const record = activeRecord(view); return Boolean(record && !TERMINAL.has(record.status)); };
+const hasActiveJob = view => { const record = activeRecord(view); return Boolean(record && !TERMINAL.has(record.status)); };
+const isBusy = view => hasActiveJob(view) || Boolean(view.importing) || [...records.values()].some(record => record.restoring);
+const displayedRecord = view => (view.resultRecord && records.get(view.resultRecord)) || (hasActiveJob(view) && activeRecord(view)) || null;
 
 async function invoke(command, args = {}) {
     const call = window.__TAURI__?.core?.invoke;
@@ -41,7 +43,9 @@ function readRequest(view) {
         destination: view.destination || null, namePattern: value('batchNamePattern'), startIndex,
         extensions: parseExtensions(value('batchExtensions')), permanent: view.operation === 'delete' && node(view, 'batchPermanent').checked,
         renameOptions: normalizeRenameOptions(view.operation === 'rename' ? { find: value('batchFind'), replace: value('batchReplace'), caseMode: value('batchCaseMode'),
-            numberPadding: Number(value('batchNumberPadding')), numberStep: Number(value('batchNumberStep')) } : {})
+            numberPadding: Number(value('batchNumberPadding')), numberStep: Number(value('batchNumberStep')),
+            trimWhitespace: node(view, 'batchTrimWhitespace').checked, removeStart: Number(value('batchRemoveStart')),
+            removeEnd: Number(value('batchRemoveEnd')), extensionCase: value('batchExtensionCase') } : {})
     };
 }
 
@@ -53,18 +57,27 @@ function matchesPreview(view) {
 function updateControls(view) {
     const busy = isBusy(view);
     view.root.dataset.busy = String(busy);
-    view.root.querySelectorAll('.batch-config-card input, .batch-config-card select, .batch-config-card button, #batchSort, #batchClearFiles, .batch-row-remove').forEach(element => { element.disabled = busy; });
+    view.root.querySelectorAll('.batch-config-card input, .batch-config-card select, .batch-config-card button, #batchSort, #batchClearFiles, .batch-row-remove, [data-batch-restore]').forEach(element => { element.disabled = busy; });
     const valid = matchesPreview(view);
     node(view, 'batchExecute').disabled = busy || !valid || Boolean(view.preview?.response.hasConflicts) || !view.preview?.response.items?.length;
     node(view, 'batchPreview').disabled = busy || Boolean(view.checking) || !view.files.length;
     node(view, 'batchPreview').dataset.loading = String(Boolean(view.checking));
     node(view, 'batchClearFiles').disabled = busy || !view.files.length;
-    node(view, 'batchExport').disabled = !view.files.length;
+    node(view, 'batchExport').disabled = !view.files.length && !displayedRecord(view)?.preview?.items?.length;
+    const result = displayedRecord(view), items = result ? result.preview.items : draftItems(view);
+    node(view, 'batchRemoveConflicts').disabled = busy || Boolean(result) || !items.some(item => !item.excluded && item.conflict);
+    const filtered = node(view, 'batchSearch').value.trim() || node(view, 'batchOnlyConflicts').checked;
+    node(view, 'batchRemoveVisible').disabled = busy || Boolean(result) || !filtered || !visibleItems(view, items).length;
     node(view, 'batchCancel').disabled = !busy || !activeRecord(view)?.jobId || activeRecord(view)?.status === 'cancelling';
     const execute = node(view, 'batchExecute');
     execute.dataset.operation = view.operation;
     const label = execute.querySelector('[data-batch-execute-label]');
     if (label) label.textContent = `执行${OPERATIONS[view.operation]}`;
+}
+
+function syncPreset(view) {
+    const pattern = node(view, 'batchNamePattern').value;
+    node(view, 'batchRenamePreset').value = Object.keys(PRESETS).find(key => PRESETS[key] === pattern) || 'custom';
 }
 
 function invalidate(view, { animate = false, message = true } = {}) {
@@ -138,17 +151,22 @@ function makeRow(view, item, index, result) {
     const badge = row.querySelector('.batch-row-status');
     const done = result && index < Number(result.result?.processed || 0);
     const running = result && !TERMINAL.has(result.status);
-    badge.textContent = item.excluded ? '排除' : done ? '已完成' : running ? '处理中' : result ? '未处理' : item.conflict ? '冲突' : item.draft ? '草稿' : '可执行';
+    badge.textContent = item.excluded ? '排除' : done ? '已完成' : running ? index === Number(result.result?.processed || 0) ? '处理中' : '等待' : result ? '未处理' : item.conflict ? '冲突' : item.draft ? '草稿' : '可执行';
     badge.dataset.state = item.excluded ? 'excluded' : done ? 'completed' : running ? 'running' : item.conflict ? 'conflict' : item.draft ? 'draft' : 'ready';
     const remove = row.querySelector('.batch-row-remove'); remove.dataset.batchRemove = item.selectedSource || item.source;
     remove.title = `移除 ${item.name}`; remove.setAttribute('aria-label', remove.title); remove.disabled = isBusy(view); remove.hidden = Boolean(result);
     return row;
 }
 
-function renderList(view, items, result, animate) {
+function visibleItems(view, items) {
     const query = node(view, 'batchSearch').value.trim().toLocaleLowerCase();
     const onlyConflicts = node(view, 'batchOnlyConflicts').checked;
-    const filtered = items.map((item, index) => ({ item, index })).filter(({ item }) => (!onlyConflicts || item.conflict) && (!query || `${item.name}\n${item.source}\n${item.target || ''}\n${item.conflict || ''}`.toLocaleLowerCase().includes(query)));
+    return items.map((item, index) => ({ item, index })).filter(({ item }) => (!onlyConflicts || item.conflict) && (!query || `${item.name}\n${item.source}\n${item.target || ''}\n${item.conflict || ''}`.toLocaleLowerCase().includes(query)));
+}
+
+function renderList(view, items, result, animate) {
+    const query = node(view, 'batchSearch').value.trim(), onlyConflicts = node(view, 'batchOnlyConflicts').checked;
+    const filtered = visibleItems(view, items);
     const list = node(view, 'batchPreviewList'); const focused = document.activeElement?.closest('.batch-row-remove')?.dataset.batchRemove;
     const mutate = () => {
         const fragment = document.createDocumentFragment();
@@ -171,15 +189,19 @@ function renderList(view, items, result, animate) {
 
 function render(view, animate = false) {
     if (!alive(view)) return;
-    const result = (view.resultRecord && records.get(view.resultRecord)) || (isBusy(view) && activeRecord(view)) || null;
+    const result = displayedRecord(view);
     const items = result ? result.preview.items : draftItems(view);
     view.root.dataset.hasFiles = String(view.files.length > 0);
     const eligible = items.filter(item => !item.excluded); const conflicts = eligible.filter(item => item.conflict).length;
     const summary = node(view, 'batchSelectionSummary'); summary.classList.toggle('batch-selection--empty', !view.files.length);
     summary.textContent = view.files.length ? `已选择 ${view.files.length} 个文件` : '尚未选择文件 · 最多 500 项';
-    text(view, 'batchCountTotal', items.length); text(view, 'batchCountReady', eligible.length - conflicts); text(view, 'batchCountConflict', conflicts);
-    text(view, 'batchDestinationPath', view.destination || '尚未选择文件夹'); node(view, 'batchDestinationPath').title = view.destination;
     const checked = matchesPreview(view);
+    text(view, 'batchTotalLabel', result ? '本批文件' : '已选文件');
+    text(view, 'batchReadyLabel', result ? '已完成' : checked ? '可执行' : '预计处理');
+    text(view, 'batchCountTotal', items.length); text(view, 'batchCountReady', result ? Math.min(items.length, Number(result.result?.processed) || 0) : eligible.length - conflicts); text(view, 'batchCountConflict', conflicts);
+    text(view, 'batchCheckState', result ? TERMINAL.has(result.status) ? '任务结果' : '执行中' : view.checking ? '检查中' : checked ? '已检查' : '本地草稿');
+    view.root.dataset.stage = view.importing ? 'select' : [...records.values()].some(record => record.restoring) ? 'restoring' : result ? TERMINAL.has(result.status) ? 'done' : 'running' : checked ? 'checked' : view.files.length ? 'draft' : 'select';
+    text(view, 'batchDestinationPath', view.destination || '尚未选择文件夹'); node(view, 'batchDestinationPath').title = view.destination;
     node(view, 'batchPreviewMeta').dataset.state = result ? 'finished' : checked ? conflicts ? 'conflict' : 'checked' : 'draft';
     text(view, 'batchPreviewMeta', result ? `${OPERATIONS[result.request.operation]}${result.status === 'completed' ? '完成' : TERMINAL.has(result.status) ? '结果' : '中'} · ${items.length} 项` : checked ? `${eligible.length} 项 · ${formatBytes(view.preview.response.totalBytes)}${view.preview.response.skipped ? ` · 排除 ${view.preview.response.skipped}` : ''}` : view.files.length ? `${eligible.length} 项待检查 · 实时草稿` : '等待添加文件');
     renderList(view, items, result, animate); renderProgress(view); renderHistory(view); updateControls(view);
@@ -191,6 +213,41 @@ function addFiles(view, incoming) {
     view.files = merged.sources;
     if (merged.added) invalidate(view, { animate: true, message: false });
     status(view, merged.overflow ? `已添加 ${merged.added} 项；超过 500 项的 ${merged.overflow} 个文件未加入。` : merged.added ? `已添加 ${merged.added} 个文件${merged.duplicates ? `，略过 ${merged.duplicates} 个重复项` : ''}。` : '这些文件已在清单中。', merged.overflow ? 'error' : '');
+    return merged;
+}
+
+async function chooseFolder(view) {
+    if (!alive(view) || isBusy(view) || view.selecting || view.suspended) return;
+    const token = {}, recursive = node(view, 'batchIncludeSubfolders').checked;
+    view.importing = token; updateControls(view);
+    try {
+        const open = window.__TAURI__?.dialog?.open;
+        if (!open) throw new Error('请在 DtKit 桌面应用中选择本地文件夹。');
+        const directory = await open({ directory: true, multiple: false, title: '从文件夹添加文件' });
+        if (!alive(view) || view.importing !== token || typeof directory !== 'string' || !directory) return;
+        status(view, '正在读取文件夹；暂不修改任何文件…');
+        const result = await invoke('collect_file_batch_sources', { directory, recursive });
+        if (!alive(view) || view.importing !== token || view.suspended) return;
+        if (!result || !Array.isArray(result.sources)) throw new Error('没有收到有效的文件夹清单。');
+        view.importing = null;
+        const merged = addFiles(view, result.sources);
+        const warnings = Array.isArray(result.warnings) ? result.warnings.filter(value => typeof value === 'string').slice(0, 3) : [];
+        status(view, `文件夹已添加 ${merged?.added || 0} 项${merged?.duplicates ? `，略过 ${merged.duplicates} 个重复项` : ''}${result.skipped ? `，跳过 ${result.skipped} 项` : ''}。${result.truncated || merged?.overflow ? '已达到导入预算或 500 项上限，清单仅包含部分文件。' : ''}${warnings.join('；')}${result.sources.length ? '检查变更后再执行。' : '此范围内没有可导入的普通文件。'}`, result.truncated || merged?.overflow ? 'error' : '');
+    } catch (error) { if (alive(view) && view.importing === token) status(view, String(error.message || error), 'error'); }
+    finally { if (alive(view) && view.importing === token) view.importing = null; if (alive(view)) { render(view); } }
+}
+
+function removeFromList(view, conflictsOnly) {
+    if (!alive(view) || isBusy(view) || displayedRecord(view)) return;
+    const items = draftItems(view);
+    const selected = conflictsOnly ? items.filter(item => !item.excluded && item.conflict)
+        : visibleItems(view, items).map(row => row.item);
+    if (!conflictsOnly && !node(view, 'batchSearch').value.trim() && !node(view, 'batchOnlyConflicts').checked) return;
+    const keys = new Set(selected.map(item => pathKey(item.selectedSource || item.source)));
+    const before = view.files.length;
+    view.files = view.files.filter(path => !keys.has(pathKey(path)));
+    invalidate(view, { animate: true, message: false });
+    status(view, `已从待处理清单移除 ${before - view.files.length} 项，磁盘文件未改动。执行前请重新检查。`);
 }
 
 async function chooseFiles(view) {
@@ -222,7 +279,7 @@ async function previewBatch(view) {
     try { request = readRequest(view); } catch (error) { return status(view, String(error.message || error), 'error'); }
     const token = {}; const revision = view.revision; const key = requestFingerprint(request);
     view.checking = token; view.preview = null; view.resultRecord = null;
-    updateControls(view); status(view, '正在检查文件、名称和目标位置…');
+    render(view); status(view, '正在检查文件、名称和目标位置…');
     try {
         const response = await invoke('preview_file_batch', { request });
         if (!alive(view) || view.checking !== token || revision !== view.revision || key !== requestFingerprint(readRequest(view))) return;
@@ -230,9 +287,9 @@ async function previewBatch(view) {
         view.preview = { request, response, key }; render(view, true);
         status(view, response.hasConflicts ? '发现冲突。请修改规则或移除冲突文件后再检查。' : `${response.items.length} 项检查通过，可以执行${OPERATIONS[view.operation]}。`, response.hasConflicts ? 'error' : 'success');
     } catch (error) {
-        if (alive(view) && view.checking === token) { view.preview = null; status(view, String(error.message || error), 'error'); }
+        if (alive(view) && view.checking === token) { view.preview = null; render(view); status(view, String(error.message || error), 'error'); }
     } finally {
-        if (alive(view) && view.checking === token) { view.checking = null; updateControls(view); }
+        if (alive(view) && view.checking === token) { view.checking = null; render(view); }
     }
 }
 
@@ -371,24 +428,27 @@ async function cancelBatch(view) {
 
 async function restoreBatch(view, id) {
     const record = records.get(id); if (!record?.result?.recoveryBatchId || record.restored || record.restoring || isBusy(view)) return;
-    record.restoring = true; renderProgress(view); renderHistory(view);
+    const ownerSessionId = view.sessionId;
+    const owner = () => currentView && alive(currentView) && currentView.sessionId === ownerSessionId ? currentView : null;
+    record.restoring = true; render(view);
     try {
         const result = await invoke('restore_file_batch', { batchId: record.result.recoveryBatchId });
         record.restored = result.skipped === 0;
-        if (alive(view)) {
-            if (!result.skipped) { view.files = mergeSources(view.files, record.preview.items.slice(0, record.result.processed).map(item => item.source)).sources; invalidate(view, { message: false }); }
-            status(view, `已恢复 ${result.restored} 个文件${result.skipped ? `，${result.skipped} 项暂未恢复，可处理同名文件后重试` : ''}。`, result.skipped ? 'error' : 'success');
+        const visible = owner();
+        if (visible) {
+            if (!result.skipped) { visible.files = mergeSources(visible.files, record.preview.items.slice(0, record.result.processed).map(item => item.source)).sources; invalidate(visible, { message: false }); }
+            status(visible, `已恢复 ${result.restored} 个文件${result.skipped ? `，${result.skipped} 项暂未恢复，可处理同名文件后重试` : ''}。`, result.skipped ? 'error' : 'success');
         }
-    } catch (error) { status(view, String(error.message || error), 'error'); }
-    finally { record.restoring = false; if (alive(view)) { renderProgress(view); renderHistory(view); } }
+    } catch (error) { const visible = owner(); if (visible) status(visible, String(error.message || error), 'error'); }
+    finally { record.restoring = false; const visible = currentView; if (visible && alive(visible)) render(visible); }
 }
 
 function exportList(view) {
-    const record = (view.resultRecord && records.get(view.resultRecord)) || (isBusy(view) && activeRecord(view)) || null;
+    const record = displayedRecord(view);
     const items = record ? record.preview.items : draftItems(view);
-    const cell = value => '"' + String(value ?? '').replace(/^[=+@\-\t\r]/, "'$&").replaceAll('"', '""') + '"';
-    const rows = [['原文件', '目标路径', '操作', '大小（字节）', '检查状态'], ...items.map(item => [item.source, item.target || '', OPERATIONS[record?.request.operation || view.operation], item.size ?? '', item.conflict || (item.excluded ? '排除' : item.draft ? '待检查' : '已检查')])];
-    const url = URL.createObjectURL(new Blob(['\uFEFF', rows.map(row => row.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+    const csv = batchCsv(items, { operation: OPERATIONS[record?.request.operation || view.operation], taskStatus: record?.status,
+        processed: record?.result?.processed, error: record?.error });
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = `文件批处理清单-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
     view.urls.add(url); const timer = setTimeout(() => { URL.revokeObjectURL(url); view.urls.delete(url); view.timers.delete(timer); }, 30000); view.timers.add(timer);
     status(view, '已导出完整清单，包含当前搜索未显示的文件。', 'success');
@@ -396,10 +456,11 @@ function exportList(view) {
 
 function resetRules(view) {
     if (isBusy(view)) return;
-    const defaults = { batchNamePattern: '{name}_{n}{dotext}', batchStartIndex: '1', batchNumberPadding: '1', batchNumberStep: '1', batchFind: '', batchReplace: '', batchCaseMode: 'keep', batchExtensions: '' };
+    const defaults = { batchNamePattern: '{name}_{n}{dotext}', batchStartIndex: '1', batchNumberPadding: '1', batchNumberStep: '1', batchFind: '', batchReplace: '', batchCaseMode: 'keep', batchExtensions: '', batchRemoveStart: '0', batchRemoveEnd: '0', batchExtensionCase: 'keep' };
     for (const [id, value] of Object.entries(defaults)) node(view, id).value = value;
     node(view, 'batchPermanent').checked = false;
-    const preset = node(view, 'batchRenamePreset'); if (preset) preset.value = 'custom';
+    node(view, 'batchTrimWhitespace').checked = false;
+    syncPreset(view);
     invalidate(view); status(view, '重命名规则与筛选已还原。');
 }
 
@@ -407,9 +468,12 @@ function wire(view) {
     const signal = view.controller.signal;
     const on = (id, event, fn) => node(view, id)?.addEventListener(event, fn, { signal });
     on('batchSelectFiles', 'click', () => chooseFiles(view)); on('batchSelectDestination', 'click', () => chooseDestination(view));
+    on('batchSelectFolder', 'click', () => chooseFolder(view));
+    on('batchRemoveConflicts', 'click', () => removeFromList(view, true));
+    on('batchRemoveVisible', 'click', () => removeFromList(view, false));
     on('batchClearFiles', 'click', () => { if (!isBusy(view)) { view.files = []; invalidate(view, { animate: true }); } });
     view.root.querySelectorAll('input[name="batchOperation"]').forEach(input => input.addEventListener('change', () => updateOperation(view), { signal }));
-    for (const id of FIELD_IDS) on(id, 'input', () => { if (id === 'batchNamePattern') { const preset = node(view, 'batchRenamePreset'); if (preset) preset.value = 'custom'; } invalidate(view); });
+    for (const id of FIELD_IDS) on(id, 'input', () => { if (id === 'batchNamePattern') syncPreset(view); invalidate(view); });
     on('batchRenamePreset', 'change', event => { const pattern = PRESETS[event.target.value]; if (pattern) { node(view, 'batchNamePattern').value = pattern; invalidate(view); } });
     on('batchSort', 'change', () => invalidate(view, { animate: true }));
     on('batchSearch', 'input', () => { view.limit = 60; render(view); }); on('batchOnlyConflicts', 'change', () => { view.limit = 60; render(view, true); });
@@ -434,7 +498,7 @@ function wire(view) {
         const restore = event.target.closest('[data-batch-restore]'); if (restore) restoreBatch(view, restore.dataset.batchRestore);
         const close = event.target.closest('[data-batch-close]'); if (close) { event.preventDefault(); view.confirmKey = null; view.motion.close(close.closest('dialog')); }
         const token = event.target.closest('[data-batch-token]'); if (token && !isBusy(view)) {
-            const input = node(view, 'batchNamePattern'); input.setRangeText(token.dataset.batchToken, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, 'end'); input.focus(); invalidate(view);
+            const input = node(view, 'batchNamePattern'); input.setRangeText(token.dataset.batchToken, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, 'end'); syncPreset(view); input.focus(); invalidate(view);
         }
         const preset = event.target.closest('[data-batch-preset]'); if (preset && PRESETS[preset.dataset.batchPreset] && !isBusy(view)) { node(view, 'batchNamePattern').value = PRESETS[preset.dataset.batchPreset]; invalidate(view); }
     }, { signal });
@@ -450,6 +514,10 @@ function wire(view) {
         else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); previewBatch(view); }
         else if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.target.closest('input,textarea,select,[contenteditable="true"]')) { event.preventDefault(); node(view, 'batchSearch').focus(); }
     }, { signal, capture: true });
+    window.addEventListener('dtkit:power-state', event => {
+        view.suspended = Boolean(event.detail?.suspended);
+        if (view.suspended && view.importing) { view.importing = null; status(view, '已放弃本次文件夹导入，返回后可重新添加。'); render(view); }
+    }, { signal });
 }
 
 function serialize() {
@@ -460,6 +528,7 @@ function serialize() {
     return { version: 1, sessionId: view.sessionId, files: view.files, destination: view.destination, operation: view.operation, recordId: view.recordId,
         appliedJobId: view.appliedJobId, resultRecord: view.resultRecord, fields: Object.fromEntries(FIELD_IDS.map(id => [id, node(view, id).type === 'checkbox' ? node(view, id).checked : node(view, id).value])),
         query: node(view, 'batchSearch').value, sort: node(view, 'batchSort').value, onlyConflicts: node(view, 'batchOnlyConflicts').checked,
+        includeSubfolders: node(view, 'batchIncludeSubfolders').checked,
         history: [...records.values()].filter(record => record.sessionId === view.sessionId).slice(-20).map(record => ({ ...record, restoring: false, launching: false })), focus,
         advanced: view.root.querySelector('.batch-advanced')?.dataset.batchExpanded === 'false' ? false : view.root.querySelector('.batch-advanced')?.open || false, listScroll: node(view, 'batchPreviewList').scrollTop };
 }
@@ -494,7 +563,7 @@ async function reconnectRecord(view, record) {
 function restore(snapshot) {
     const view = currentView; if (!view || !alive(view) || snapshot?.version !== 1) return;
     view.motion.dispose(); view.root.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
-    view.preview = null; view.checking = null; view.confirmKey = null; view.revision += 1;
+    view.preview = null; view.checking = null; view.confirmKey = null; view.importing = null; view.revision += 1;
     view.files = mergeSources([], Array.isArray(snapshot.files) ? snapshot.files : []).sources;
     view.destination = typeof snapshot.destination === 'string' ? snapshot.destination.slice(0, 32768) : '';
     view.operation = Object.hasOwn(OPERATIONS, snapshot.operation) ? snapshot.operation : 'rename';
@@ -507,6 +576,8 @@ function restore(snapshot) {
     node(view, 'batchSearch').value = typeof snapshot.query === 'string' ? snapshot.query.slice(0, 240) : '';
     node(view, 'batchSort').value = ['manual', 'name-asc', 'name-desc', 'extension'].includes(snapshot.sort) ? snapshot.sort : 'manual';
     node(view, 'batchOnlyConflicts').checked = Boolean(snapshot.onlyConflicts);
+    node(view, 'batchIncludeSubfolders').checked = snapshot.includeSubfolders === true;
+    syncPreset(view);
     view.root.querySelector(`input[name="batchOperation"][value="${view.operation}"]`).checked = true;
     const panel = node(view, view.operation === 'rename' ? 'batchRenameOptions' : view.operation === 'delete' ? 'batchDeleteOptions' : 'batchDestinationOptions');
     for (const element of node(view, 'batchOptions').children) { element.hidden = element !== panel; element.inert = element !== panel; }
@@ -529,7 +600,7 @@ async function initFileBatchTool() {
     destroyFileBatchTool();
     const root = document.querySelector('.batch-tool-shell'); if (!root) return;
     const view = { root, controller: new AbortController(), files: [], destination: '', operation: 'rename', sessionId: crypto.randomUUID(), revision: 0,
-        preview: null, checking: null, recordId: null, resultRecord: null, appliedJobId: null, limit: 60, urls: new Set(), timers: new Set() };
+        preview: null, checking: null, importing: null, suspended: false, recordId: null, resultRecord: null, appliedJobId: null, limit: 60, urls: new Set(), timers: new Set() };
     currentView = view; view.motion = createBatchMotion(view.controller.signal); wire(view); updateOperation(view, false);
     try { await ensureProgressListener(); } catch { /* Native availability is explained when a file action is requested. */ }
 }
@@ -538,6 +609,7 @@ function destroyFileBatchTool() {
     const view = currentView; if (!view) return;
     view.root.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     view.controller.abort(); view.motion.dispose();
+    view.importing = null;
     for (const url of view.urls) URL.revokeObjectURL(url); for (const timer of view.timers) clearTimeout(timer);
     currentView = null;
     // One application-level listener keeps in-flight results and recovery actions intact while changing pages.

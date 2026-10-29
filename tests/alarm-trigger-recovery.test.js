@@ -35,6 +35,7 @@ function environment(triggers, tasks = triggers.map(({ triggerId, triggeredAt, .
             listeners.add(callback); return () => listeners.delete(callback);
         } },
         core: { invoke: async (command, args) => {
+            if (command === 'stop_background_alarm_audio') return false;
             if (command === 'take_missed_alarm_triggers') {
                 operations.push({ type: 'read' });
                 // A native read never consumes the durable log.

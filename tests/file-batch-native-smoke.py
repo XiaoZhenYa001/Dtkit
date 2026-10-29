@@ -190,6 +190,51 @@ def scenario(page, context, process):
             assert precious.read_bytes() == b'existing destination must survive'
             assert renamed[0].read_bytes() == expected_contents[0]
 
+            # Directory discovery stays read-only and only recurses when asked.
+            imported = fixture / '导入分组{n}'
+            nested = imported / '嵌套'
+            nested.mkdir(parents=True)
+            imported_source = imported / '  甲😀旧beta尾丙  .TxT'
+            imported_source.write_bytes(b'generated folder rename fixture')
+            nested_source = nested / 'keep.bin'
+            nested_source.write_bytes(b'generated nested fixture')
+            flat = invoke(page, 'collect_file_batch_sources', {'directory': str(imported)})
+            assert {owned(path) for path in flat['sources']} == {imported_source}, flat
+            assert flat['skipped'] == 1 and not flat['truncated'] and not flat['warnings'], flat
+            recursive = invoke(page, 'collect_file_batch_sources',
+                               {'directory': str(imported), 'recursive': True})
+            assert {owned(path) for path in recursive['sources']} == {imported_source, nested_source}, recursive
+            assert not recursive['truncated'], recursive
+            assert imported_source.read_bytes() == b'generated folder rename fixture'
+            set_files([owned(path) for path in flat['sources']])
+            operation('rename')
+            if not page.locator('.batch-advanced').evaluate('(element)=>element.open'):
+                page.locator('.batch-advanced > summary').click()
+            page.locator('#batchNamePattern').fill('{folder}_{name}_{n}{dotext}')
+            page.locator('#batchStartIndex').fill('2')
+            page.locator('#batchNumberPadding').select_option('2')
+            page.locator('#batchNumberStep').fill('1')
+            page.locator('#batchTrimWhitespace').check()
+            page.locator('#batchRemoveStart').fill('2')
+            page.locator('#batchRemoveEnd').fill('2')
+            page.locator('#batchFind').fill('旧')
+            page.locator('#batchReplace').fill('新')
+            page.locator('#batchCaseMode').select_option('upper')
+            page.locator('#batchExtensionCase').select_option('lower')
+            imported_record = run_task(1)
+            imported_target = imported / '导入分组{n}_新BETA_02.txt'
+            assert owned(imported_record['preview']['items'][0]['target']) == imported_target
+            assert imported_target.read_bytes() == b'generated folder rename fixture'
+            assert not imported_source.exists()
+            assert nested_source.read_bytes() == b'generated nested fixture'
+            page.locator('#batchTrimWhitespace').uncheck()
+            page.locator('#batchRemoveStart').fill('0')
+            page.locator('#batchRemoveEnd').fill('0')
+            page.locator('#batchFind').fill('')
+            page.locator('#batchReplace').fill('')
+            page.locator('#batchCaseMode').select_option('keep')
+            page.locator('#batchExtensionCase').select_option('keep')
+
             # The authoritative execution preview must follow a source that
             # changed into a directory after the user's first preflight.
             changed = original / 'changed-after-preview.txt'
@@ -279,7 +324,7 @@ def scenario(page, context, process):
             assert permanently_deleted['result'].get('recoveryBatchId') is None
             assert not disposable.exists()
             assert invoke(page, 'get_file_batch_status', {'jobId': '00000000-0000-0000-0000-000000000000'}) is None
-            print('Native file batch: Unicode rename/numbering, cold clientId reconnect, duplicate rejection, copy/move, no overwrite, changed sources, recovery retry, mid-job failure recovery and confirmed permanent deletion passed', flush=True)
+            print('Native file batch: Unicode rename/numbering, directory import, Unicode trimming/removal, folder naming, extension case, cold clientId reconnect, duplicate rejection, copy/move, no overwrite, changed sources, recovery retry, mid-job failure recovery and confirmed permanent deletion passed', flush=True)
         finally:
             # Only recovery batches whose every source belongs to this fresh
             # fixture are eligible for cleanup. No unrelated batch is queried.

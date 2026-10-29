@@ -1,6 +1,6 @@
-use super::{paths, SpaceItem, SpaceProgress, SpaceReport};
+use super::{paths, SpaceFileType, SpaceItem, SpaceProgress, SpaceReport};
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::fs::{self, DirEntry, ReadDir};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +9,67 @@ use std::time::{Duration, Instant};
 const TOP_ITEMS: usize = 20;
 const MAX_WARNINGS: usize = 16;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_FILE_TYPES: usize = 64;
+const MAX_EXTENSION_BYTES: usize = 64;
+
+#[derive(Default)]
+struct FileTypes(BTreeMap<String, (u64, u64)>);
+impl FileTypes {
+    fn offer(&mut self, path: &Path, bytes: u64) {
+        let extension = match path.extension() {
+            None => String::new(),
+            Some(value) => match value.to_str() {
+                Some("") => String::new(),
+                Some(value) if value.len() < MAX_EXTENSION_BYTES => {
+                    let value = value.to_lowercase();
+                    if value.len() < MAX_EXTENSION_BYTES {
+                        format!(".{value}")
+                    } else {
+                        "*".into()
+                    }
+                }
+                _ => "*".into(),
+            },
+        };
+        let entry = self.0.entry(extension).or_default();
+        entry.0 = entry.0.saturating_add(bytes);
+        entry.1 = entry.1.saturating_add(1);
+
+        // Keep at most 64 buckets including Other. When overflowing, retain the
+        // same lexical set of extensions regardless of directory enumeration order.
+        while self.0.len() > MAX_FILE_TYPES {
+            let extension = self
+                .0
+                .keys()
+                .rev()
+                .find(|extension| extension.as_str() != "*")
+                .cloned()
+                .expect("overflowing file types contain a regular extension");
+            let (bytes, files) = self.0.remove(&extension).unwrap();
+            let other = self.0.entry("*".into()).or_default();
+            other.0 = other.0.saturating_add(bytes);
+            other.1 = other.1.saturating_add(files);
+        }
+    }
+
+    fn finish(self) -> Vec<SpaceFileType> {
+        let mut items: Vec<_> = self
+            .0
+            .into_iter()
+            .map(|(extension, (bytes, files))| SpaceFileType {
+                extension,
+                bytes,
+                files,
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            b.bytes
+                .cmp(&a.bytes)
+                .then_with(|| a.extension.cmp(&b.extension))
+        });
+        items
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Budget {
@@ -59,6 +120,7 @@ pub(super) fn cancelled_report(
         software_id,
         root,
         total_bytes: 0,
+        root_files_bytes: 0,
         files: 0,
         directories: 0,
         skipped: 0,
@@ -67,6 +129,7 @@ pub(super) fn cancelled_report(
         elapsed_ms: 0,
         largest_directories: Vec::new(),
         largest_files: Vec::new(),
+        file_types: Vec::new(),
         warnings: vec!["扫描已取消；结果不完整".into()],
     }
 }
@@ -75,6 +138,7 @@ struct Work<'a, F: FnMut(SpaceProgress)> {
     report: SpaceReport,
     largest_files: TopItems,
     largest_directories: TopItems,
+    file_types: FileTypes,
     cancelled: &'a AtomicBool,
     budget: Budget,
     entries: u64,
@@ -125,7 +189,7 @@ impl<F: FnMut(SpaceProgress)> Work<'_, F> {
         true
     }
 
-    fn inspect(&mut self, entry: std::io::Result<DirEntry>) -> Option<PathBuf> {
+    fn inspect(&mut self, entry: std::io::Result<DirEntry>, root_file: bool) -> Option<PathBuf> {
         self.entries += 1;
         let entry = match entry {
             Ok(entry) => entry,
@@ -157,6 +221,11 @@ impl<F: FnMut(SpaceProgress)> Work<'_, F> {
                 self.report.total_bytes = u64::MAX;
                 self.warn("文件总大小超出统计范围，结果已截断".into());
             }
+            if root_file {
+                self.report.root_files_bytes =
+                    self.report.root_files_bytes.saturating_add(metadata.len());
+            }
+            self.file_types.offer(&path, metadata.len());
             self.largest_files.offer(&path, metadata.len());
         } else {
             self.report.skipped += 1;
@@ -207,7 +276,7 @@ impl<F: FnMut(SpaceProgress)> Work<'_, F> {
                     stack.pop();
                 }
                 Some(entry) => {
-                    if let Some(child) = self.inspect(entry) {
+                    if let Some(child) = self.inspect(entry, false) {
                         if stack.len() >= self.budget.max_depth {
                             self.io_error(format!(
                                 "目录层级超过预算，已跳过：{}",
@@ -248,6 +317,7 @@ pub(super) fn scan(
             software_id,
             root: paths::display(&root),
             total_bytes: 0,
+            root_files_bytes: 0,
             files: 0,
             directories: 0,
             skipped: 0,
@@ -256,10 +326,12 @@ pub(super) fn scan(
             elapsed_ms: 0,
             largest_directories: Vec::new(),
             largest_files: Vec::new(),
+            file_types: Vec::new(),
             warnings: vec!["统计文件的逻辑大小，硬链接可能重复计数；不代表磁盘物理占用".into()],
         },
         largest_files: TopItems::default(),
         largest_directories: TopItems::default(),
+        file_types: FileTypes::default(),
         cancelled,
         budget,
         entries: 0,
@@ -272,7 +344,7 @@ pub(super) fn scan(
         let Some(entry) = reader.next() else {
             break;
         };
-        if let Some(child) = work.inspect(entry) {
+        if let Some(child) = work.inspect(entry, true) {
             let before = work.report.total_bytes;
             work.walk_child(&child);
             work.largest_directories
@@ -295,5 +367,6 @@ pub(super) fn scan(
     work.report.elapsed_ms = work.started.elapsed().as_millis() as u64;
     work.report.largest_directories = work.largest_directories.finish();
     work.report.largest_files = work.largest_files.finish();
+    work.report.file_types = work.file_types.finish();
     Ok(work.report)
 }

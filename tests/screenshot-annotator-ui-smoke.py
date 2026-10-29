@@ -308,7 +308,7 @@ def test_capture(context,base_url,errors):
     page=context.new_page();errors_for(page,errors);page.goto(base_url+'/quick.html?kind=tool&toolId=screenshot-annotator',wait_until='networkidle');ready(page)
     request=last_call(page,'start_screen_region_capture')['args']
     assert request['requestId'] and 'instanceId' in request
-    assert request.get('keepHidden') is True, 'Screenshot capture must leave DtKit windows hidden until the user returns'
+    assert request.get('keepHidden') is True, 'Screenshot capture must keep DtKit windows minimized until the user returns'
     expect(page.locator('#captureAgain')).to_be_disabled()
     emit_capture(page,request,requestId='stale-request');emit_capture(page,request,instanceId='other-page')
     expect(page.locator('#captureAgain')).to_be_disabled();expect(page.locator('#captureViewport')).to_be_hidden()
@@ -326,6 +326,10 @@ def test_capture(context,base_url,errors):
     request=last_call(page,'start_screen_region_capture')['args'];assert request['longDirection']=='horizontal' and request['maxSegments']==5
     assert request['longMode']=='manual', 'The default long capture must let the user scroll'
     emit_capture(page,request);expect(page.locator('#captureStatus')).to_contain_text('长截图.png')
+    page.locator('#captureAgain').click();request=last_call(page,'start_screen_region_capture')['args']
+    page.evaluate('request=>window.__captureFixture.emit({...request,cancelled:false,capture:{dataUrl:window.__captureFixture.image(),width:640,height:400,warning:"无法可靠匹配，已保留已采集部分"}})',request)
+    expect(page.locator('#captureStatus')).to_contain_text('无法可靠匹配')
+    expect(page.locator('#captureStatus')).to_have_attribute('data-tone','warning')
     page.locator('#captureOptionsTrigger').click();page.locator('#captureLong').click()
     page.locator('#captureLongMode').select_option('automatic')
     expect(page.locator('#captureLongNote')).to_contain_text('自动滚动')

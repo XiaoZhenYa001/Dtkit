@@ -1,8 +1,29 @@
 const RENDER_MESSAGE = 'dtkit-preview-render';
+const STATUS_MESSAGE = 'dtkit-preview-status';
 let activeScriptUrl = null;
 let activeStyleUrl = null;
 let activeStyleLink = null;
 let renderVersion = 0;
+let activeRender = null;
+
+function reportRenderStatus(render, status, error) {
+    if (!render || render.version !== renderVersion || render.failed
+        || typeof render.requestId !== 'string') return;
+
+    const message = {
+        type: STATUS_MESSAGE,
+        requestId: render.requestId,
+        status
+    };
+    if (status === 'error') {
+        render.failed = true;
+        const detail = typeof error === 'string' ? error : error?.message;
+        message.message = typeof detail === 'string' && detail.trim()
+            ? detail.replace(/\s+/g, ' ').trim().slice(0, 200)
+            : 'JavaScript 运行失败';
+    }
+    window.parent.postMessage(message, '*');
+}
 
 function revokeActiveScript() {
     if (!activeScriptUrl) return;
@@ -82,21 +103,31 @@ function extractEmbeddedStyles(root) {
     return styleCode;
 }
 
-function executeUserCode(executableCode, version) {
-    if (!executableCode || version !== renderVersion) return;
+function executeUserCode(executableCode, render) {
+    if (render.version !== renderVersion) return;
+    if (!executableCode) {
+        reportRenderStatus(render, 'ready');
+        return;
+    }
 
     const source = `${executableCode}\n//# sourceURL=dtkit-html-preview-user-code.js`;
     activeScriptUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
     const script = document.createElement('script');
     script.src = activeScriptUrl;
+    script.addEventListener('load', () => {
+        reportRenderStatus(render, 'ready');
+    }, { once: true });
     script.addEventListener('error', () => {
         console.error('[HTMLPreview] 用户 JavaScript 执行失败');
+        reportRenderStatus(render, 'error', 'JavaScript 加载失败');
     }, { once: true });
     document.body.appendChild(script);
 }
 
-function renderPreview({ html = '', css = '', js = '' } = {}) {
+function renderPreview({ html = '', css = '', js = '' } = {}, requestId) {
     const version = ++renderVersion;
+    const render = { version, requestId, failed: false };
+    activeRender = render;
     revokeActiveScript();
     revokeActiveStyle();
 
@@ -127,17 +158,35 @@ function renderPreview({ html = '', css = '', js = '' } = {}) {
     activeStyleLink.rel = 'stylesheet';
     activeStyleLink.href = activeStyleUrl;
     activeStyleLink.addEventListener('load', () => {
-        executeUserCode(executableCode, version);
+        executeUserCode(executableCode, render);
     }, { once: true });
     activeStyleLink.addEventListener('error', () => {
         console.error('[HTMLPreview] 用户 CSS 加载失败');
+        reportRenderStatus(render, 'error', 'CSS 加载失败');
     }, { once: true });
     document.head.appendChild(activeStyleLink);
 }
 
 window.addEventListener('message', event => {
     if (event.source !== window.parent || event.data?.type !== RENDER_MESSAGE) return;
-    renderPreview(event.data.payload);
+    renderPreview(event.data.payload, event.data.requestId);
+});
+
+window.addEventListener('error', event => {
+    reportRenderStatus(activeRender, 'error', event.message);
+});
+
+window.addEventListener('unhandledrejection', event => {
+    reportRenderStatus(activeRender, 'error', event.reason);
+});
+
+window.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.isComposing
+        || typeof activeRender?.requestId !== 'string') return;
+    window.parent.postMessage({
+        type: 'dtkit-preview-escape',
+        requestId: activeRender.requestId
+    }, '*');
 });
 
 window.addEventListener('beforeunload', () => {

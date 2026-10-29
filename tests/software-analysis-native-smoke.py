@@ -45,6 +45,8 @@ def scenario(page, context, process):
             requestId:'native-fixture', softwareId:null, path
         })''', str(fixture))
         assert report['totalBytes'] == 176, report
+        assert report['rootFilesBytes'] == 11, report
+        assert report['fileTypes'] == [{'extension': '.bin', 'bytes': 176, 'files': 3}], report
         assert report['files'] == 3 and report['complete'] and not report['cancelled'], report
         assert len(report['largestDirectories']) == 1, report
         assert report['largestDirectories'][0]['bytes'] == 165, report
@@ -59,6 +61,8 @@ def scenario(page, context, process):
         })''', str(fixture))
         assert wide['totalBytes'] == 176 + sum(range(1, 301)), wide
         assert wide['files'] == 303 and wide['complete'], wide
+        assert wide['rootFilesBytes'] == 11 + sum(range(1, 301)), wide
+        assert wide['fileTypes'] == [{'extension': '.bin', 'bytes': wide['totalBytes'], 'files': 303}], wide
         assert len(wide['largestFiles']) <= 20, wide
 
     rejected = page.evaluate('''async () => {

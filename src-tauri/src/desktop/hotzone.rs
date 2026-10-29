@@ -276,6 +276,9 @@ impl HotZoneMonitor {
             let mut is_panel_visible = false;
             let mut left_panel_since: Option<Instant> = None;
             let mut consecutive_outside_checks = 0; // 连续在外部的检测次数
+            // A pointer left in the corner before login is not a new request.
+            // Wait for an actual entry before opening the first launcher.
+            let mut armed = false;
 
             // 获取主屏幕尺寸
             let (primary_width, primary_height) = get_primary_screen_size();
@@ -286,6 +289,13 @@ impl HotZoneMonitor {
                 let (mouse_x, mouse_y) = get_mouse_position();
 
                 let in_hotzone = is_in_hotzone(mouse_x, mouse_y, primary_width, &config);
+                if !armed {
+                    armed = !in_hotzone;
+                    if !armed {
+                        thread::sleep(Duration::from_millis(250));
+                        continue;
+                    }
+                }
                 // 使用动态面板检测（根据保存的窗口位置）
                 let in_panel = is_in_panel_dynamic(mouse_x, mouse_y, primary_width, primary_height);
 

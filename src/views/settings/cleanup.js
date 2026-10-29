@@ -10,8 +10,7 @@ function formatBytes(value) {
     let size = bytes / 1024;
     let unit = units[0];
     for (let index = 1; index < units.length && size >= 1024; index += 1) {
-        size /= 1024;
-        unit = units[index];
+        size /= 1024; unit = units[index];
     }
     return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${unit}`;
 }
@@ -21,185 +20,242 @@ class CleanupSettings {
         this.invoke = null;
         this.status = null;
         this.busy = false;
-        this.abortController = null;
+        this.loading = false;
+        this.confirming = false;
+        this.automaticSaving = false;
+        this.retentionSaving = false;
+        this.retentionDirty = false;
+        this.retentionRevision = 0;
+        this.policyRevision = 0;
+        this.retentionQueued = null;
+        this.retentionSavePromise = null;
+        this.refreshPromise = null;
     }
 
     async init() {
-        const card = document.getElementById('storageCleanupCard');
-        if (!card) return;
+        this.card = document.getElementById('storageCleanupCard');
+        if (!this.card) return;
         this.invoke = globalThis.window?.__TAURI__?.core?.invoke || null;
         this.abortController = new AbortController();
         const { signal } = this.abortController;
-
-        document.getElementById('refreshCleanupUsage').addEventListener('click', () => this.refresh(), { signal });
-        document.getElementById('runStorageCleanup').addEventListener('click', () => this.run(), { signal });
-        document.getElementById('restoreLatestCleanup').addEventListener('click', () => this.restore(), { signal });
-        document.getElementById('automaticCleanupEnabled').addEventListener('change', event => {
-            this.setAutomaticEnabled(event.target.checked);
-        }, { signal });
-        document.getElementById('permanentCleanupEnabled').addEventListener('change', event => {
-            this.updatePermanentState(event.target.checked);
-        }, { signal });
-        document.getElementById('cleanupCacheRetention').addEventListener('change', () => this.saveRetention(), { signal });
-        document.getElementById('cleanupLogRetention').addEventListener('change', () => this.saveRetention(), { signal });
-
-        if (!this.invoke) {
-            this.setMessage('请在 DtKit 桌面程序中管理缓存与日志。', 'muted');
-            return;
+        const on = (id, event, handler) => document.getElementById(id).addEventListener(event, handler, { signal });
+        on('refreshCleanupUsage', 'click', () => this.refresh());
+        on('runStorageCleanup', 'click', () => this.run());
+        on('restoreLatestCleanup', 'click', () => this.restore());
+        on('automaticCleanupEnabled', 'change', event => this.setAutomaticEnabled(event.target.checked));
+        on('permanentCleanupEnabled', 'change', () => this.syncControls());
+        for (const id of ['cleanupTargetCache', 'cleanupTargetLogs', 'cleanupTargetRecovery']) on(id, 'change', () => this.syncControls());
+        for (const id of ['cleanupCacheRetention', 'cleanupLogRetention']) {
+            on(id, 'input', event => {
+                this.retentionRevision++; this.retentionDirty = true;
+                event.target.removeAttribute('aria-invalid');
+                this.setMessage(this.retentionSaving ? '正在保存上一项，当前输入将在离开输入框时保存。'
+                    : '保留期限有未保存修改，离开输入框或按 Enter 保存。', this.retentionSaving ? 'pending' : 'info');
+                this.syncControls();
+            });
+            on(id, 'change', () => this.saveRetention());
+            on(id, 'keydown', event => {
+                if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void this.saveRetention(); }
+            });
         }
+        this.syncControls();
+        if (!this.invoke) { this.setMessage('请在 DtKit 桌面程序中管理缓存与日志。', 'muted'); return; }
         await this.refresh();
     }
 
-    async refresh() {
-        if (!this.invoke || this.busy) return;
-        try {
-            this.status = await this.invoke('get_cleanup_status');
-            const { usage, policy, latestRecoveryBatchId } = this.status;
-            document.getElementById('cleanupCacheUsage').textContent = formatBytes(usage.cacheBytes);
-            document.getElementById('cleanupLogUsage').textContent = formatBytes(usage.logBytes);
-            document.getElementById('cleanupRecoveryUsage').textContent = formatBytes(usage.recoveryBytes);
-            const automatic = document.getElementById('automaticCleanupEnabled');
-            automatic.disabled = false;
-            automatic.checked = policy.automaticEnabled;
-            const cacheRetention = document.getElementById('cleanupCacheRetention');
-            const logRetention = document.getElementById('cleanupLogRetention');
-            cacheRetention.disabled = false;
-            logRetention.disabled = false;
-            cacheRetention.value = String(this.status.cacheRetentionDays);
-            logRetention.value = String(this.status.logRetentionDays);
-            document.getElementById('cleanupPolicyHint').textContent = `缓存超过 ${this.status.cacheRetentionDays} 天、日志超过 ${this.status.logRetentionDays} 天时移入恢复区`;
-            document.getElementById('runStorageCleanup').disabled = false;
-            document.getElementById('restoreLatestCleanup').disabled = !latestRecoveryBatchId;
-            const lastRun = policy.lastAutomaticRunAt
-                ? new Date(policy.lastAutomaticRunAt * 1000).toLocaleString()
-                : '尚未执行';
-            this.setMessage(`自动清理：${policy.automaticEnabled ? '已启用' : '未启用'} · 上次运行：${lastRun}`);
-        } catch (error) {
-            this.setMessage(`读取清理状态失败：${error}`, 'error');
-        }
+    isLocked() { return this.busy || this.confirming || this.loading || this.automaticSaving || this.retentionSaving; }
+
+    async refresh({ keepMessage = false } = {}) {
+        if (!this.invoke || this.busy || this.confirming || this.automaticSaving || this.retentionSaving) return;
+        if (this.refreshPromise) return this.refreshPromise;
+        this.loading = true; this.syncControls();
+        const revision = this.retentionRevision;
+        const policyRevision = this.policyRevision;
+        if (!keepMessage && !this.retentionDirty) this.setMessage('正在刷新存储占用…', 'pending');
+        this.refreshPromise = (async () => {
+            try {
+                const next = await this.invoke('get_cleanup_status');
+                if (!next?.usage || !next.policy) throw new Error('存储维护服务返回了无效结果');
+                this.status = policyRevision === this.policyRevision ? next : {
+                    ...next, policy: this.status.policy,
+                    cacheRetentionDays: this.status.cacheRetentionDays,
+                    logRetentionDays: this.status.logRetentionDays
+                };
+                for (const [id, value] of [['cleanupCacheUsage', next.usage.cacheBytes], ['cleanupLogUsage', next.usage.logBytes], ['cleanupRecoveryUsage', next.usage.recoveryBytes]]) {
+                    document.getElementById(id).textContent = formatBytes(value);
+                }
+                document.getElementById('automaticCleanupEnabled').checked = this.status.policy.automaticEnabled;
+                if (!this.retentionDirty && revision === this.retentionRevision) {
+                    document.getElementById('cleanupCacheRetention').value = String(this.status.cacheRetentionDays);
+                    document.getElementById('cleanupLogRetention').value = String(this.status.logRetentionDays);
+                }
+                this.updatePolicyHint();
+                if (!keepMessage && !this.retentionDirty && policyRevision === this.policyRevision && revision === this.retentionRevision) {
+                    const lastRun = next.policy.lastAutomaticRunAt ? new Date(next.policy.lastAutomaticRunAt * 1000).toLocaleString() : '尚未执行';
+                    this.setMessage(`自动清理：${next.policy.automaticEnabled ? '已启用' : '未启用'} · 上次运行：${lastRun}`);
+                }
+            } catch (error) {
+                if (!keepMessage) this.setMessage(`读取清理状态失败：${error}`, 'error');
+            } finally { this.loading = false; this.refreshPromise = null; this.syncControls(); }
+        })();
+        return this.refreshPromise;
     }
 
-    updatePermanentState(enabled) {
+    updatePolicyHint() {
+        if (!this.status) return;
+        document.getElementById('cleanupPolicyHint').textContent = `缓存超过 ${this.status.cacheRetentionDays} 天、日志超过 ${this.status.logRetentionDays} 天时移入恢复区`;
+    }
+
+    syncControls() {
+        const locked = this.isLocked();
+        this.card?.setAttribute('aria-busy', String(locked));
+        document.querySelectorAll('#storageCleanupCard button, #storageCleanupCard input').forEach(control => {
+            control.disabled = locked || !this.status;
+        });
+        // Keep the draft editable while a previous retention value is being saved or usage is refreshing.
+        for (const id of ['cleanupCacheRetention', 'cleanupLogRetention']) {
+            document.getElementById(id).disabled = this.busy || this.confirming || this.automaticSaving || !this.status;
+        }
+        const permanent = document.getElementById('permanentCleanupEnabled').checked;
         const recovery = document.getElementById('cleanupTargetRecovery');
-        recovery.disabled = !enabled;
-        if (!enabled) recovery.checked = false;
+        if (!permanent) recovery.checked = false;
+        recovery.disabled = locked || !this.status || !permanent;
         const button = document.getElementById('runStorageCleanup');
-        button.classList.toggle('settings-btn--danger', enabled);
-        button.classList.toggle('settings-btn--primary', !enabled);
-        document.getElementById('cleanupActionLabel').textContent = enabled ? '彻底删除' : '安全清理';
+        button.disabled = locked || !this.status || this.retentionDirty || !this.selectedTargets().length;
+        button.classList.toggle('settings-btn--danger', permanent);
+        button.classList.toggle('settings-btn--primary', !permanent);
+        document.getElementById('cleanupActionLabel').textContent = this.busy ? '正在处理…' : permanent ? '彻底删除' : '安全清理';
+        document.getElementById('restoreLatestCleanup').disabled = locked || this.retentionDirty || !this.status?.latestRecoveryBatchId;
+        document.getElementById('automaticCleanupEnabled').disabled = locked || this.retentionDirty || !this.status;
+        document.getElementById('refreshCleanupUsage').disabled = locked || !this.invoke;
     }
 
     selectedTargets() {
-        const targets = [];
-        if (document.getElementById('cleanupTargetCache').checked) targets.push('cache');
-        if (document.getElementById('cleanupTargetLogs').checked) targets.push('logs');
-        if (document.getElementById('cleanupTargetRecovery').checked) targets.push('recovery');
-        return targets;
+        return [['cleanupTargetCache', 'cache'], ['cleanupTargetLogs', 'logs'], ['cleanupTargetRecovery', 'recovery']]
+            .filter(([id]) => document.getElementById(id).checked).map(([, target]) => target);
     }
 
     async setAutomaticEnabled(enabled) {
         const toggle = document.getElementById('automaticCleanupEnabled');
-        toggle.disabled = true;
-        try {
-            await this.invoke('set_automatic_cleanup_enabled', { enabled });
-            showToast(enabled ? '已启用启动自动清理' : '已关闭启动自动清理');
-            await this.refresh();
-        } catch (error) {
-            toggle.checked = !enabled;
-            toggle.disabled = false;
-            showToast(`保存自动清理设置失败：${error}`, 'error');
+        if (this.isLocked() || this.retentionDirty || !this.status) {
+            toggle.checked = this.status?.policy?.automaticEnabled === true; return;
         }
+        const previous = this.status.policy.automaticEnabled;
+        this.automaticSaving = true; this.syncControls();
+        this.setMessage('正在保存自动维护设置…', 'pending');
+        try {
+            const policy = await this.invoke('set_automatic_cleanup_enabled', { enabled });
+            if (typeof policy?.automaticEnabled !== 'boolean') throw new Error('自动维护服务返回了无效结果');
+            this.status.policy = policy;
+            this.policyRevision++;
+            toggle.checked = policy.automaticEnabled;
+            this.setMessage(policy.automaticEnabled ? '已启用自动清理 · 将在下次启动时检查。' : '已关闭启动自动清理。', 'success');
+        } catch (error) {
+            toggle.checked = previous;
+            this.setMessage(`保存自动清理设置失败，已恢复原选项：${error}`, 'error');
+        } finally { this.automaticSaving = false; this.syncControls(); }
     }
 
     async saveRetention() {
-        const cacheDays = Number(document.getElementById('cleanupCacheRetention').value);
-        const logDays = Number(document.getElementById('cleanupLogRetention').value);
-        if (![cacheDays, logDays].every(value => Number.isInteger(value) && value >= 1 && value <= 365)) {
-            showToast('保留天数必须是 1 到 365 之间的整数', 'error');
-            await this.refresh();
-            return;
+        if (!this.invoke || !this.status || this.busy || this.confirming || this.automaticSaving) return;
+        const cacheInput = document.getElementById('cleanupCacheRetention');
+        const logInput = document.getElementById('cleanupLogRetention');
+        const cacheDays = Number(cacheInput.value), logDays = Number(logInput.value);
+        const valid = value => Number.isInteger(value) && value >= 1 && value <= 365;
+        cacheInput.setAttribute('aria-invalid', String(!valid(cacheDays)));
+        logInput.setAttribute('aria-invalid', String(!valid(logDays)));
+        if (![cacheDays, logDays].every(valid)) {
+            this.retentionQueued = null; this.retentionDirty = true;
+            this.setMessage('保留天数必须是 1 到 365 之间的整数。输入已保留，修正后可重新保存。', 'error');
+            this.syncControls(); return;
         }
-        try {
-            await this.invoke('set_cleanup_retention_days', { cacheDays, logDays });
-            showToast('自动清理保留期限已更新');
-            await this.refresh();
-        } catch (error) {
-            showToast(`保存保留期限失败：${error}`, 'error');
-            await this.refresh();
-        }
+        if (this.retentionInFlight?.cacheDays === cacheDays && this.retentionInFlight?.logDays === logDays
+            && this.retentionInFlight?.revision === this.retentionRevision && !this.retentionQueued) return this.retentionSavePromise;
+        this.retentionQueued = { cacheDays, logDays, revision: this.retentionRevision };
+        if (this.retentionSavePromise) return this.retentionSavePromise;
+        this.retentionSaving = true; this.syncControls();
+        this.retentionSavePromise = (async () => {
+            while (this.retentionQueued) {
+                const next = this.retentionQueued; this.retentionQueued = null;
+                this.retentionInFlight = next;
+                this.setMessage('正在保存保留期限…', 'pending');
+                try {
+                    await this.invoke('set_cleanup_retention_days', { cacheDays: next.cacheDays, logDays: next.logDays });
+                    this.status.cacheRetentionDays = next.cacheDays; this.status.logRetentionDays = next.logDays;
+                    this.policyRevision++;
+                    this.updatePolicyHint();
+                    if (next.revision === this.retentionRevision) {
+                        this.retentionDirty = false;
+                        this.setMessage('保留期限已保存。', 'success');
+                    }
+                } catch (error) {
+                    this.retentionDirty = true;
+                    if (next.revision === this.retentionRevision || this.retentionQueued) {
+                        this.setMessage(`保存保留期限失败，输入已保留：${error}`, 'error');
+                    }
+                }
+            }
+        })().finally(() => {
+            this.retentionInFlight = null; this.retentionSaving = false; this.retentionSavePromise = null; this.syncControls();
+        });
+        return this.retentionSavePromise;
     }
 
     async run() {
-        if (this.busy) return;
+        if (this.isLocked() || this.retentionDirty || !this.status) return;
         const targets = this.selectedTargets();
-        if (!targets.length) {
-            showToast('请至少选择一个清理目标', 'error');
-            return;
-        }
+        if (!targets.length) { this.setMessage('请至少选择一个清理目标。', 'error'); return; }
         const permanent = document.getElementById('permanentCleanupEnabled').checked;
         if (permanent) {
-            const confirmed = await showConfirmDialog(
-                '确认彻底删除',
-                '选中的缓存、日志或恢复区内容将被永久删除，无法从 DtKit 恢复。此操作不会访问受管目录之外的文件。',
-                { danger: true, confirmLabel: '永久删除' }
-            );
-            if (!confirmed) return;
+            this.confirming = true; this.syncControls();
+            let confirmed = false;
+            try {
+                confirmed = await showConfirmDialog('确认彻底删除',
+                    '选中的缓存、日志或恢复区内容将被永久删除，无法从 DtKit 恢复。此操作不会访问受管目录之外的文件。',
+                    { danger: true, confirmLabel: '永久删除' });
+            } finally { this.confirming = false; this.syncControls(); }
+            if (!confirmed) {
+                this.setMessage('已取消，未处理文件。');
+                document.getElementById('runStorageCleanup').focus({ preventScroll: true }); return;
+            }
         }
-
         await this.withBusy(async () => {
-            const result = await this.invoke('run_storage_cleanup', {
-                request: { targets, permanent }
-            });
-            const verb = permanent ? '永久删除' : '移入恢复区';
-            showToast(`已${verb} ${result.filesProcessed} 个文件（${formatBytes(result.bytesProcessed)}）`);
+            const result = await this.invoke('run_storage_cleanup', { request: { targets, permanent } });
+            return `已${permanent ? '永久删除' : '移入恢复区'} ${result.filesProcessed} 个文件（${formatBytes(result.bytesProcessed)}）`;
         });
     }
 
     async restore() {
-        if (this.busy) return;
+        if (this.isLocked() || this.retentionDirty || !this.status?.latestRecoveryBatchId) return;
         await this.withBusy(async () => {
             const result = await this.invoke('restore_latest_cleanup');
-            showToast(`已恢复 ${result.filesProcessed} 个文件（${formatBytes(result.bytesProcessed)}）`);
+            return `已恢复 ${result.filesProcessed} 个文件（${formatBytes(result.bytesProcessed)}）`;
         });
     }
 
     async withBusy(action) {
-        this.busy = true;
-        this.setControlsDisabled(true);
-        this.setMessage('正在处理，请稍候…');
+        this.busy = true; this.syncControls(); this.setMessage('正在处理，请稍候…', 'pending');
         try {
-            await action();
+            const message = await action(); this.setMessage(message, 'success'); showToast(message);
         } catch (error) {
-            showToast(`操作失败：${error}`, 'error');
-            this.setMessage(`操作失败：${error}`, 'error');
+            this.setMessage(`操作失败：${error}`, 'error'); showToast(`操作失败：${error}`, 'error');
         } finally {
-            this.busy = false;
-            this.setControlsDisabled(false);
-            await this.refresh();
+            this.busy = false; await this.refresh({ keepMessage: true }); this.syncControls();
         }
-    }
-
-    setControlsDisabled(disabled) {
-        document.querySelectorAll('#storageCleanupCard button, #storageCleanupCard input').forEach(control => {
-            control.disabled = disabled;
-        });
-        if (!disabled) this.updatePermanentState(document.getElementById('permanentCleanupEnabled').checked);
     }
 
     setMessage(message, tone = '') {
         const status = document.getElementById('cleanupStatus');
-        status.querySelector('span').textContent = message;
+        const text = status.querySelector('span');
+        if (text) text.textContent = message; else status.textContent = message;
         status.dataset.tone = tone;
     }
 }
 
 export function initCleanupSettings() {
-    if (!initializationPromise) {
-        initializationPromise = new CleanupSettings().init().catch(error => {
-            initializationPromise = null;
-            throw error;
-        });
-    }
+    if (!initializationPromise) initializationPromise = new CleanupSettings().init().catch(error => {
+        initializationPromise = null; throw error;
+    });
     return initializationPromise;
 }
 

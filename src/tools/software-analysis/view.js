@@ -1,5 +1,6 @@
 import { escapeHtml as escape } from '../../core/html.js';
-import { createReportCache, filterSoftware, formatBytes, formatCount, formatDuration, paginateSoftware, prepareSoftware } from './core.js';
+import { createReportCache, filterSoftware, formatBytes, formatCount, formatDuration, isPathWithin, normalizeWindowsPath, paginateSoftware, prepareSoftware } from './core.js';
+import { inventoryCsv, reportJson, reportSummary } from './export.js';
 import { detailMarkup, softwareRow, template } from './ui.js';
 import { relatedStartupItems } from './startup.js';
 
@@ -9,6 +10,7 @@ export function createSoftwareAnalysisView() {
     let listing = false, choosing = false, suspended = false, needsList = true;
     let request = null, startup = emptyStartup(), startupGeneration = 0;
     let reports = createReportCache();
+    let drillStack = [], download = null;
     const byId = id => root?.querySelector(`#${id}`);
     const available = () => Boolean(window.__TAURI__?.core?.invoke);
     const invoke = (command, args = {}) => window.__TAURI__.core.invoke(command, args);
@@ -24,14 +26,19 @@ export function createSoftwareAnalysisView() {
     function renderDetail() {
         if (!root || suspended) return;
         const item = selected();
-        byId('softwareDetail').innerHTML = detailMarkup(item, item ? reports.get(item.id) : null, {
+        const report = item ? reports.get(item.id) : null;
+        byId('softwareDetail').innerHTML = detailMarkup(item, report, {
             available: available(), suspended, running: Boolean(request), cancelling: Boolean(request?.cancelled),
-            progress: request?.progress
+            progress: request?.progress, canGoBack: drillStack.length > 0
         }, startup);
+        for (const segment of byId('softwareDetail').querySelectorAll('[data-software-share]')) {
+            segment.style.flexGrow = String(Number(segment.dataset.softwareShare) / Math.max(1, report.totalBytes));
+        }
     }
 
     function filters() {
-        return { query: byId('softwareSearch')?.value || '', scope: byId('softwareScope')?.value || 'all', sort: byId('softwareSort')?.value || 'name' };
+        return { query: byId('softwareSearch')?.value || '', scope: byId('softwareScope')?.value || 'all', sort: byId('softwareSort')?.value || 'name',
+            publisher: byId('softwarePublisher')?.value || '', status: byId('softwareStatus')?.value || 'all' };
     }
 
     function renderList() {
@@ -44,6 +51,7 @@ export function createSoftwareAnalysisView() {
             : `<div class="software-empty"><i class="${listing ? 'ri-refresh-line' : 'ri-apps-2-line'}"></i><strong>${!available() ? '请在 Windows 桌面版中使用' : listing ? '正在读取软件登记信息' : !snapshot ? '软件列表尚未就绪' : items.length ? '没有匹配的软件' : '没有可列出的软件'}</strong><p>${!available() ? '浏览器预览无法读取本机软件或扫描目录。' : listing ? '只读取软件清单，不扫描文件。' : !snapshot ? '点击“刷新列表”重试。' : items.length ? '试试其他关键词或范围。' : '可点击“选择软件目录”分析绿色软件。'}</p></div>`;
         byId('softwareTotal').textContent = snapshot ? formatCount(items.length) : '—';
         byId('softwareAnalyzable').textContent = snapshot ? formatCount(items.filter(item => item.canAnalyze).length) : '—';
+        byId('softwareUnknown').textContent = snapshot ? formatCount(items.filter(item => item.estimatedBytes === null).length) : '—';
         byId('softwareMeasured').textContent = formatCount([...reports.entries()].filter(([, report]) => report.complete).length);
         byId('softwareResultCount').textContent = snapshot ? `${formatCount(result.total)} 款软件 · 每页最多 60 项` : listing ? '正在读取软件列表…' : '等待读取';
         byId('softwareScannedAt').textContent = snapshot ? `${snapshot.cached ? '缓存列表' : '本次读取'}${timeLabel(snapshot.scannedAt)}` : '';
@@ -53,6 +61,7 @@ export function createSoftwareAnalysisView() {
         byId('softwareRefresh').disabled = !available() || listing || choosing || Boolean(request);
         byId('softwareRefresh').innerHTML = `<i class="ri-refresh-line"></i>${listing ? '正在读取…' : '刷新列表'}`;
         byId('softwareChooseFolder').disabled = !available() || !window.__TAURI__?.dialog?.open || choosing || Boolean(request);
+        byId('softwareExportInventory').disabled = !snapshot || !filtered.length || listing || Boolean(request);
         const warnings = snapshot?.warnings || [];
         byId('softwareWarnings').innerHTML = warnings.length ? `<details><summary>列表读取提示（${warnings.length}）</summary><ul>${warnings.map(warning => `<li>${escape(warning)}</li>`).join('')}</ul></details>` : '';
     }
@@ -68,6 +77,11 @@ export function createSoftwareAnalysisView() {
         snapshot = { scannedAt: result?.scannedAt, cached: result?.cached === true,
             warnings: (Array.isArray(result?.warnings) ? result.warnings : []).filter(item => typeof item === 'string').slice(0, 30) };
         needsList = false;
+        const publisher = byId('softwarePublisher'), previousPublisher = publisher.value;
+        publisher.innerHTML = '<option value="">全部发布者</option>' + [...new Set(items.map(item => item.publisher).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'zh-CN')).map(name => `<option value="${escape(name)}">${escape(name)}</option>`).join('');
+        publisher.value = previousPublisher;
+        if (publisher.selectedIndex < 0) publisher.value = '';
         if (selectedId && !selected()) { selectedId = null; startup = emptyStartup(); }
     }
 
@@ -89,7 +103,70 @@ export function createSoftwareAnalysisView() {
     function changeSelection(id) {
         if (request || suspended || id === selectedId) return;
         selectedId = id; startupGeneration++; startup = emptyStartup();
+        drillStack = [];
         render();
+    }
+
+    function drillInto(path) {
+        const parent = selected(), report = parent && reports.peek(parent.id);
+        if (!parent || !report || request || suspended || !available()) return;
+        // Only a displayed child from this report can become the next scan root.
+        if (!report.largestDirectories.some(row => row.path === path) || !isPathWithin(path, report.root)
+            || normalizeWindowsPath(path) === normalizeWindowsPath(report.root)) {
+            notice('目录不属于当前分析结果，请重新分析后重试。', true); return;
+        }
+        if (drillStack.length >= 32) { notice('已达到本次逐层分析的层数上限，可使用“选择软件目录”继续。'); return; }
+        drillStack.push({ selectedId, manualItem });
+        manualItem = { id: `folder:${path}`, name: path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path,
+            publisher: '', version: '', installLocation: path, estimatedBytes: null, source: '从分析报告进入的子目录',
+            installDate: '', canAnalyze: true, reason: '', scope: parent.scope, manual: true };
+        selectedId = manualItem.id; startupGeneration++; startup = emptyStartup();
+        void scanSelected();
+    }
+
+    function goBack() {
+        if (request || suspended || !drillStack.length) return;
+        const previous = drillStack.pop(); selectedId = previous.selectedId; manualItem = previous.manualItem;
+        startupGeneration++; startup = emptyStartup(); render();
+        byId('softwareScan')?.focus({ preventScroll: true });
+    }
+
+    function releaseDownload() {
+        if (!download) return;
+        clearTimeout(download.timer); URL.revokeObjectURL(download.url); download = null;
+    }
+
+    function saveDownload(content, name, type) {
+        releaseDownload();
+        const url = URL.createObjectURL(new Blob([content], { type }));
+        const link = document.createElement('a'); link.href = url; link.download = name;
+        const timer = setTimeout(releaseDownload, 30_000); download = { url, timer };
+        link.click();
+    }
+
+    async function exportData(kind) {
+        if (suspended || request || listing) return;
+        const token = generation, item = selected(), report = item && reports.peek(item.id);
+        try {
+            if (kind === 'inventory') {
+                const filtered = filterSoftware(items, filters(), reports);
+                if (!snapshot || !filtered.length) return;
+                saveDownload(inventoryCsv(filtered, reports), `软件筛选清单-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8');
+                notice(`已发起 CSV 下载，包含全部 ${formatCount(filtered.length)} 项筛选结果（不限当前分页）。`);
+            } else if (report && kind === 'report') {
+                saveDownload(reportJson(item, report), '软件空间分析报告.json', 'application/json;charset=utf-8');
+                notice('已发起 JSON 报告下载，包含统计范围、完成状态及扫描提示。');
+            } else if (report && kind === 'summary') {
+                await navigator.clipboard.writeText(reportSummary(item, report));
+                if (current(token)) notice('分析摘要已复制，包含统计范围和完整性说明。');
+            }
+        } catch (error) { if (current(token)) notice(`导出失败：${String(error)}`, true); }
+    }
+
+    function resetFilters() {
+        clearTimeout(searchTimer); searchTimer = null;
+        byId('softwareSearch').value = ''; byId('softwareScope').value = 'all'; byId('softwareSort').value = 'name';
+        byId('softwarePublisher').value = ''; byId('softwareStatus').value = 'all'; page = 1; renderList();
     }
 
     async function chooseFolder() {
@@ -242,6 +319,12 @@ export function createSoftwareAnalysisView() {
         else if (button.id === 'softwareCancel') void cancelScan('正在请求停止扫描…');
         else if (button.id === 'softwareStartupScan') void startupScan();
         else if (button.id === 'softwareStartupOpen') void openStartup();
+        else if (button.hasAttribute('data-software-drill')) drillInto(button.dataset.softwareDrill);
+        else if (button.id === 'softwareBack') goBack();
+        else if (button.id === 'softwareExportInventory') void exportData('inventory');
+        else if (button.id === 'softwareExportReport') void exportData('report');
+        else if (button.id === 'softwareCopySummary') void exportData('summary');
+        else if (button.id === 'softwareResetFilters') resetFilters();
         else if (button.id === 'softwarePrevious' || button.id === 'softwareNext') {
             page += button.id === 'softwarePrevious' ? -1 : 1; renderList();
             byId('softwareResultCount')?.focus({ preventScroll: true });
@@ -250,7 +333,7 @@ export function createSoftwareAnalysisView() {
 
     function setSuspended(value) {
         const wasSuspended = suspended; suspended = Boolean(value);
-        if (suspended) { clearTimeout(searchTimer); searchTimer = null; void cancelScan('', true); }
+        if (suspended) { clearTimeout(searchTimer); searchTimer = null; releaseDownload(); void cancelScan('', true); }
         else if (wasSuspended) { if (needsList) void loadSoftware(); else render(); }
     }
 
@@ -264,7 +347,7 @@ export function createSoftwareAnalysisView() {
             clearTimeout(searchTimer);
             if (!suspended) searchTimer = setTimeout(() => { searchTimer = null; page = 1; renderList(); }, 140);
         }, { signal });
-        for (const id of ['softwareScope', 'softwareSort']) byId(id).addEventListener('change', () => { clearTimeout(searchTimer); page = 1; renderList(); }, { signal });
+        for (const id of ['softwareScope', 'softwareSort', 'softwarePublisher', 'softwareStatus']) byId(id).addEventListener('change', () => { clearTimeout(searchTimer); page = 1; renderList(); }, { signal });
         window.addEventListener('dtkit:power-state', event => setSuspended(event.detail?.suspended), { signal });
         document.addEventListener('visibilitychange', () => setSuspended(document.hidden || window.__DTKIT_TOOL_PAGE__?.suspended), { signal });
         window.addEventListener('pagehide', () => { void cancelScan('', true); }, { signal });
@@ -279,9 +362,13 @@ export function createSoftwareAnalysisView() {
 
     function restore(state) {
         if (!root || state?.version !== 1) return;
+        drillStack = [];
         byId('softwareSearch').value = typeof state.query === 'string' ? state.query.slice(0, 256) : '';
         byId('softwareScope').value = ['all', 'user', 'system'].includes(state.scope) ? state.scope : 'all';
-        byId('softwareSort').value = ['name', 'estimated', 'measured'].includes(state.sort) ? state.sort : 'name';
+        byId('softwareSort').value = ['name', 'estimated', 'measured', 'publisher', 'date'].includes(state.sort) ? state.sort : 'name';
+        byId('softwarePublisher').value = typeof state.publisher === 'string' ? state.publisher : '';
+        if (byId('softwarePublisher').selectedIndex < 0) byId('softwarePublisher').value = '';
+        byId('softwareStatus').value = ['all', 'analyzable', 'no-location', 'unknown-size', 'measured', 'partial', 'unmeasured', 'large'].includes(state.status) ? state.status : 'all';
         selectedId = typeof state.selectedId === 'string' ? state.selectedId : null;
         page = Math.max(1, Math.floor(Number(state.page)) || 1); render();
     }
@@ -289,6 +376,7 @@ export function createSoftwareAnalysisView() {
     async function destroy() {
         generation++; startupGeneration++;
         clearTimeout(searchTimer); searchTimer = null;
+        releaseDownload(); drillStack = [];
         controller?.abort(); controller = null;
         const hadRoot = Boolean(root);
         const active = request;

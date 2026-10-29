@@ -5,6 +5,9 @@ import '../../css/tools/html-preview.css';
  */
 import { registerTool } from '../toolRegistry.js';
 import previewRunnerSource from '../../preview-runner.js?raw';
+import { getTemplate } from './template.js';
+import { exampleCodes } from './examples.js';
+import { createWorkspace } from './workspace.js';
 
 // ============================================
 // 工具状态
@@ -18,388 +21,12 @@ const previewState = {
     disposed: false,
     runnerReady: false,
     lastRendered: null,
+    pendingPayload: null,
+    requestId: null,
+    runResult: 'empty',
     abortController: null  // 用于清理事件监听器
 };
-
-// ============================================
-// HTML 模板
-// ============================================
-function getTemplate() {
-    return `
-        <div class="view-container html-preview-view">
-            <div class="html-preview-container">
-                <!-- 顶部工具栏 -->
-                <div class="html-preview-toolbar">
-                    <div class="html-preview-title">
-                        <i class="ri-code-box-line"></i>
-                        <span>HTML 代码预览</span>
-                    </div>
-                    <div class="html-preview-actions">
-                        <label class="html-preview-toggle">
-                            <input type="checkbox" id="autoRefreshToggle" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-label">自动刷新</span>
-                        </label>
-                        <button id="refreshPreviewBtn" class="html-preview-btn" title="刷新预览">
-                            <i class="ri-refresh-line"></i> 刷新
-                        </button>
-                        <button id="clearCodeBtn" class="html-preview-btn html-preview-btn--secondary" title="清空代码">
-                            <i class="ri-delete-bin-line"></i> 清空
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 主体区域 -->
-                <div class="html-preview-main">
-                    <!-- 代码编辑区 -->
-                    <div class="html-preview-editor-panel">
-                        <div class="html-preview-panel-header">
-                            <span class="panel-tab active" data-tab="html">
-                                <i class="ri-html5-line"></i> HTML
-                            </span>
-                            <span class="panel-tab" data-tab="css">
-                                <i class="ri-css3-line"></i> CSS
-                            </span>
-                            <span class="panel-tab" data-tab="js">
-                                <i class="ri-javascript-line"></i> JS
-                            </span>
-                        </div>
-                        <div class="html-preview-editors">
-                            <textarea id="htmlEditor" class="html-preview-textarea active"
-                                placeholder="在此输入 HTML 代码..."
-                                spellcheck="false"></textarea>
-                            <textarea id="cssEditor" class="html-preview-textarea"
-                                placeholder="在此输入 CSS 样式..."
-                                spellcheck="false"></textarea>
-                            <textarea id="jsEditor" class="html-preview-textarea"
-                                placeholder="在此输入 JavaScript 代码..."
-                                spellcheck="false"></textarea>
-                        </div>
-                    </div>
-
-                    <!-- 预览区 -->
-                    <div id="previewResultPanel" class="html-preview-result-panel">
-                        <div class="html-preview-panel-header">
-                            <span><i class="ri-eye-line"></i> 预览效果</span>
-                            <div class="html-preview-header-actions">
-                                <div class="html-preview-size-info">
-                                    <span id="previewSize">--</span>
-                                </div>
-                                <button id="fullscreenBtn" class="html-preview-fullscreen-btn" title="全屏预览">
-                                    <i class="ri-fullscreen-line"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="html-preview-frame-wrapper">
-                            <iframe id="previewFrame" class="html-preview-frame"
-                                sandbox="allow-scripts allow-modals"
-                                title="代码预览"></iframe>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 示例代码 -->
-                <div class="html-preview-examples">
-                    <span class="html-preview-examples-label">快速示例：</span>
-                    <button class="html-preview-example-btn" data-example="hello">Hello World</button>
-                    <button class="html-preview-example-btn" data-example="button">按钮样式</button>
-                    <button class="html-preview-example-btn" data-example="card">卡片组件</button>
-                    <button class="html-preview-example-btn" data-example="animation">CSS 动画</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// ============================================
-// CSS 样式
-// ============================================
-
-
-// ============================================
-// 示例代码
-// ============================================
-const exampleCodes = {
-    hello: {
-        html: `<div class="hello-container">
-    <h1>👋 Hello World!</h1>
-    <p>欢迎使用 HTML 代码预览工具</p>
-    <button onclick="alert('Hello!')">点击我</button>
-</div>`,
-        css: `.hello-container {
-    text-align: center;
-    padding: 40px;
-    font-family: -apple-system, sans-serif;
-}
-
-h1 {
-    color: #1e293b;
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-}
-
-p {
-    color: #64748b;
-    margin-bottom: 20px;
-}
-
-button {
-    padding: 12px 24px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 16px;
-    cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
-}`,
-        js: ``
-    },
-    button: {
-        html: `<div class="button-showcase">
-    <button class="btn btn-primary">主要按钮</button>
-    <button class="btn btn-secondary">次要按钮</button>
-    <button class="btn btn-outline">边框按钮</button>
-    <button class="btn btn-ghost">幽灵按钮</button>
-</div>`,
-        css: `.button-showcase {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-    justify-content: center;
-    padding: 40px;
-    font-family: -apple-system, sans-serif;
-}
-
-.btn {
-    padding: 12px 28px;
-    font-size: 14px;
-    font-weight: 500;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    border: 2px solid transparent;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    color: white;
-}
-
-.btn-primary:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 25px rgba(99, 102, 241, 0.35);
-}
-
-.btn-secondary {
-    background: #f1f5f9;
-    color: #475569;
-}
-
-.btn-secondary:hover {
-    background: #e2e8f0;
-}
-
-.btn-outline {
-    background: transparent;
-    border-color: #6366f1;
-    color: #6366f1;
-}
-
-.btn-outline:hover {
-    background: #6366f1;
-    color: white;
-}
-
-.btn-ghost {
-    background: transparent;
-    color: #6366f1;
-}
-
-.btn-ghost:hover {
-    background: rgba(99, 102, 241, 0.1);
-}`,
-        js: ``
-    },
-    card: {
-        html: `<div class="card">
-    <div class="card-image">
-        <span class="card-badge">热门</span>
-    </div>
-    <div class="card-content">
-        <h3 class="card-title">精美卡片组件</h3>
-        <p class="card-desc">这是一个具有现代设计感的卡片组件示例，包含图片占位、标题、描述和操作按钮。</p>
-        <div class="card-footer">
-            <span class="card-price">¥99</span>
-            <button class="card-btn">立即购买</button>
-        </div>
-    </div>
-</div>`,
-        css: `* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    background: #f1f5f9;
-    font-family: -apple-system, sans-serif;
-}
-
-.card {
-    width: 300px;
-    background: white;
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s, box-shadow 0.3s;
-}
-
-.card:hover {
-    transform: translateY(-8px);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
-}
-
-.card-image {
-    height: 160px;
-    background: linear-gradient(135deg, #6366f1, #ec4899);
-    position: relative;
-}
-
-.card-badge {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    padding: 4px 12px;
-    background: rgba(255, 255, 255, 0.9);
-    color: #ec4899;
-    font-size: 12px;
-    font-weight: 600;
-    border-radius: 20px;
-}
-
-.card-content {
-    padding: 20px;
-}
-
-.card-title {
-    font-size: 18px;
-    color: #1e293b;
-    margin-bottom: 10px;
-}
-
-.card-desc {
-    font-size: 14px;
-    color: #64748b;
-    line-height: 1.6;
-    margin-bottom: 16px;
-}
-
-.card-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.card-price {
-    font-size: 24px;
-    font-weight: 700;
-    color: #6366f1;
-}
-
-.card-btn {
-    padding: 10px 20px;
-    background: #6366f1;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-
-.card-btn:hover {
-    background: #4f46e5;
-}`,
-        js: ``
-    },
-    animation: {
-        html: `<div class="animation-demo">
-    <div class="circle circle-1"></div>
-    <div class="circle circle-2"></div>
-    <div class="circle circle-3"></div>
-    <p class="loading-text">加载中...</p>
-</div>`,
-        css: `.animation-demo {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    gap: 20px;
-    background: linear-gradient(135deg, #1e1b4b, #312e81);
-}
-
-.circle {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    position: absolute;
-}
-
-.animation-demo {
-    position: relative;
-}
-
-.circle-1 {
-    background: #6366f1;
-    animation: bounce 1.2s ease-in-out infinite;
-    left: calc(50% - 40px);
-}
-
-.circle-2 {
-    background: #8b5cf6;
-    animation: bounce 1.2s ease-in-out 0.2s infinite;
-    left: 50%;
-    transform: translateX(-50%);
-}
-
-.circle-3 {
-    background: #a855f7;
-    animation: bounce 1.2s ease-in-out 0.4s infinite;
-    left: calc(50% + 20px);
-}
-
-@keyframes bounce {
-    0%, 100% {
-        top: 50%;
-        transform: translateY(-50%);
-    }
-    50% {
-        top: calc(50% - 30px);
-        transform: translateY(-50%);
-    }
-}
-
-.loading-text {
-    color: rgba(255, 255, 255, 0.7);
-    font-family: -apple-system, sans-serif;
-    font-size: 14px;
-    margin-top: 60px;
-    letter-spacing: 2px;
-}`,
-        js: ``
-    }
-};
+let workspace = null;
 
 // ============================================
 // 初始化函数
@@ -417,17 +44,26 @@ async function init() {
     previewState.autoRefresh = document.getElementById('autoRefreshToggle')?.checked !== false;
     previewState.isFullscreen = false;
     previewState.lastRendered = null;
+    previewState.pendingPayload = null;
+    previewState.requestId = null;
+    previewState.runResult = 'empty';
 
+    workspace = createWorkspace({ signal: previewState.abortController.signal, onEdit: handleEdit });
     bindEvents();
     initializePreviewRunner();
 }
 
-function initializePreviewRunner() {
+function initializePreviewRunner(payload = previewState.lastRendered || editorPayload()) {
     const previewFrame = document.getElementById('previewFrame');
     if (!previewFrame || previewState.suspended || previewState.disposed) return;
     previewState.runnerReady = false;
 
     const nonce = crypto.randomUUID().replaceAll('-', '');
+    previewState.requestId = nonce;
+    previewState.pendingPayload = { ...payload };
+    previewState.runResult = 'running';
+    setRunStatus('running', '正在更新…');
+    document.getElementById('previewNotice').hidden = true;
     const runnerDocument = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -450,36 +86,6 @@ function initializePreviewRunner() {
 function bindEvents() {
     const signal = previewState.abortController?.signal;
 
-    // 标签页切换
-    document.querySelectorAll('.panel-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchTab(tab.dataset.tab), { signal });
-    });
-
-    // 编辑器输入
-    const editors = ['htmlEditor', 'cssEditor', 'jsEditor'];
-    editors.forEach(id => {
-        const editor = document.getElementById(id);
-        if (editor) {
-            editor.addEventListener('input', () => {
-                if (previewState.autoRefresh) {
-                    debounceRefresh();
-                }
-            }, { signal });
-
-            // Tab 键支持
-            editor.addEventListener('keydown', (e) => {
-                if (e.key === 'Tab') {
-                    e.preventDefault();
-                    const start = editor.selectionStart;
-                    const end = editor.selectionEnd;
-                    editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
-                    editor.selectionStart = editor.selectionEnd = start + 4;
-                    if (previewState.autoRefresh) debounceRefresh();
-                }
-            }, { signal });
-        }
-    });
-
     // 刷新按钮
     const refreshBtn = document.getElementById('refreshPreviewBtn');
     if (refreshBtn) {
@@ -498,7 +104,7 @@ function bindEvents() {
         autoRefreshToggle.addEventListener('change', (e) => {
             previewState.autoRefresh = e.target.checked;
             if (previewState.autoRefresh) debounceRefresh();
-            else cancelRefresh();
+            else { cancelRefresh(); updateDraftStatus(); }
         }, { signal });
     }
 
@@ -511,13 +117,14 @@ function bindEvents() {
     // ESC 键退出全屏（使用 signal 管理）
     document.addEventListener('keydown', handleKeydown, { signal });
     window.addEventListener('dtkit:power-state', handlePowerState, { signal });
+    window.addEventListener('message', handleRunnerStatus, { signal });
 
     // runner 加载完成后补发当前内容，避免首次消息早于 iframe 初始化。
     const previewFrame = document.getElementById('previewFrame');
     previewFrame?.addEventListener('load', () => {
         if (previewState.suspended || previewState.disposed || !previewFrame.src.startsWith('data:text/html')) return;
         previewState.runnerReady = true;
-        renderPayload(previewState.autoRefresh ? editorPayload() : previewState.lastRendered || editorPayload());
+        renderPayload(previewState.pendingPayload || editorPayload());
     }, { signal });
 
     // 示例按钮
@@ -535,9 +142,12 @@ function handlePowerState(event) {
     if (suspended) {
         cancelRefresh();
         previewState.runnerReady = false;
+        previewState.requestId = null;
         previewFrame.src = 'about:blank';
+        previewState.runResult = 'paused';
+        setRunStatus('paused', '预览已暂停');
     } else {
-        initializePreviewRunner();
+        initializePreviewRunner(previewState.autoRefresh ? editorPayload() : previewState.lastRendered || editorPayload());
     }
 }
 
@@ -562,6 +172,13 @@ function setFullscreen(fullscreen) {
         icon.className = previewState.isFullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line';
     }
     btn.title = previewState.isFullscreen ? '退出全屏' : '全屏预览';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', String(previewState.isFullscreen));
+    for (const selector of ['.html-preview-toolbar', '#previewEditorPanel', '#previewDivider', '.html-preview-examples']) {
+        const node = document.querySelector(selector);
+        if (node) node.inert = previewState.isFullscreen;
+    }
+    workspace?.fitViewport();
 }
 
 // ============================================
@@ -571,7 +188,12 @@ function handleKeydown(e) {
     // ESC 退出全屏
     if (e.key === 'Escape' && previewState.isFullscreen) {
         e.preventDefault();
+        e.stopPropagation();
         toggleFullscreen();
+        document.getElementById('fullscreenBtn')?.focus();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault(); refreshPreview();
     }
 }
 
@@ -579,27 +201,53 @@ function handleKeydown(e) {
 // 切换标签页
 // ============================================
 function switchTab(tab, focus = true) {
-    if (!['html', 'css', 'js'].includes(tab)) return;
-    // 更新标签高亮
-    document.querySelectorAll('.panel-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === tab);
-    });
+    workspace?.setTab(tab, focus);
+}
 
-    // 显示对应编辑器
-    document.querySelectorAll('.html-preview-textarea').forEach(editor => {
-        editor.classList.remove('active');
-    });
+function handleEdit() {
+    const payload = editorPayload();
+    updateSizeInfo(payload.html, payload.css, payload.js);
+    updateDraftStatus();
+    if (previewState.autoRefresh) debounceRefresh();
+}
 
-    const editorMap = {
-        'html': 'htmlEditor',
-        'css': 'cssEditor',
-        'js': 'jsEditor'
-    };
+function hasDraftChanges() {
+    const payload = editorPayload();
+    return ['html', 'css', 'js'].some(type => payload[type] !== (previewState.lastRendered?.[type] || ''));
+}
 
-    const targetEditor = document.getElementById(editorMap[tab]);
-    if (targetEditor) {
-        targetEditor.classList.add('active');
-        if (focus) targetEditor.focus();
+function updateDraftStatus() {
+    if (hasDraftChanges()) setRunStatus('pending', previewState.autoRefresh ? '等待更新…' : '有未运行的修改');
+    else {
+        const result = previewState.runResult;
+        setRunStatus(result, { empty: '等待代码', ready: '已更新', error: '运行出错', running: '正在更新…', paused: '预览已暂停' }[result]);
+    }
+}
+
+function setRunStatus(state, text) {
+    const status = document.getElementById('previewRunStatus');
+    if (!status) return;
+    status.dataset.state = state; status.textContent = text;
+}
+
+function handleRunnerStatus(event) {
+    const frame = document.getElementById('previewFrame'), data = event.data;
+    if (previewState.disposed || previewState.suspended || event.source !== frame?.contentWindow
+        || !previewState.requestId || data?.requestId !== previewState.requestId) return;
+    if (data.type === 'dtkit-preview-escape' && previewState.isFullscreen) {
+        setFullscreen(false); document.getElementById('fullscreenBtn')?.focus();
+        return;
+    }
+    if (data.type !== 'dtkit-preview-status') return;
+    if (data.status === 'error') {
+        const notice = document.getElementById('previewNotice');
+        notice.textContent = `预览出错：${String(data.message || '请检查 JavaScript 代码').slice(0, 200)}`;
+        notice.hidden = false; previewState.runResult = 'error'; setRunStatus('error', '运行出错');
+    } else if (data.status === 'ready') {
+        const empty = !Object.values(previewState.lastRendered || {}).some(value => value.trim());
+        document.getElementById('previewEmpty').hidden = !empty;
+        previewState.runResult = empty ? 'empty' : 'ready';
+        updateDraftStatus();
     }
 }
 
@@ -624,13 +272,14 @@ function cancelRefresh() {
 // 刷新预览
 // ============================================
 function refreshPreview() {
+    cancelRefresh();
     if (previewState.suspended || previewState.disposed) return;
     const payload = editorPayload();
     previewState.lastRendered = payload;
     updateSizeInfo(payload.html, payload.css, payload.js);
     // A refresh is a new user-code context. This also stops timers/workers created
     // by a previous render instead of accumulating them in the runner document.
-    initializePreviewRunner();
+    initializePreviewRunner(payload);
 }
 
 function editorPayload() {
@@ -648,11 +297,14 @@ function renderPayload(payload) {
     const previewFrame = document.getElementById('previewFrame');
     if (!previewFrame) return;
     previewState.lastRendered = { ...payload };
-    updateSizeInfo(payload.html, payload.css, payload.js);
+    const current = editorPayload();
+    updateSizeInfo(current.html, current.css, current.js);
+    document.getElementById('previewEmpty').hidden = Object.values(payload).some(value => value.trim());
     if (!previewState.runnerReady) return;
 
     previewFrame.contentWindow?.postMessage({
         type: 'dtkit-preview-render',
+        requestId: previewState.requestId,
         payload
     }, '*');
 }
@@ -687,7 +339,7 @@ function clearCode() {
     if (htmlEditor) htmlEditor.value = '';
     if (cssEditor) cssEditor.value = '';
     if (jsEditor) jsEditor.value = '';
-
+    workspace?.updateEditors();
     refreshPreview();
 }
 
@@ -705,7 +357,8 @@ function loadExample(name) {
     if (htmlEditor) htmlEditor.value = example.html || '';
     if (cssEditor) cssEditor.value = example.css || '';
     if (jsEditor) jsEditor.value = example.js || '';
-
+    workspace?.updateEditors();
+    switchTab('html', false);
     refreshPreview();
 }
 
@@ -714,9 +367,11 @@ function loadExample(name) {
 // ============================================
 function destroy() {
     cancelRefresh();
+    setFullscreen(false);
     previewState.disposed = true;
     previewState.suspended = true;
     previewState.runnerReady = false;
+    previewState.requestId = null;
     const previewFrame = document.getElementById('previewFrame');
     if (previewFrame) previewFrame.src = 'about:blank';
 
@@ -725,11 +380,7 @@ function destroy() {
         previewState.abortController.abort();
         previewState.abortController = null;
     }
-
-    // 如果在全屏状态，退出全屏
-    if (previewState.isFullscreen) {
-        previewState.isFullscreen = false;
-    }
+    workspace = null;
 
     console.log('[HTMLPreview] 工具已销毁');
 }
@@ -741,9 +392,10 @@ function serialize() {
         if (!editor) continue;
         editors[type] = { value: editor.value, selectionStart: editor.selectionStart,
             selectionEnd: editor.selectionEnd, selectionDirection: editor.selectionDirection,
-            scrollTop: editor.scrollTop, scrollLeft: editor.scrollLeft };
+            ...workspace.scrollPosition(type) };
     }
     return { version: 1, editors, activeTab: document.querySelector('.panel-tab.active')?.dataset.tab || 'html',
+        ...workspace?.snapshot(),
         autoRefresh: previewState.autoRefresh, fullscreen: previewState.isFullscreen,
         rendered: previewState.lastRendered,
         focusedEditor: document.hasFocus() ? document.activeElement?.id : null };
@@ -765,10 +417,11 @@ function restore(snapshot) {
             editor.setSelectionRange(saved.selectionStart, saved.selectionEnd,
                 ['forward', 'backward', 'none'].includes(saved.selectionDirection) ? saved.selectionDirection : 'none');
         }
-        editor.scrollTop = Math.max(0, Number(saved.scrollTop) || 0);
-        editor.scrollLeft = Math.max(0, Number(saved.scrollLeft) || 0);
+        workspace?.restoreScroll(type, saved);
     }
     setFullscreen(snapshot.fullscreen);
+    workspace?.updateEditors();
+    workspace?.restore(snapshot);
     const rendered = snapshot.rendered;
     previewState.lastRendered = rendered && ['html', 'css', 'js'].every(type => typeof rendered[type] === 'string')
         ? { html: rendered.html, css: rendered.css, js: rendered.js } : editorPayload();
@@ -776,7 +429,7 @@ function restore(snapshot) {
         const payload = previewState.autoRefresh ? editorPayload() : previewState.lastRendered;
         previewState.lastRendered = payload;
         updateSizeInfo(payload.html, payload.css, payload.js);
-        initializePreviewRunner();
+        initializePreviewRunner(payload);
         if (['htmlEditor', 'cssEditor', 'jsEditor'].includes(snapshot.focusedEditor)) document.getElementById(snapshot.focusedEditor)?.focus({ preventScroll: true });
     }
 }

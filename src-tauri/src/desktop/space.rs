@@ -212,6 +212,15 @@ impl DesktopSpaceManager {
     }
 
     pub(crate) fn resume(&self, app: &AppHandle) {
+        self.resume_with_window_policy(app, true);
+    }
+
+    /// Register the saved mode without constructing even a hidden WebView.
+    pub(crate) fn resume_background(&self, app: &AppHandle) {
+        self.resume_with_window_policy(app, false);
+    }
+
+    fn resume_with_window_policy(&self, app: &AppHandle, prepare_window: bool) {
         let manager = self.clone();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -222,7 +231,7 @@ impl DesktopSpaceManager {
                 .lock()
                 .map(|inner| inner.mode)
                 .unwrap_or_default();
-            if let Err(error) = manager.apply_mode(&app, mode).await {
+            if let Err(error) = manager.apply_mode_with_window_policy(&app, mode, prepare_window).await {
                 eprintln!("[DesktopSpace] 恢复桌面整理失败: {error}");
                 let _ = app.emit("desktop-organizer-error", error);
             }
@@ -230,6 +239,10 @@ impl DesktopSpaceManager {
     }
 
     async fn apply_mode(&self, app: &AppHandle, mode: ModeConfig) -> Result<(), String> {
+        self.apply_mode_with_window_policy(app, mode, true).await
+    }
+
+    async fn apply_mode_with_window_policy(&self, app: &AppHandle, mode: ModeConfig, prepare_window: bool) -> Result<(), String> {
         super::hotzone::set_user_interacting(false);
         super::hotzone::stop_hotzone_monitor();
         if let Some(window) = app.get_webview_window("desktop-organizer") {
@@ -264,7 +277,7 @@ impl DesktopSpaceManager {
                 Err(error) => (false, Some(format!("桌面空间已启用，但默认快捷键未能设置：{error}。可点击“打开空间”，或在快捷键设置中更换组合键。"))),
             }
         };
-        if let Err(error) = self.ensure_space(app) {
+        if let Err(error) = if prepare_window { self.ensure_space(app).map(|_| ()) } else { Ok(()) } {
             if added {
                 let _ = app
                     .state::<ShortcutRegistry>()
@@ -304,7 +317,8 @@ impl DesktopSpaceManager {
             .lock()
             .map_err(|_| "桌面整理状态不可用")?
             .shortcut_warning = shortcut_warning;
-        // Startup and mode selection only prepare the hidden WebView.
+        // Interactive mode selection may prepare a hidden WebView; login starts
+        // only restore shortcuts and defer that WebView until the first request.
         Ok(())
     }
 

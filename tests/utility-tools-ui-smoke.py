@@ -1,94 +1,14 @@
-import os
+"""Compatibility entry point for the expanded three-tool UI regression."""
+
+import importlib.util
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+spec = importlib.util.spec_from_file_location(
+    "utility_improvements", Path(__file__).with_name("utility-tools-improvements-ui-smoke.py")
+)
+suite = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(suite)
 
-
-BASE_URL = os.environ.get("DTKIT_TEST_BASE_URL", "http://127.0.0.1:4173")
-SCREENSHOT_DIR = Path(r"C:\tmp\dtkit-utility-tools")
-
-
-def open_library(page):
-    page.goto(BASE_URL)
-    page.wait_for_load_state("networkidle")
-    page.locator(".tool-card").first.wait_for(state="visible")
-
-
-with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1360, "height": 900})
-    console_errors = []
-    page_errors = []
-    page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
-    page.on("pageerror", lambda error: page_errors.append(str(error)))
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-
-    open_library(page)
-
-    for tool_id in ("image-compressor", "favicon-generator"):
-        card = page.locator(f'[data-tool-id="{tool_id}"]')
-        assert card.get_attribute("data-status") == "planned"
-        assert card.get_attribute("aria-disabled") == "true"
-        assert "即将推出" in card.inner_text()
-        card.click()
-        assert page.locator(f'#dynamicToolContainer[data-tool-id="{tool_id}"]').count() == 0
-
-    page.locator('[data-tool-id="url-encoder"]').click()
-    page.locator("#urlInput").wait_for(state="visible")
-    source_url = "https://example.com/搜索?q=桌面 工具&lang=zh-CN"
-    page.locator("#urlMode").select_option("full")
-    page.locator("#urlInput").fill(source_url)
-    page.locator("#urlEncodeBtn").click()
-    encoded_url = page.locator("#urlOutput").input_value()
-    assert encoded_url.startswith("https://example.com/")
-    assert "%E6%90%9C%E7%B4%A2" in encoded_url
-    page.locator("#urlSwapBtn").click()
-    page.locator("#urlDecodeBtn").click()
-    assert page.locator("#urlOutput").input_value() == source_url
-    page.screenshot(path=str(SCREENSHOT_DIR / "url-encoder.png"), full_page=True)
-
-    open_library(page)
-    page.locator('[data-tool-id="unit-converter"]').click()
-    page.locator("#unitInput").wait_for(state="visible")
-    page.locator('[data-unit-category="temperature"]').click()
-    from_combo = page.locator('[data-unit-combobox="unitFrom"]')
-    from_combo.locator('.unit-combobox__trigger').click()
-    assert from_combo.locator('[data-unit-option]').count() == 3
-    from_combo.locator('[data-unit-option="c"]').click()
-    to_combo = page.locator('[data-unit-combobox="unitTo"]')
-    to_combo.locator('.unit-combobox__trigger').click()
-    to_combo.locator('.unit-combobox__search input').fill('华氏')
-    assert to_combo.locator('[data-unit-option]').count() == 1
-    to_combo.locator('[data-unit-option="f"]').click()
-    page.locator("#unitInput").fill("100")
-    assert page.locator("#unitOutput").input_value() == "212"
-    assert "100 °C = 212 °F" in page.locator("#unitEquation").inner_text()
-    assert page.locator("#unitOverviewList .unit-overview-item").count() == 3
-    page.locator('[data-unit-target="k"]').click()
-    assert page.locator("#unitOutput").input_value() == "373.15"
-    page.screenshot(path=str(SCREENSHOT_DIR / "unit-converter.png"), full_page=True)
-    page.set_viewport_size({"width": 760, "height": 800})
-    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-    page.screenshot(path=str(SCREENSHOT_DIR / "unit-converter-narrow.png"), full_page=True)
-    page.set_viewport_size({"width": 1360, "height": 900})
-
-    open_library(page)
-    page.locator('[data-tool-id="crontab-explainer"]').click()
-    page.locator("#cronInput").wait_for(state="visible")
-    page.locator("#cronInput").fill("0 9 * * MON-FRI")
-    page.locator("#cronExplainBtn").click()
-    assert "周一" in page.locator("#cronSummary").inner_text()
-    assert page.locator("#cronFieldGrid .cron-field-card").count() == 5
-    assert page.locator("#cronUpcoming li").count() == 5
-
-    page.locator("#cronInput").fill("60 * * * *")
-    page.locator("#cronExplainBtn").click()
-    assert page.locator("#cronError").is_visible()
-    assert "超出范围" in page.locator("#cronError").inner_text()
-    page.screenshot(path=str(SCREENSHOT_DIR / "crontab-explainer.png"), full_page=True)
-
-    assert not page_errors, f"Page errors: {page_errors}"
-    assert not console_errors, f"Console errors: {console_errors}"
-    browser.close()
-
-print("Utility tool UI smoke test passed")
+if __name__ == "__main__":
+    with suite.multi.production_url() as base_url:
+        suite.run(base_url)

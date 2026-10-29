@@ -38,7 +38,7 @@ def overlays(context):
 
 
 def main_and_quick_visibility(main, context, process):
-    """User-requested hiding includes main even when a quick window owns it."""
+    """Main and quick windows remain on the taskbar until the user restores them."""
     import tkinter as tk
     from ctypes import wintypes
     user=ctypes.windll.user32
@@ -62,6 +62,9 @@ def main_and_quick_visibility(main, context, process):
             return True
         user.EnumWindows(callback_type(inspect),0)
         return result
+    def window_title(handle):
+        title=ctypes.create_unicode_buffer(256);user.GetWindowTextW(handle,title,256)
+        return title.value
     request={'instanceId':'native-main-visibility','requestId':'hidden-'+uuid4().hex}
     try:
         invoke(main,'open_quick_host',{'target':{'kind':'tool','toolId':'timestamp-converter'}})
@@ -76,22 +79,47 @@ def main_and_quick_visibility(main, context, process):
             request['requestId']='hidden-'+uuid4().hex
             invoke(quick,'start_screen_region_capture',{**request,'keepHidden':True})
             wait(lambda:len(overlays(context))==1)
-            assert all(not user.IsWindowVisible(handle) for handle in handles)
+            assert all(user.IsWindowVisible(handle) and user.IsIconic(handle) for handle in handles)
             overlay=overlays(context)[0];expect(overlay.locator('#regionLoading')).to_be_hidden()
             if cancel:overlay.keyboard.press('Escape')
             else:
                 overlay.mouse.move(100,100);overlay.mouse.down();overlay.mouse.move(480,350);overlay.mouse.up();overlay.keyboard.press('Enter')
             wait(lambda:not overlays(context))
-            wait(lambda:quick.evaluate('request=>window.__visibilityShots.some(result=>result.requestId===request)',request['requestId']))
             main.wait_for_timeout(300)
-            assert all(not user.IsWindowVisible(handle) for handle in handles), 'Completion and cancellation must leave all DtKit windows hidden'
-            # A deliberate second launch follows the same ensure_main_window
-            # path as a tray click, restoring the retained original quick view.
-            returning=subprocess.Popen([process.args[0]],cwd=Path(process.args[0]).parent,creationflags=subprocess.CREATE_NO_WINDOW)
-            returning.wait(timeout=10)
-            wait(lambda:all(user.IsWindowVisible(handle) for handle in handles))
+            assert all(user.IsWindowVisible(handle) and user.IsIconic(handle) for handle in handles), 'Completion and cancellation must leave taskbar entries available'
+            # Restore the original windows as the user would from the taskbar.
+            for handle in handles:user.ShowWindow(handle, 9)
+            wait(lambda:all(user.IsWindowVisible(handle) and not user.IsIconic(handle) for handle in handles))
+            wait(lambda:quick.evaluate('request=>window.__visibilityShots.some(result=>result.requestId===request)',request['requestId']))
             assert len(context.pages)==2, 'Returning must restore the original windows, preserving the captured result'
-        print('Native main and quick windows stayed hidden after success/cancel and returned only on an explicit user launch',flush=True)
+        # Restoring any participant while selection is active cancels capture,
+        # instead of capturing the newly visible DtKit window.
+        for restored_title in ['DtKit', 'DtKit 快捷窗口']:
+            request['requestId']='restored-'+uuid4().hex
+            invoke(quick,'start_screen_region_capture',{**request,'keepHidden':True})
+            wait(lambda:len(overlays(context))==1 and all(user.IsIconic(handle) for handle in handles))
+            restored=next(handle for handle in handles if window_title(handle)==restored_title)
+            user.ShowWindow(restored,9)
+            wait(lambda:not overlays(context))
+            assert not user.IsIconic(restored), 'The restored window must remain visible'
+            for handle in handles:
+                if user.IsIconic(handle):user.ShowWindow(handle,9)
+            wait(lambda:quick.evaluate('request=>window.__visibilityShots.some(result=>result.requestId===request && result.cancelled)',request['requestId']))
+        # A window that was already minimized before capture is still a
+        # participant: restoring it must not contaminate the capture either.
+        main_handle=next(handle for handle in handles if window_title(handle)=='DtKit')
+        user.ShowWindow(main_handle, 6)
+        wait(lambda:user.IsIconic(main_handle))
+        request['requestId']='previously-minimized-'+uuid4().hex
+        invoke(quick,'start_screen_region_capture',{**request,'keepHidden':True})
+        wait(lambda:len(overlays(context))==1 and all(user.IsIconic(handle) for handle in handles))
+        user.ShowWindow(main_handle,9)
+        wait(lambda:not overlays(context))
+        assert not user.IsIconic(main_handle)
+        for handle in handles:
+            if user.IsIconic(handle):user.ShowWindow(handle,9)
+        wait(lambda:quick.evaluate('request=>window.__visibilityShots.some(result=>result.requestId===request && result.cancelled)',request['requestId']))
+        print('Native main and quick windows stayed minimized with taskbar entries after success/cancel and restored their results',flush=True)
     finally:
         fixture.destroy()
 
@@ -289,30 +317,38 @@ def scenario(owner, context, process, clipboard=None):
         border = next(page for page in context.pages if 'long-capture-border.html' in page.url)
         expect(border.locator('#longCaptureStatus')).to_contain_text('手动')
         until(lambda: '1/5' in border.locator('#longCaptureStatus').inner_text())
+        expect(border.locator('.long-capture-preview__image')).to_be_visible()
+        expect(border.locator('.long-capture-preview__dimensions')).to_contain_text('1 段')
         # A pause must not auto-complete, scroll the target, or interpret the
         # Enter used for selection as the Enter used to finish capture.
         owner.wait_for_timeout(800);fixture.update()
         assert not wheel_events and board.yview()[0] == 0, wheel_events
-        assert not user.IsWindowVisible(owner_handle)
+        assert user.IsWindowVisible(owner_handle) and user.IsIconic(owner_handle)
         assert any('long-capture-border.html' in page.url for page in context.pages)
         user.SetForegroundWindow(fixture.winfo_id());board.focus_set();fixture.update()
         user.SetCursorPos(vx + 200, vy + 200)
         user.mouse_event(0x0800, 0, 0, ctypes.c_uint32(-120).value, 0)
         until(lambda: len(wheel_events) == 1)
         until(lambda: '2/5' in border.locator('#longCaptureStatus').inner_text())
+        expect(border.locator('.long-capture-preview__dimensions')).to_contain_text('2 段')
         user.keybd_event(0x0D, 0, 0, 0);owner.wait_for_timeout(70);user.keybd_event(0x0D, 0, 2, 0)
         until(lambda: not overlays(context))
+        assert user.IsWindowVisible(owner_handle) and user.IsIconic(owner_handle)
+        user.ShowWindow(owner_handle, 9)
         until(lambda: owner.evaluate('window.__nativeShots.some(result=>result.requestId.startsWith("manual-")&&!result.cancelled)'))
         result = owner.evaluate('window.__nativeShots.find(result=>result.requestId.startsWith("manual-")&&!result.cancelled)')
         actual = Image.open(BytesIO(base64.b64decode(result['capture']['dataUrl'].split(',', 1)[1])))
         assert actual.size == (selected_size[0], selected_size[1] + 60), (actual.size,selected_size)
+        origin_x, origin_y = result['capture']['x']-vx, result['capture']['y']-vy
+        expected = pattern.crop((origin_x, origin_y, origin_x + actual.width, origin_y + actual.height))
+        assert actual.convert('RGB').tobytes() == expected.tobytes(), 'Captured pixels or seam differ from the source; preview may have entered the capture'
         sample=(min(150,actual.width-1),selected_size[1]+25)
         source=(result['capture']['x']-vx+sample[0],result['capture']['y']-vy+sample[1])
         assert actual.getpixel(sample)[:3] == pattern.getpixel(source), (actual.getpixel(sample),source)
         fixture.update();assert not enter_events, 'Finishing capture must not also submit Enter to the target app'
-        assert not user.IsWindowVisible(owner_handle), 'Manual completion must not reopen DtKit'
+        assert user.IsWindowVisible(owner_handle) and not user.IsIconic(owner_handle), 'Taskbar restoration must keep the original window'
         assert len(wheel_events) == 1, wheel_events
-        print('Native manual wheel stitching waited for user input, preserved exact seams, swallowed finish Enter and left windows hidden', flush=True)
+        print('Native manual wheel stitching waited for user input, preserved exact seams, swallowed finish Enter and preserved taskbar access', flush=True)
         board.delete('all');board.yview_moveto(0);fixture.update()
         # Simulate the user's deliberate return before the next test case.
         returning = subprocess.Popen([process.args[0]], cwd=Path(process.args[0]).parent,
@@ -330,7 +366,7 @@ def scenario(owner, context, process, clipboard=None):
         editor = next(page for page in context.pages if 'toolId=screenshot-annotator' in page.url)
         until(lambda: editor.evaluate('window.__DTKIT_TOOL_PAGE__?.ready === true'))
         until(lambda: len(overlays(context)) == 1)
-        assert not user.IsWindowVisible(owner_handle), 'Starting in an editor must hide other DtKit quick windows'
+        assert user.IsWindowVisible(owner_handle) and user.IsIconic(owner_handle), 'Starting a capture must minimize other DtKit quick windows'
         overlay = overlays(context)[0]
         expect(overlay.locator('#regionLoading')).to_be_hidden(timeout=15000)
         overlay.mouse.move(40, 70); overlay.mouse.down(); overlay.mouse.move(680, 380); overlay.mouse.up()
@@ -349,12 +385,10 @@ def scenario(owner, context, process, clipboard=None):
             return True
         user.EnumWindows(callback_type(find_editor), 0)
         assert editor_handles
-        assert not user.IsWindowVisible(owner_handle), 'Starting in an editor must hide other DtKit quick windows'
-        assert all(not user.IsWindowVisible(handle) for handle in editor_handles), 'Completing the editor screenshot must not reopen quick windows'
-        returning = subprocess.Popen([process.args[0]], cwd=Path(process.args[0]).parent,
-                                     creationflags=subprocess.CREATE_NO_WINDOW)
-        returning.wait(timeout=10)
-        until(lambda: all(user.IsWindowVisible(handle) for handle in editor_handles))
+        assert user.IsWindowVisible(owner_handle) and user.IsIconic(owner_handle)
+        assert all(user.IsWindowVisible(handle) and user.IsIconic(handle) for handle in editor_handles), 'Completion must keep quick windows minimized'
+        for handle in editor_handles:user.ShowWindow(handle, 9)
+        until(lambda: all(user.IsWindowVisible(handle) and not user.IsIconic(handle) for handle in editor_handles))
         editor.locator('#captureFile').set_input_files({'name': 'generated-native-fixture.png', 'mimeType': 'image/png', 'buffer': base64.b64decode(png.split(',', 1)[1])})
         until(lambda: editor.locator('#captureDimensions').inner_text().startswith('600'))
         editor.locator('[data-capture-mode="text"]').click()

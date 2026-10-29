@@ -4,7 +4,7 @@ use super::storage::StorageManager;
 use crate::path_safety::validate_leaf_filename;
 use base64::Engine;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,6 +38,8 @@ pub(crate) struct ScreenCapture {
     pub(crate) height: u32,
     pub(crate) x: i32,
     pub(crate) y: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) warning: Option<String>,
 }
 
 #[derive(Clone)]
@@ -61,6 +63,7 @@ struct TemporarilyHiddenQuickHost {
     label: String,
     was_visible: bool,
     was_minimized: bool,
+    minimized_for_capture: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -77,6 +80,9 @@ pub(crate) struct ScreenRegionCaptureManager {
     next_label: AtomicU64,
     sessions: Mutex<HashMap<String, ScreenRegionCaptureSession>>,
     cancelled_requests: Mutex<HashMap<(String, String, String), Instant>>,
+    // Keep deep sleep from discarding the taskbar entry before user restores it.
+    capture_minimized: Mutex<HashSet<String>>,
+    active_capture: Mutex<Option<String>>,
 }
 
 impl ScreenRegionCaptureSession {
@@ -113,6 +119,59 @@ fn remember_cancellation(
 }
 
 impl ScreenRegionCaptureManager {
+    pub(crate) fn preserve_taskbar_window(&self, app: &AppHandle, label: &str, minimized: bool) -> bool {
+        let Ok(mut labels) = self.capture_minimized.lock() else { return false };
+        if minimized {
+            return labels.contains(label);
+        }
+        let restored = labels.remove(label);
+        drop(labels);
+        if restored {
+            let capture_label = self.active_capture.lock().ok().and_then(|active| active.clone());
+            let Some(capture_label) = capture_label else { return false };
+            // Mark active workers immediately when the session is already
+            // registered. If registration still owns the lock, the worker
+            // below waits for it; no screenshot worker starts before then.
+            if let Ok(sessions) = self.sessions.try_lock() {
+                if let Some(session) = sessions.get(&capture_label) {
+                    if session.hidden_quick_hosts.iter().any(|window| {
+                        window.label == label && window.was_visible
+                    }) {
+                        session.cancelled.store(true, Ordering::Release);
+                    }
+                }
+            }
+            // The minimize request may still be registering its session on the
+            // UI thread. Use a worker to wait for that lock, avoiding reentrant
+            // deadlock and cancelling before another frame can be accepted.
+            let app = app.clone();
+            let restored_label = label.to_owned();
+            tauri::async_runtime::spawn_blocking(move || {
+                app.state::<ScreenRegionCaptureManager>()
+                    .cancel_if_participant_restored(&app, &restored_label, &capture_label);
+            });
+        }
+        false
+    }
+
+    fn cancel_if_participant_restored(&self, app: &AppHandle, restored_label: &str, capture_label: &str) {
+        let labels = self.sessions.lock().map(|sessions| {
+            sessions.iter().filter(|(_, session)| {
+                session.hidden_quick_hosts.iter().any(|window| {
+                    window.label == restored_label && window.was_visible
+                })
+            }).filter(|(label, _)| label.as_str() == capture_label).map(|(label, session)| {
+                session.cancelled.store(true, Ordering::Release);
+                label.clone()
+            }).collect::<Vec<_>>()
+        }).unwrap_or_default();
+        for label in labels {
+            // The cancellation event is delivered to the editor, but must not
+            // undo the user's explicit taskbar restoration.
+            complete_session(app, label, None, true);
+        }
+    }
+
     pub(crate) fn cancel_window(&self, app: &AppHandle, owner_label: &str) {
         let labels = self
             .sessions
@@ -151,15 +210,10 @@ fn complete_session(
             .ok()
             .and_then(|mut sessions| sessions.remove(&label));
         let Some(session) = session else { return };
-        session.cancelled.store(true, Ordering::Release);
-        if session.keep_hidden {
-            let quick_hosts = handle.state::<super::quick_host::QuickHostManager>();
-            for state in &session.hidden_quick_hosts {
-                if state.was_visible && state.label.starts_with(QUICK_HOST_LABEL_PREFIX) {
-                    quick_hosts.retain_for_manual_restore(&state.label);
-                }
-            }
+        if let Ok(mut active) = handle.state::<ScreenRegionCaptureManager>().active_capture.lock() {
+            if active.as_deref() == Some(label.as_str()) { *active = None; }
         }
+        let capture = if session.cancelled.swap(true, Ordering::AcqRel) { None } else { capture };
         if let Some(overlay) = handle.get_webview_window(&label) {
             let _ = overlay.close();
         }
@@ -216,7 +270,14 @@ async fn reserve_and_hide(
                 if !sessions.is_empty() {
                     return Err("已有截图任务，请先完成或取消".to_string());
                 }
-                let hidden_quick_hosts = hide_quick_hosts_for_capture(&target, keep_hidden)?;
+                *manager.active_capture.lock().map_err(|_| "截图状态不可用")? = Some(label.clone());
+                let hidden_quick_hosts = match hide_quick_hosts_for_capture(&target, keep_hidden) {
+                    Ok(windows) => windows,
+                    Err(error) => {
+                        if let Ok(mut active) = manager.active_capture.lock() { *active = None; }
+                        return Err(error);
+                    }
+                };
                 sessions.insert(
                     label,
                     ScreenRegionCaptureSession {
@@ -325,11 +386,22 @@ fn hide_quick_hosts_for_capture(
         }
         let was_visible = candidate.is_visible().unwrap_or(true);
         let was_minimized = candidate.is_minimized().unwrap_or(false);
-        if was_visible {
-            if let Err(error) = candidate.hide() {
+        let minimized_for_capture = hide_main && was_visible && !was_minimized;
+        // Track previously minimized windows too: restoring any participant
+        // during capture can put it into the pixels being captured.
+        if hide_main && was_visible {
+            owner.state::<ScreenRegionCaptureManager>().capture_minimized.lock()
+                .map_err(|_| "截图窗口状态不可用")?.insert(label.clone());
+        }
+        if was_visible && (!hide_main || !was_minimized) {
+            let result = if hide_main { candidate.minimize() } else { candidate.hide() };
+            if let Err(error) = result {
+                if minimized_for_capture {
+                    if let Ok(mut labels) = owner.state::<ScreenRegionCaptureManager>().capture_minimized.lock() { labels.remove(&label); }
+                }
                 if label == owner_label || hide_main {
                     restore_capture_windows(owner.app_handle(), "", &hidden, false);
-                    return Err(format!("隐藏 DtKit 窗口失败: {error}"));
+                    return Err(format!("暂时移开 DtKit 窗口失败: {error}"));
                 }
                 continue;
             }
@@ -338,6 +410,7 @@ fn hide_quick_hosts_for_capture(
             label,
             was_visible,
             was_minimized,
+            minimized_for_capture,
         });
     }
     Ok(hidden)
@@ -357,6 +430,8 @@ fn restore_capture_windows(
             let _ = window.show();
             if state.was_minimized {
                 let _ = window.minimize();
+            } else if state.minimized_for_capture {
+                let _ = window.unminimize();
             }
         }
     }
@@ -420,6 +495,7 @@ fn validate_selected_capture(
         height,
         x: 0,
         y: 0,
+        warning: None,
     }))
 }
 
@@ -540,6 +616,7 @@ pub(crate) fn capture_virtual_screen() -> Result<ScreenCapture, String> {
         height: height as u32,
         x,
         y,
+        warning: None,
     })
 }
 
@@ -650,48 +727,6 @@ fn capture_region_image(rect: CaptureRect) -> Result<image::RgbaImage, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn sampled_difference(
-    previous: &image::RgbaImage,
-    next: &image::RgbaImage,
-    overlap: u32,
-    vertical: bool,
-) -> f64 {
-    let (width, height) = previous.dimensions();
-    let step_x = (width / 96).max(2) as usize;
-    let step_y = (height / 72).max(2) as usize;
-    let mut difference = 0_u64;
-    let mut samples = 0_u64;
-    if vertical {
-        for y in (0..overlap).step_by(step_y) {
-            for x in (0..width).step_by(step_x) {
-                let a = previous.get_pixel(x, height - overlap + y).0;
-                let b = next.get_pixel(x, y).0;
-                difference += a[..3]
-                    .iter()
-                    .zip(&b[..3])
-                    .map(|(left, right)| left.abs_diff(*right) as u64)
-                    .sum::<u64>();
-                samples += 3;
-            }
-        }
-    } else {
-        for y in (0..height).step_by(step_y) {
-            for x in (0..overlap).step_by(step_x) {
-                let a = previous.get_pixel(width - overlap + x, y).0;
-                let b = next.get_pixel(x, y).0;
-                difference += a[..3]
-                    .iter()
-                    .zip(&b[..3])
-                    .map(|(left, right)| left.abs_diff(*right) as u64)
-                    .sum::<u64>();
-                samples += 3;
-            }
-        }
-    }
-    difference as f64 / samples.max(1) as f64
-}
-
-#[cfg(target_os = "windows")]
 fn frames_are_equal(previous: &image::RgbaImage, next: &image::RgbaImage) -> bool {
     let step_x = (previous.width() / 96).max(2) as usize;
     let step_y = (previous.height() / 72).max(2) as usize;
@@ -710,35 +745,6 @@ fn frames_are_equal(previous: &image::RgbaImage, next: &image::RgbaImage) -> boo
         }
     }
     difference as f64 / (samples.max(1) as f64) < 1.8
-}
-
-#[cfg(target_os = "windows")]
-fn find_vertical_overlap(previous: &image::RgbaImage, next: &image::RgbaImage) -> u32 {
-    find_overlap(previous, next, true)
-}
-
-#[cfg(target_os = "windows")]
-fn find_horizontal_overlap(previous: &image::RgbaImage, next: &image::RgbaImage) -> u32 {
-    find_overlap(previous, next, false)
-}
-
-#[cfg(target_os = "windows")]
-fn find_overlap(previous: &image::RgbaImage, next: &image::RgbaImage, vertical: bool) -> u32 {
-    let span = if vertical {
-        previous.height()
-    } else {
-        previous.width()
-    };
-    let minimum = (span / 10).max(8);
-    let maximum = (span * 9 / 10).max(minimum);
-    let step = (span / 160).max(2) as usize;
-    (minimum..=maximum)
-        .step_by(step)
-        .min_by(|left, right| {
-            sampled_difference(previous, next, *left, vertical)
-                .total_cmp(&sampled_difference(previous, next, *right, vertical))
-        })
-        .unwrap_or(minimum)
 }
 
 #[cfg(target_os = "windows")]
@@ -811,6 +817,7 @@ impl LongImage {
             height: image.height(),
             x,
             y,
+            warning: None,
         })
     }
 }
@@ -869,10 +876,14 @@ fn capture_automatic_long_region(
     max_segments: u8,
     target: isize,
     cancelled: Arc<AtomicBool>,
+    mut progress: impl FnMut(&str, Option<&LongImage>, u8),
 ) -> Result<ScreenCapture, String> {
     let vertical = direction == "vertical";
     let mut previous = capture_region_image(rect)?;
     let mut output = LongImage::new(&previous);
+    let mut warning = None;
+    let mut segments = 1;
+    progress(&format!("自动滚动 · 已采集 {segments}/{max_segments} 段 · Esc 取消"), Some(&output), segments);
     let was_cancelled = || {
         cancelled.load(Ordering::Acquire)
             || unsafe {
@@ -881,35 +892,70 @@ fn capture_automatic_long_region(
                 ) < 0
             }
     };
-    for _ in 1..max_segments {
+    while segments < max_segments {
         if was_cancelled() {
             return Err("长截图已取消".into());
         }
-        scroll_target_window(target, rect, &direction)?;
-        std::thread::sleep(std::time::Duration::from_millis(360));
-        if was_cancelled() {
-            return Err("长截图已取消".into());
+        if let Err(error) = scroll_target_window(target, rect, &direction) {
+            warning = Some(format!("自动滚动失败：{error}；已保留已采集部分"));
+            break;
         }
-        let next = capture_region_image(rect)?;
+        // Wait for two consecutive stable samples before attempting a seam.
+        std::thread::sleep(Duration::from_millis(240));
+        let mut next = match capture_region_image(rect) {
+            Ok(frame) => frame,
+            Err(error) => { warning = Some(format!("读取画面失败：{error}；已保留已采集部分")); break; }
+        };
+        let start = Instant::now();
+        let mut stable = false;
+        while start.elapsed() < Duration::from_secs(2) {
+            if was_cancelled() { return Err("长截图已取消".into()); }
+            std::thread::sleep(Duration::from_millis(120));
+            let sample = match capture_region_image(rect) {
+                Ok(frame) => frame,
+                Err(error) => { warning = Some(format!("读取画面失败：{error}；已保留已采集部分")); break; }
+            };
+            if frames_are_equal(&next, &sample) { next = sample; stable = true; break; }
+            next = sample;
+        }
+        if !stable {
+            if warning.is_none() { warning = Some("画面持续变化，已停止并保留已采集部分".to_string()); }
+            break;
+        }
         if frames_are_equal(&previous, &next) {
             break;
         }
-        let overlap = if vertical {
-            find_vertical_overlap(&previous, &next)
-        } else {
-            find_horizontal_overlap(&previous, &next)
+        let overlap = reliable_forward_overlap(&previous, &next, vertical).or_else(|| {
+            // Retry at the same position after the target has had more time to settle.
+            std::thread::sleep(Duration::from_millis(300));
+            let retry = capture_region_image(rect).ok()?;
+            if !frames_are_equal(&next, &retry) { return None; }
+            let overlap = reliable_forward_overlap(&previous, &retry, vertical)?;
+            next = retry;
+            Some(overlap)
+        });
+        let Some(overlap) = overlap else {
+            warning = Some("无法可靠匹配下一段，请缩小滚动幅度或避开固定栏；已保留已采集部分".to_string());
+            break;
         };
         let appended = if vertical {
             output.append_vertical(&next, overlap)
         } else {
             output.append_horizontal(&next, overlap)
         };
-        if appended.is_err() {
+        if let Err(error) = appended {
+            warning = Some(format!("{error}；已保留已采集部分"));
             break;
         }
         previous = next;
+        segments += 1;
+        progress(&format!("自动滚动 · 已采集 {segments}/{max_segments} 段 · Esc 取消"), Some(&output), segments);
     }
-    output.into_capture(rect.x, rect.y)
+    if segments >= max_segments { warning = Some("已达到采集段数上限，可能尚未截取全部内容".to_string()); }
+    if was_cancelled() { return Err("长截图已取消".into()); }
+    let mut capture = output.into_capture(rect.x, rect.y)?;
+    capture.warning = warning;
+    Ok(capture)
 }
 
 // Reserve these keys on the capture worker's own message queue. Enter must not
@@ -995,29 +1041,7 @@ fn reliable_forward_overlap(
     next: &image::RgbaImage,
     vertical: bool,
 ) -> Option<u32> {
-    let span = if vertical {
-        previous.height()
-    } else {
-        previous.width()
-    };
-    let refine = |a: &image::RgbaImage, b: &image::RgbaImage| {
-        let coarse = find_overlap(a, b, vertical);
-        let radius = (span / 160).max(2);
-        let overlap = (coarse.saturating_sub(radius).max(8)..=(coarse + radius).min(span * 9 / 10))
-            .min_by(|left, right| {
-                sampled_difference(a, b, *left, vertical)
-                    .total_cmp(&sampled_difference(a, b, *right, vertical))
-            })?;
-        Some((overlap, sampled_difference(a, b, overlap, vertical)))
-    };
-    let (overlap, error) = refine(previous, next)?;
-    let (_, reverse_error) = refine(next, previous)?;
-    // Blank, repeated or backwards-moving content cannot establish a reliable
-    // forward seam. Keep the last accepted frame so the user can scroll back.
-    if error > 8.0 || reverse_error < error + 1.0 {
-        return None;
-    }
-    Some(overlap)
+    super::long_capture_match::reliable_overlap(previous, next, vertical)
 }
 
 #[cfg(target_os = "windows")]
@@ -1026,7 +1050,7 @@ fn capture_manual_long_region(
     direction: String,
     max_segments: u8,
     cancelled: Arc<AtomicBool>,
-    progress: impl Fn(&str),
+    mut progress: impl FnMut(&str, Option<&LongImage>, u8),
 ) -> Result<ScreenCapture, String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RETURN};
     let keys = ManualCaptureKeys::register()?;
@@ -1041,6 +1065,8 @@ fn capture_manual_long_region(
     let mut finish_requested = None;
     let mut last_message = String::new();
     let mut last_progress_at = Instant::now();
+    let mut warning = None;
+    progress(&format!("手动滚动 · 已采集 {segments}/{max_segments} 段 · Enter 完成 · Esc 取消"), Some(&output), segments);
     loop {
         let (finish, cancel) = keys.poll();
         if cancelled.load(Ordering::Acquire) || cancel {
@@ -1056,7 +1082,10 @@ fn capture_manual_long_region(
         } {
             ready_for_finish = true;
         }
-        let next = capture_region_image(rect)?;
+        let next = match capture_region_image(rect) {
+            Ok(frame) => frame,
+            Err(error) => { warning = Some(format!("读取画面失败：{error}；已保留已采集部分")); break; }
+        };
         if !frames_are_equal(&candidate, &next) {
             candidate = next;
             changed_at = Instant::now();
@@ -1072,7 +1101,8 @@ fn capture_manual_long_region(
                 } else {
                     output.append_horizontal(&candidate, overlap)
                 };
-                if appended.is_err() {
+                if let Err(error) = appended {
+                    warning = Some(format!("{error}；已保留已采集部分"));
                     break;
                 }
                 previous = candidate.clone();
@@ -1080,7 +1110,9 @@ fn capture_manual_long_region(
                 message = format!(
                     "手动滚动 · 已采集 {segments}/{max_segments} 段 · Enter 完成 · Esc 取消"
                 );
+                progress(&message, Some(&output), segments);
                 if segments >= max_segments {
+                    warning = Some("已达到采集段数上限，可能尚未截取全部内容".to_string());
                     break;
                 }
             } else {
@@ -1092,7 +1124,7 @@ fn capture_manual_long_region(
         // The border's listener can initialize after our first emit. Repeat the
         // current status at most once per second while this capture is active.
         if message != last_message || last_progress_at.elapsed() >= Duration::from_secs(1) {
-            progress(&message);
+            progress(&message, None, segments);
             last_message = message;
             last_progress_at = Instant::now();
         }
@@ -1100,8 +1132,11 @@ fn capture_manual_long_region(
             time.elapsed() >= Duration::from_millis(300)
                 && (changed_at.elapsed() >= Duration::from_millis(240)
                     || time.elapsed() >= Duration::from_secs(2))
-        }) || started.elapsed() >= Duration::from_secs(600)
-        {
+        }) {
+            break;
+        }
+        if started.elapsed() >= Duration::from_secs(600) {
+            warning = Some("已达到长截图时间上限，已保留已采集部分".to_string());
             break;
         }
         std::thread::sleep(Duration::from_millis(80));
@@ -1109,7 +1144,12 @@ fn capture_manual_long_region(
     if cancelled.load(Ordering::Acquire) {
         return Err("长截图已取消".into());
     }
-    output.into_capture(rect.x, rect.y)
+    if warning.is_none() && !frames_are_equal(&previous, &candidate) {
+        warning = Some("最后的画面未能可靠拼接，已保留之前采集的部分".to_string());
+    }
+    let mut capture = output.into_capture(rect.x, rect.y)?;
+    capture.warning = warning;
+    Ok(capture)
 }
 
 #[cfg(target_os = "windows")]
@@ -1126,6 +1166,8 @@ async fn run_automatic_long_capture(
     session_label: String,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ScreenCapture, String> {
+    use super::long_capture_preview::{preview_data_url, preview_placement, PreviewRect};
+    use tauri::Listener;
     let target = if mode == "automatic" {
         tauri::async_runtime::spawn_blocking(move || target_window_at(rect))
             .await
@@ -1133,10 +1175,23 @@ async fn run_automatic_long_capture(
     } else {
         0
     };
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
+    let expected_session = border_label.clone();
+    let listener = app.listen("screen-long-preview-ready", move |event| {
+        let matches = serde_json::from_str::<serde_json::Value>(event.payload())
+            .ok().and_then(|value| value.get("session").and_then(|v| v.as_str()).map(str::to_owned))
+            .is_some_and(|session| session == expected_session);
+        if matches {
+            if let Ok(mut sender) = ready_tx.lock() {
+                if let Some(sender) = sender.take() { let _ = sender.send(()); }
+            }
+        }
+    });
     let border = WebviewWindowBuilder::new(
         app,
         &border_label,
-        WebviewUrl::App(format!("long-capture-border.html?mode={mode}").into()),
+        WebviewUrl::App(format!("long-capture-border.html?mode={mode}&direction={direction}&session={border_label}").into()),
     )
     .title("DtKit 长截图")
     .decorations(false)
@@ -1147,39 +1202,61 @@ async fn run_automatic_long_capture(
     .transparent(true)
     .focused(false)
     .visible(false)
-    .build()
-    .map_err(|error| format!("创建长截图边框失败: {error}"))?;
-    let _ = border.set_position(PhysicalPosition::new(rect.x - 4, rect.y - 4));
-    let _ = border.set_size(PhysicalSize::new(rect.width + 8, rect.height + 8));
-    let _ = border.set_content_protected(true);
-    let _ = border.set_ignore_cursor_events(true);
-    match show_session_window(border.clone(), session_label).await {
-        Ok(true) => {}
-        Ok(false) => {
-            let _ = border.close();
-            return Err("长截图已取消".into());
-        }
-        Err(error) => {
-            let _ = border.close();
-            return Err(error);
-        }
+    .build();
+    let mut preview_unavailable = true;
+    let mut preview = None;
+    if let Ok(border) = &border {
+    let monitors = border.available_monitors().unwrap_or_default().iter().map(|monitor| {
+        let area = monitor.work_area();
+        PreviewRect { x: area.position.x, y: area.position.y, width: area.size.width, height: area.size.height }
+    }).collect::<Vec<_>>();
+    let placement = preview_placement(PreviewRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, &monitors, direction == "vertical");
+    if let Some(placement) = placement {
+        let placed = border.set_position(PhysicalPosition::new(placement.x, placement.y)).is_ok()
+            && border.set_size(PhysicalSize::new(placement.width, placement.height)).is_ok()
+            && border.set_ignore_cursor_events(true).is_ok();
+        if placed {
+            match show_session_window(border.clone(), session_label).await {
+                Ok(true) => {
+                    if matches!(tokio::time::timeout(Duration::from_secs(3), ready_rx).await, Ok(Ok(()))) {
+                        preview = Some(border.clone());
+                        preview_unavailable = false;
+                    } else { preview_unavailable = true; }
+                }
+                Ok(false) => { app.unlisten(listener); let _ = border.close(); return Err("长截图已取消".into()); }
+                Err(_) => { preview_unavailable = true; }
+            }
+        } else { preview_unavailable = true; }
     }
+    }
+    app.unlisten(listener);
+    if preview.is_none() { if let Ok(border) = &border { let _ = border.close(); } }
     wait_for_hidden_window().await;
-    let progress = border.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut progress = |message: &str, image: Option<&LongImage>, segments: u8| {
+            if let Some(window) = &preview {
+                let data_url = image.and_then(|image| preview_data_url(image.width, image.height, &image.pixels).ok());
+                let (width, height) = image.map(|image| (Some(image.width), Some(image.height))).unwrap_or((None, None));
+                let _ = window.emit("screen-long-progress", serde_json::json!({ "message": message, "dataUrl": data_url, "width": width, "height": height, "segments": segments }));
+            }
+        };
         if mode == "manual" {
-            capture_manual_long_region(rect, direction, max_segments, cancelled, |message| {
-                let _ = progress.emit("screen-long-progress", message);
-            })
+            capture_manual_long_region(rect, direction, max_segments, cancelled, &mut progress)
         } else {
-            capture_automatic_long_region(rect, direction, max_segments, target, cancelled)
+            capture_automatic_long_region(rect, direction, max_segments, target, cancelled, &mut progress)
         }
     })
     .await
     .map_err(|error| format!("长截图任务异常结束: {error}"))
     .and_then(|capture| capture);
-    let _ = border.close();
-    result
+    if let Ok(border) = border { let _ = border.close(); }
+    result.map(|mut capture| {
+        if preview_unavailable {
+            let notice = "屏幕空间不足或预览不可用，未显示侧边预览";
+            capture.warning = Some(match capture.warning { Some(warning) => format!("{warning}；{notice}"), None => notice.into() });
+        }
+        capture
+    })
 }
 
 #[tauri::command]
@@ -1248,7 +1325,7 @@ async fn start_reserved_capture(
             })
             .unwrap_or(false)
     };
-    // The original DtKit windows are already hidden, allowing the user to
+    // The original DtKit windows are already moved away, allowing the user to
     // open a menu or tooltip during the delay. Check cancellation every 50 ms.
     let deadline = Instant::now() + Duration::from_millis(delay);
     while Instant::now() < deadline {
@@ -1573,8 +1650,6 @@ pub(crate) async fn save_annotated_screenshot(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "windows")]
-    use super::{find_horizontal_overlap, find_vertical_overlap, LongImage};
     use super::{remember_cancellation, request_key, ScreenRegionCaptureSession};
     use super::{validate_selected_capture, ScreenRegionCaptureResult, ScreenRequestContext};
 
@@ -1725,37 +1800,5 @@ mod tests {
         assert_eq!((capture.width, capture.height), (320, 180));
     }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn automatic_long_capture_detects_overlap_and_appends_without_frame_history() {
-        let vertical_a = image::RgbaImage::from_fn(24, 100, |x, y| {
-            image::Rgba([(y * 2) as u8, x as u8, y as u8, 255])
-        });
-        let vertical_b = image::RgbaImage::from_fn(24, 100, |x, y| {
-            let source_y = y + 60;
-            image::Rgba([(source_y * 2) as u8, x as u8, source_y as u8, 255])
-        });
-        let vertical_overlap = find_vertical_overlap(&vertical_a, &vertical_b);
-        assert!((38..=42).contains(&vertical_overlap));
-        let mut vertical = LongImage::new(&vertical_a);
-        vertical
-            .append_vertical(&vertical_b, vertical_overlap)
-            .unwrap();
-        assert!((158..=162).contains(&vertical.height));
 
-        let horizontal_a = image::RgbaImage::from_fn(100, 24, |x, y| {
-            image::Rgba([(x * 2) as u8, y as u8, x as u8, 255])
-        });
-        let horizontal_b = image::RgbaImage::from_fn(100, 24, |x, y| {
-            let source_x = x + 60;
-            image::Rgba([(source_x * 2) as u8, y as u8, source_x as u8, 255])
-        });
-        let horizontal_overlap = find_horizontal_overlap(&horizontal_a, &horizontal_b);
-        assert!((38..=42).contains(&horizontal_overlap));
-        let mut horizontal = LongImage::new(&horizontal_a);
-        horizontal
-            .append_horizontal(&horizontal_b, horizontal_overlap)
-            .unwrap();
-        assert!((158..=162).contains(&horizontal.width));
-    }
 }
